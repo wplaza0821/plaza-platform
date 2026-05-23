@@ -501,6 +501,9 @@
   body.perm-no-view-docs     #page-docs           { display: none !important; }
   body.perm-no-view-cos      [data-tab="cos"],
   body.perm-no-view-cos      #page-cos            { display: none !important; }
+  body.perm-no-edit-tasks    .perm-edit-tasks    { display: none !important; }
+  body.perm-no-view-tasks    [data-tab="tasks"],
+  body.perm-no-view-tasks    #page-tasks          { display: none !important; }
   body.perm-no-view-payapps  [data-tab="sov"],
   body.perm-no-view-payapps  #page-sov            { display: none !important; }
 </style>
@@ -542,6 +545,7 @@
     <button class="tab" data-tab="rfis"><span>❓</span> RFIs <span class="count" id="cnt-rfis">0</span></button>
     <button class="tab" data-tab="submittals"><span>📤</span> Submittals <span class="count" id="cnt-subs">0</span></button>
     <button class="tab" data-tab="cos"><span>🔁</span> Change Orders <span class="count" id="cnt-cos">0</span></button>
+    <button class="tab" data-tab="tasks"><span>✅</span> Tasks <span class="count" id="cnt-tasks">0</span></button>
     <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
     <button class="tab" data-tab="access" data-role-hide="contractor"><span>🔑</span> Access</button>
   </nav>
@@ -751,6 +755,57 @@
       </div>
     </section>
 
+    <!-- ========== TASKS ========== -->
+    <section id="page-tasks" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Tasks</h1>
+          <div class="page-subtitle">Assign and track work across all project parties</div>
+          <div class="page-context-pill" id="tasks-context"></div>
+        </div>
+        <button class="btn btn-primary perm-edit-tasks" onclick="openTaskModal()">＋ New Task</button>
+      </div>
+
+      <div class="summary-tiles" id="task-tiles"></div>
+
+      <div class="toolbar">
+        <div class="filter-bar" id="taskStatusFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">All</span>
+          <span class="chip" data-filter="open">Open</span>
+          <span class="chip" data-filter="in_progress">In Progress</span>
+          <span class="chip" data-filter="review">Review</span>
+          <span class="chip" data-filter="completed">Completed</span>
+        </div>
+        <div class="spacer"></div>
+        <input type="text" class="search" id="taskSearch" placeholder="Search tasks…" />
+      </div>
+      <div class="toolbar" style="margin-top:-8px;">
+        <div class="filter-bar" id="taskPriorityFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">All Priorities</span>
+          <span class="chip" data-filter="urgent">🔴 Urgent</span>
+          <span class="chip" data-filter="high">🟠 High</span>
+          <span class="chip" data-filter="normal">⚪ Normal</span>
+          <span class="chip" data-filter="low">🔵 Low</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data" id="taskTable">
+          <thead>
+            <tr>
+              <th style="width:110px;">Priority</th>
+              <th>Title</th>
+              <th>Assigned To</th>
+              <th>Due Date</th>
+              <th>Status</th>
+              <th style="width:200px;"></th>
+            </tr>
+          </thead>
+          <tbody id="taskBody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- ========== DOCUMENTS ========== -->
     <section id="page-docs" class="tab-page">
       <div class="page-header">
@@ -900,7 +955,9 @@ const STATE = {
   rfiFilter: 'all',
   subFilter: 'all',
   docFilter: 'all',
-  rfiSearch: '', subSearch: '', docSearch: '',
+  taskStatusFilter: 'all',
+  taskPriorityFilter: 'all',
+  rfiSearch: '', subSearch: '', docSearch: '', taskSearch: '',
 };
 
 function isOwner()      { return AUTH && AUTH.role === 'owner'; }
@@ -925,6 +982,7 @@ function canView(scope) {
   const p = AUTH.permissions || {};
   if (scope === 'projects') return true;
   if (scope === 'plans')    return !!p.plans;
+  if (scope === 'tasks')    return true;
   return !!p[scope];
 }
 
@@ -996,7 +1054,7 @@ function applyRoleBodyClasses() {
   body.classList.add(isOwner() ? 'role-owner' : 'role-contractor');
   const shell = document.getElementById('appShell');
   if (shell) shell.style.display = '';
-  ['payapps','cos','rfis','subs','docs','projects'].forEach(s => {
+  ['payapps','cos','rfis','subs','docs','projects','tasks'].forEach(s => {
     body.classList.remove('perm-no-edit-' + s);
     body.classList.remove('perm-no-view-' + s);
   });
@@ -1007,6 +1065,7 @@ function applyRoleBodyClasses() {
     body.classList.add('perm-no-edit-cos');
     body.classList.add('perm-no-edit-docs');
     body.classList.add('perm-no-edit-projects');
+    body.classList.add('perm-no-edit-tasks');
     if (!canView('payapps'))    body.classList.add('perm-no-view-payapps');
     if (!canView('rfis'))       body.classList.add('perm-no-view-rfis');
     if (!canView('submittals')) body.classList.add('perm-no-view-subs');
@@ -1047,6 +1106,7 @@ const DATA = {
   submittals: [],
   changeOrders: [],
   documents: [],
+  tasks: [],
 };
 
 async function loadAllData() {
@@ -1060,9 +1120,10 @@ async function loadAllData() {
   const subP  = sb.from('submittals').select('*').order('created_at', { ascending: false });
   const coP   = sb.from('change_orders').select('*').order('co_number', { ascending: false });
   const docP  = sb.from('documents').select('*').order('uploaded_at', { ascending: false });
+  const tkP   = sb.from('tasks').select('*').order('created_at', { ascending: false });
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1074,6 +1135,7 @@ async function loadAllData() {
   if (sub.error)  handleSbError(sub.error, 'Loading submittals');
   if (co.error)   handleSbError(co.error, 'Loading change orders');
   if (doc.error)  handleSbError(doc.error, 'Loading documents');
+  if (tk.error && tk.error.code !== 'PGRST205') handleSbError(tk.error, 'Loading tasks');
 
   DATA.projects     = proj.data || [];
   DATA.contractors  = con.data  || [];
@@ -1085,6 +1147,7 @@ async function loadAllData() {
   DATA.submittals   = sub.data  || [];
   DATA.changeOrders = co.data   || [];
   DATA.documents    = doc.data  || [];
+  DATA.tasks        = tk.data   || [];
 }
 
 /* =========================================================================
@@ -1166,7 +1229,7 @@ function switchTab(tab) {
   if (tab === 'access' && !isOwner()) tab = 'projects';
   if (isContractor()) {
     const scopeMap = { sov: 'payapps', rfis: 'rfis', submittals: 'submittals',
-                       cos: 'cos', docs: 'plans' };
+                       cos: 'cos', docs: 'plans', tasks: 'tasks' };
     if (scopeMap[tab] && !canView(scopeMap[tab])) tab = 'projects';
   }
   STATE.activeTab = tab;
@@ -3299,12 +3362,16 @@ function refreshCounts() {
   if (!pid) {
     setCnt('cnt-sov', 0); setCnt('cnt-rfis', 0);
     setCnt('cnt-subs', 0); setCnt('cnt-cos', 0);
+    setCnt('cnt-tasks', '');
     return;
   }
   setCnt('cnt-sov',  DATA.payApps.filter(p => p.project_id === pid).length);
   setCnt('cnt-rfis', DATA.rfis.filter(r => r.project_id === pid && r.status !== 'closed' && r.status !== 'void').length);
   setCnt('cnt-subs', DATA.submittals.filter(s => s.project_id === pid && s.status === 'pending').length);
   setCnt('cnt-cos',  DATA.changeOrders.filter(c => c.project_id === pid && c.status === 'pending').length);
+  const openTasks = DATA.tasks.filter(t => t.project_id === pid && t.status !== 'completed' && t.status !== 'cancelled').length;
+  const cntTasksEl = document.getElementById('cnt-tasks');
+  if (cntTasksEl) cntTasksEl.textContent = openTasks || '';
 }
 
 /* =========================================================================
@@ -3323,6 +3390,7 @@ function render() {
     else if (tab === 'rfis')       renderRfis();
     else if (tab === 'submittals') renderSubmittals();
     else if (tab === 'cos')        renderCos();
+    else if (tab === 'tasks')      renderTasks();
     else if (tab === 'docs')       renderDocs();
     else if (tab === 'access')     renderAccess();
   } catch (e) {
@@ -3421,6 +3489,367 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
+
+/* =========================================================================
+   TASKS MODULE
+   ========================================================================= */
+const TASK_PRIORITY_META = {
+  urgent: { label: 'Urgent', dot: '🔴', cls: 'badge-red' },
+  high:   { label: 'High',   dot: '🟠', cls: 'badge-yellow' },
+  normal: { label: 'Normal', dot: '⚪', cls: 'badge-gray' },
+  low:    { label: 'Low',    dot: '🔵', cls: 'badge-blue' },
+};
+const TASK_STATUS_META = {
+  open:         { label: 'Open',        cls: 'badge-blue' },
+  in_progress:  { label: 'In Progress', cls: 'badge-yellow' },
+  review:       { label: 'Review',      cls: 'badge-purple' },
+  completed:    { label: 'Completed',   cls: 'badge-green' },
+  cancelled:    { label: 'Cancelled',   cls: 'badge-gray' },
+};
+const TASK_ROLE_OPTIONS = [
+  { value: 'owner',      label: 'Owner' },
+  { value: 'gc',         label: 'General Contractor' },
+  { value: 'engineer',   label: 'Engineer' },
+  { value: 'contractor', label: 'Contractor' },
+  { value: 'other',      label: 'Other' },
+];
+
+function taskPriorityBadge(p) {
+  const m = TASK_PRIORITY_META[p] || TASK_PRIORITY_META.normal;
+  return `<span class="badge ${m.cls}">${m.dot} ${escapeHtml(m.label)}</span>`;
+}
+function taskStatusBadge(s) {
+  const m = TASK_STATUS_META[s] || TASK_STATUS_META.open;
+  return `<span class="badge ${m.cls} badge-dot">${escapeHtml(m.label)}</span>`;
+}
+
+function taskAssigneeSuggestions() {
+  const set = new Set();
+  // From this project's contractors
+  DATA.contractors
+    .filter(c => c.active && (!STATE.activeProjectId || c.project_id === STATE.activeProjectId))
+    .forEach(c => { if (c.name) set.add(c.name); });
+  // From existing tasks (so prior entries auto-suggest)
+  DATA.tasks
+    .filter(t => t.project_id === STATE.activeProjectId)
+    .forEach(t => { if (t.assigned_to) set.add(t.assigned_to); });
+  // Sensible defaults
+  ['Plaza & Associates - Owner', 'JM&A - General Contractor', 'DeSimone - Structural Engineer', 'ABM - Waterproofing']
+    .forEach(s => set.add(s));
+  return Array.from(set).sort();
+}
+
+function taskVisibleForViewer(t) {
+  if (isOwner()) return true;
+  if (isContractor()) {
+    const me = (AUTH.name || '').toLowerCase();
+    const to = (t.assigned_to || '').toLowerCase();
+    if (!me) return false;
+    // Contractor only sees tasks where their name matches assigned_to (substring either way)
+    return to.includes(me) || me.includes(to);
+  }
+  return false;
+}
+
+function renderTasks() {
+  const proj = activeProject();
+  const ctxEl = document.getElementById('tasks-context');
+  if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
+  let list = DATA.tasks.filter(t => t.project_id === STATE.activeProjectId);
+  list = list.filter(taskVisibleForViewer);
+
+  // Tiles
+  const today = todayStr();
+  const open = list.filter(t => t.status === 'open').length;
+  const inProg = list.filter(t => t.status === 'in_progress').length;
+  const review = list.filter(t => t.status === 'review').length;
+  const overdue = list.filter(t => t.due_date && t.due_date < today && t.status !== 'completed' && t.status !== 'cancelled').length;
+  const tiles = document.getElementById('task-tiles');
+  if (tiles) tiles.innerHTML = `
+    <div class="tile"><div class="tile-label">Open</div><div class="tile-value">${open}</div></div>
+    <div class="tile"><div class="tile-label">In Progress</div><div class="tile-value">${inProg}</div></div>
+    <div class="tile"><div class="tile-label">In Review</div><div class="tile-value">${review}</div></div>
+    <div class="tile"><div class="tile-label">Overdue</div><div class="tile-value ${overdue ? 'neg' : ''}">${overdue}</div></div>
+  `;
+
+  // Filters
+  if (STATE.taskStatusFilter && STATE.taskStatusFilter !== 'all') {
+    list = list.filter(t => t.status === STATE.taskStatusFilter);
+  }
+  if (STATE.taskPriorityFilter && STATE.taskPriorityFilter !== 'all') {
+    list = list.filter(t => (t.priority || 'normal') === STATE.taskPriorityFilter);
+  }
+  const search = (STATE.taskSearch || '').toLowerCase();
+  if (search) {
+    list = list.filter(t =>
+      ((t.title || '') + ' ' + (t.assigned_to || '') + ' ' + (t.description || '')).toLowerCase().includes(search)
+    );
+  }
+
+  // Sort: open/active first, by priority then due_date
+  const priorityRank = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const statusRank = { open: 0, in_progress: 1, review: 2, completed: 3, cancelled: 4 };
+  list.sort((a, b) => {
+    const sa = statusRank[a.status] ?? 5, sb_ = statusRank[b.status] ?? 5;
+    if (sa !== sb_) return sa - sb_;
+    const pa = priorityRank[a.priority || 'normal'], pb = priorityRank[b.priority || 'normal'];
+    if (pa !== pb) return pa - pb;
+    if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
+    if (a.due_date) return -1;
+    if (b.due_date) return 1;
+    return (b.created_at || '').localeCompare(a.created_at || '');
+  });
+
+  const body = document.getElementById('taskBody');
+  if (!body) return;
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No tasks</div><div class="empty-sub">${isOwner() ? 'Create a task to assign work to a project party.' : 'No tasks assigned to you yet.'}</div></div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = list.map(t => {
+    const isOverdue = t.due_date && t.due_date < today && t.status !== 'completed' && t.status !== 'cancelled';
+    const rowStyle = isOverdue ? 'background:rgba(220,38,38,0.06);' : '';
+    let dueCell = '<span class="text-muted">—</span>';
+    if (t.due_date) {
+      const days = Math.floor((new Date(t.due_date + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
+      let suffix = '';
+      if (t.status === 'completed' || t.status === 'cancelled') suffix = '';
+      else if (days < 0) suffix = `<span class="text-sm" style="color:var(--red); font-weight:600;"> · ${Math.abs(days)}d overdue</span>`;
+      else if (days === 0) suffix = `<span class="text-sm" style="color:var(--red); font-weight:600;"> · today</span>`;
+      else if (days <= 3) suffix = `<span class="text-sm" style="color:var(--yellow,#b07d12); font-weight:600;"> · in ${days}d</span>`;
+      else suffix = `<span class="text-sm text-muted"> · in ${days}d</span>`;
+      dueCell = `${fmtDate(t.due_date)}${suffix}`;
+    }
+    const titleHtml = `<div style="font-weight:600;">${escapeHtml(t.title || '')}</div>${t.description ? `<div class="text-sm text-muted" style="margin-top:2px;">${escapeHtml((t.description || '').slice(0, 120))}${(t.description || '').length > 120 ? '…' : ''}</div>` : ''}`;
+    const assignedHtml = `<div>${escapeHtml(t.assigned_to || '—')}</div>${t.assigned_role ? `<div class="text-sm text-muted">${escapeHtml(TASK_ROLE_OPTIONS.find(r => r.value === t.assigned_role)?.label || t.assigned_role)}</div>` : ''}`;
+
+    let actions = '';
+    if (isOwner()) {
+      const canComplete = t.status !== 'completed' && t.status !== 'cancelled';
+      actions = `
+        <div class="row-actions">
+          ${canComplete ? `<button class="btn btn-ghost btn-sm" onclick="markTaskComplete('${t.id}')">✓ Done</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="openTaskModal('${t.id}')">Edit</button>
+        </div>`;
+    } else if (isContractor()) {
+      // Contractor: cycle status open → in_progress → review
+      const next = t.status === 'open' ? 'in_progress' : (t.status === 'in_progress' ? 'review' : null);
+      const nextLabel = next === 'in_progress' ? 'Start' : (next === 'review' ? 'Submit for Review' : null);
+      actions = `
+        <div class="row-actions">
+          ${next ? `<button class="btn btn-ghost btn-sm" onclick="contractorAdvanceTask('${t.id}','${next}')">${nextLabel}</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="openTaskModal('${t.id}')">View</button>
+        </div>`;
+    }
+
+    return `
+      <tr style="${rowStyle}">
+        <td>${taskPriorityBadge(t.priority || 'normal')}</td>
+        <td>${titleHtml}</td>
+        <td>${assignedHtml}</td>
+        <td>${dueCell}</td>
+        <td>${taskStatusBadge(t.status || 'open')}</td>
+        <td>${actions}</td>
+      </tr>
+    `;
+  }).join('');
+}
+window.renderTasks = renderTasks;
+
+// Filter wiring — attach once on first render scope
+document.getElementById('taskStatusFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.taskStatusFilter = chip.dataset.filter;
+  document.querySelectorAll('#taskStatusFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderTasks();
+});
+document.getElementById('taskPriorityFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.taskPriorityFilter = chip.dataset.filter;
+  document.querySelectorAll('#taskPriorityFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderTasks();
+});
+document.getElementById('taskSearch')?.addEventListener('input', e => {
+  STATE.taskSearch = e.target.value;
+  renderTasks();
+});
+
+function openTaskModal(id) {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  const editing = id ? DATA.tasks.find(t => t.id === id) : null;
+  const readOnly = isContractor();
+  const ro = readOnly ? 'disabled' : '';
+  const suggestions = taskAssigneeSuggestions();
+  const datalistId = 'task-assignee-suggestions';
+
+  const priorityOpts = ['low','normal','high','urgent'].map(p =>
+    `<option value="${p}" ${ (editing?.priority || 'normal') === p ? 'selected' : ''}>${TASK_PRIORITY_META[p].label}</option>`
+  ).join('');
+  const statusOpts = ['open','in_progress','review','completed','cancelled'].map(s =>
+    `<option value="${s}" ${(editing?.status || 'open') === s ? 'selected' : ''}>${TASK_STATUS_META[s].label}</option>`
+  ).join('');
+  const roleOpts = TASK_ROLE_OPTIONS.map(r =>
+    `<option value="${r.value}" ${editing?.assigned_role === r.value ? 'selected' : ''}>${r.label}</option>`
+  ).join('');
+
+  const body = `
+    <div class="form-row"><label class="form-label">Title ${readOnly ? '' : '<span style="color:var(--red);">*</span>'}</label>
+      <input id="task-title" type="text" value="${escapeHtml(editing?.title || '')}" ${ro} />
+    </div>
+    <div class="form-row"><label class="form-label">Description</label>
+      <textarea id="task-desc" rows="3" ${ro}>${escapeHtml(editing?.description || '')}</textarea>
+    </div>
+    <div class="form-row two-col">
+      <div>
+        <label class="form-label">Assigned To</label>
+        <input id="task-assigned" type="text" list="${datalistId}"
+               placeholder="e.g. JM&amp;A - General Contractor"
+               value="${escapeHtml(editing?.assigned_to || '')}" ${ro} />
+        <datalist id="${datalistId}">
+          ${suggestions.map(s => `<option value="${escapeHtml(s)}"></option>`).join('')}
+        </datalist>
+      </div>
+      <div>
+        <label class="form-label">Role Category</label>
+        <select id="task-role" ${ro}>
+          <option value="">—</option>
+          ${roleOpts}
+        </select>
+      </div>
+    </div>
+    <div class="form-row two-col">
+      <div>
+        <label class="form-label">Priority</label>
+        <select id="task-priority" ${ro}>${priorityOpts}</select>
+      </div>
+      <div>
+        <label class="form-label">Status</label>
+        <select id="task-status" ${isOwner() ? '' : (isContractor() ? '' : 'disabled')}>${statusOpts}</select>
+        ${isContractor() ? '<div class="text-sm text-muted" style="margin-top:4px;">You can advance status: Open → In Progress → Review</div>' : ''}
+      </div>
+    </div>
+    <div class="form-row two-col">
+      <div>
+        <label class="form-label">Due Date</label>
+        <input id="task-due" type="date" value="${editing?.due_date || ''}" ${ro} />
+      </div>
+      <div>
+        <label class="form-label">Created</label>
+        <input type="text" value="${editing ? fmtDate(editing.created_at) : 'On save'}" disabled />
+      </div>
+    </div>
+    <div class="form-row"><label class="form-label">Notes</label>
+      <textarea id="task-notes" rows="3" ${ro}>${escapeHtml(editing?.notes || '')}</textarea>
+    </div>
+  `;
+
+  let footer;
+  if (isOwner()) {
+    footer = editing
+      ? `<button class="btn btn-danger" onclick="deleteTask('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveTask('${editing.id}')">Save</button>`
+      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveTask()">Create Task</button>`;
+  } else if (isContractor() && editing) {
+    footer = `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="saveTask('${editing.id}', true)">Update Status</button>`;
+  } else {
+    footer = `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button>`;
+  }
+
+  showModal({
+    title: editing ? 'Task Details' : 'New Task',
+    body,
+    footer,
+  });
+}
+window.openTaskModal = openTaskModal;
+
+async function saveTask(id, contractorMode) {
+  if (!isOwner() && !contractorMode) { toast('Not allowed'); return; }
+
+  if (contractorMode && id) {
+    // Contractor can only change status (restricted to allowed transitions)
+    const newStatus = document.getElementById('task-status').value;
+    if (!['open','in_progress','review'].includes(newStatus)) {
+      toast('Contractors can only set status to Open, In Progress, or Review');
+      return;
+    }
+    const patch = { status: newStatus, updated_at: new Date().toISOString() };
+    const { error } = await sb.from('tasks').update(patch).eq('id', id);
+    if (error) { handleSbError(error, 'Update task'); return; }
+    await loadAllData();
+    toast('Task status updated');
+    closeModal();
+    render();
+    return;
+  }
+
+  const title = document.getElementById('task-title').value.trim();
+  if (!title) { toast('Title required'); return; }
+  const status = document.getElementById('task-status').value;
+  const data = {
+    project_id: STATE.activeProjectId,
+    title,
+    description: document.getElementById('task-desc').value.trim() || null,
+    assigned_to: document.getElementById('task-assigned').value.trim() || null,
+    assigned_role: document.getElementById('task-role').value || null,
+    priority: document.getElementById('task-priority').value || 'normal',
+    status: status || 'open',
+    due_date: document.getElementById('task-due').value || null,
+    notes: document.getElementById('task-notes').value.trim() || null,
+    updated_at: new Date().toISOString(),
+    completed_at: status === 'completed' ? new Date().toISOString() : null,
+  };
+  let res;
+  if (id) {
+    res = await sb.from('tasks').update(data).eq('id', id);
+  } else {
+    res = await sb.from('tasks').insert(data);
+  }
+  if (res.error) { handleSbError(res.error, 'Save task'); return; }
+  await loadAllData();
+  toast(id ? 'Task updated' : 'Task created');
+  closeModal();
+  render();
+}
+window.saveTask = saveTask;
+
+async function markTaskComplete(id) {
+  if (!isOwner()) { toast('Not allowed'); return; }
+  const patch = { status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  const { error } = await sb.from('tasks').update(patch).eq('id', id);
+  if (error) { handleSbError(error, 'Complete task'); return; }
+  await loadAllData();
+  toast('Task marked complete');
+  render();
+}
+window.markTaskComplete = markTaskComplete;
+
+async function contractorAdvanceTask(id, next) {
+  if (!isContractor()) { toast('Not allowed'); return; }
+  if (!['in_progress','review'].includes(next)) { toast('Invalid status'); return; }
+  const t = DATA.tasks.find(x => x.id === id);
+  if (!t || !taskVisibleForViewer(t)) { toast('Not allowed'); return; }
+  const patch = { status: next, updated_at: new Date().toISOString() };
+  const { error } = await sb.from('tasks').update(patch).eq('id', id);
+  if (error) { handleSbError(error, 'Advance task'); return; }
+  await loadAllData();
+  toast('Task status updated');
+  render();
+}
+window.contractorAdvanceTask = contractorAdvanceTask;
+
+async function deleteTask(id) {
+  if (!isOwner()) { toast('Not allowed'); return; }
+  if (!confirm('Delete this task?')) return;
+  const { error } = await sb.from('tasks').delete().eq('id', id);
+  if (error) { handleSbError(error, 'Delete task'); return; }
+  await loadAllData();
+  toast('Task deleted');
+  closeModal();
+  render();
+}
+window.deleteTask = deleteTask;
 
 </script>
 </body>
