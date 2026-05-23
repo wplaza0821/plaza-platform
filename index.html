@@ -3,50 +3,60 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#1a2e4a" />
-<title>Plaza &amp; Associates — Project Hub</title>
+<meta name="theme-color" content="#020000" />
+<title>Plaza &amp; Associates — Construction Platform</title>
 <style>
+  /* =========================================================================
+     PLAZA & ASSOCIATES — MINIMALIST B&W BRAND PALETTE
+     Near-black + grayscale, sparing teal accent. No gold, no navy.
+     ========================================================================= */
   :root {
-    --navy: #1a2e4a;
-    --navy-soft: #243a5c;
-    --navy-deep: #0f1d31;
-    --gold: #e8a020;
-    --gold-dark: #c8881a;
-    --gray-50: #f7f8fa;
-    --gray-100: #eef0f4;
-    --gray-200: #dde2ea;
-    --gray-300: #c2cad6;
-    --gray-400: #8a95a8;
-    --gray-500: #5b6679;
-    --gray-700: #2f3947;
-    --green: #1e8a5a;
-    --green-bg: #e3f5ec;
-    --yellow: #b07d12;
-    --yellow-bg: #fdf3d9;
-    --red: #c0392b;
-    --red-bg: #fbe6e3;
-    --blue: #1c6dd0;
-    --blue-bg: #e3eefb;
-    --purple: #6a3eb3;
-    --purple-bg: #ece4f7;
-    --shadow-sm: 0 1px 2px rgba(15, 29, 49, 0.06), 0 1px 3px rgba(15, 29, 49, 0.04);
-    --shadow-md: 0 4px 12px rgba(15, 29, 49, 0.08), 0 2px 4px rgba(15, 29, 49, 0.04);
-    --shadow-lg: 0 12px 32px rgba(15, 29, 49, 0.14), 0 4px 12px rgba(15, 29, 49, 0.06);
-    --radius: 10px;
-    --radius-sm: 6px;
+    --black: #020000;            /* primary / headers / buttons */
+    --black-soft: #1a1818;
+    --ink: #333333;              /* body text */
+    --gray-50: #FAFAFA;
+    --gray-100: #F4F4F4;         /* section bg / hover */
+    --gray-200: #E5E5E5;         /* borders */
+    --gray-300: #D4D4D4;
+    --gray-400: #888888;         /* secondary text */
+    --gray-500: #666666;
+    --gray-700: #333333;
+    --accent: #1f6581;           /* Plaza teal — used sparingly */
+    --accent-bg: #e8eff2;
+    --green: #1f6581;            /* approved (teal) */
+    --green-bg: #e8eff2;
+    --yellow: #666666;           /* pending (gray, no yellow) */
+    --yellow-bg: #F4F4F4;
+    --red: #cf2e2e;              /* true urgency only */
+    --red-bg: #fbe9e9;
+    --blue: #1f6581;             /* info → teal */
+    --blue-bg: #e8eff2;
+    --purple: #333333;           /* desaturated */
+    --purple-bg: #F4F4F4;
+    /* Legacy aliases — kept so existing rules still resolve */
+    --navy: #020000;
+    --navy-soft: #1a1818;
+    --navy-deep: #020000;
+    --gold: #020000;
+    --gold-dark: #020000;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.07);
+    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.12);
+    --radius: 4px;
+    --radius-sm: 4px;
   }
 
   * { box-sizing: border-box; }
 
   html, body {
     margin: 0; padding: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    color: var(--gray-700);
-    background: var(--gray-50);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #FFFFFF;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-size: 14px;
-    line-height: 1.5;
+    line-height: 1.6;
   }
 
   /* ---------- App shell ---------- */
@@ -57,9 +67,9 @@
   }
 
   .topbar {
-    background: var(--navy);
-    color: #fff;
-    padding: 14px 22px;
+    background: #FFFFFF;
+    color: var(--black);
+    padding: 18px 26px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -67,46 +77,74 @@
     position: sticky;
     top: 0;
     z-index: 50;
-    padding-top: max(14px, env(safe-area-inset-top));
+    padding-top: max(18px, env(safe-area-inset-top));
+    border-bottom: 1px solid var(--gray-200);
   }
   .brand {
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-weight: 600;
+    gap: 14px;
+    font-weight: 400;
     letter-spacing: 0.2px;
   }
-  .brand-mark {
-    width: 34px; height: 34px;
-    border-radius: 8px;
-    background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
-    display: flex; align-items: center; justify-content: center;
-    color: #1a2e4a;
-    font-weight: 800;
-    font-size: 15px;
-    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.12);
+  .brand-logo { width: 120px; height: auto; display: block; }
+  .brand-logo svg { display: block; width: 100%; height: auto; }
+  .brand-divider { width: 1px; height: 28px; background: var(--gray-200); }
+  .brand-sub {
+    font-size: 11px;
+    color: var(--gray-400);
+    font-weight: 400;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    line-height: 1.2;
   }
-  .brand-name { font-size: 15px; line-height: 1.1; }
-  .brand-sub { font-size: 11px; color: rgba(255,255,255,0.6); font-weight: 400; letter-spacing: 0.4px; text-transform: uppercase; }
 
-  .top-actions { display: flex; gap: 8px; align-items: center; }
-  .project-select {
-    background: var(--navy-soft);
-    color: #fff;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: var(--radius-sm);
-    padding: 8px 12px;
+  .top-actions { display: flex; gap: 10px; align-items: center; }
+  .role-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--black);
+    color: #FFFFFF;
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    border-radius: 2px;
+  }
+  .role-pill.contractor { background: var(--gray-100); color: var(--black); border: 1px solid var(--gray-200); }
+  .btn-logout {
+    background: transparent;
+    border: 1px solid var(--gray-200);
+    color: var(--gray-500);
+    padding: 6px 12px;
+    font-size: 11px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    border-radius: 2px;
+    cursor: pointer;
     font-family: inherit;
-    font-size: 13px;
+    transition: all 0.15s;
+  }
+  .btn-logout:hover { background: var(--black); color: #FFFFFF; border-color: var(--black); }
+  .project-select {
+    background: #FFFFFF;
+    color: var(--black);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    padding: 8px 30px 8px 12px;
+    font-family: inherit;
+    font-size: 12px;
     font-weight: 500;
+    letter-spacing: 0.3px;
     cursor: pointer;
     appearance: none;
     -webkit-appearance: none;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='white' d='M0 0l5 6 5-6z' opacity='0.7'/></svg>");
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%23020000' d='M0 0l5 6 5-6z' opacity='0.6'/></svg>");
     background-repeat: no-repeat;
     background-position: right 10px center;
-    padding-right: 28px;
-    max-width: 260px;
+    max-width: 280px;
     text-overflow: ellipsis;
   }
 
@@ -141,8 +179,8 @@
     gap: 8px;
     transition: color 0.15s, border-color 0.15s;
   }
-  .tab:hover { color: var(--navy); }
-  .tab.active { color: var(--navy); border-bottom-color: var(--gold); font-weight: 600; }
+  .tab:hover { color: var(--black); }
+  .tab.active { color: var(--black); border-bottom-color: var(--black); font-weight: 600; }
   .tab .count {
     background: var(--gray-100);
     color: var(--gray-500);
@@ -153,7 +191,7 @@
     min-width: 18px;
     text-align: center;
   }
-  .tab.active .count { background: var(--gold); color: #fff; }
+  .tab.active .count { background: var(--black); color: #fff; }
 
   /* ---------- Main content ---------- */
   main {
@@ -174,10 +212,11 @@
   }
   .page-title {
     margin: 0;
-    color: var(--navy);
+    color: var(--black);
     font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.3px;
+    font-weight: 400;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
   }
   .page-subtitle {
     color: var(--gray-500);
@@ -215,23 +254,25 @@
     white-space: nowrap;
   }
   .btn-primary {
-    background: var(--gold);
+    background: var(--black);
     color: #fff;
-    box-shadow: 0 1px 2px rgba(232, 160, 32, 0.3);
+    border-color: var(--black);
+    letter-spacing: 0.4px;
   }
-  .btn-primary:hover { background: var(--gold-dark); }
+  .btn-primary:hover { background: #1a1818; }
   .btn-secondary {
     background: #fff;
-    color: var(--navy);
-    border-color: var(--gray-200);
+    color: var(--black);
+    border-color: var(--black);
+    letter-spacing: 0.4px;
   }
-  .btn-secondary:hover { background: var(--gray-50); border-color: var(--gray-300); }
+  .btn-secondary:hover { background: var(--gray-100); }
   .btn-ghost {
     background: transparent;
     color: var(--gray-500);
     padding: 6px 10px;
   }
-  .btn-ghost:hover { background: var(--gray-100); color: var(--navy); }
+  .btn-ghost:hover { background: var(--gray-100); color: var(--black); }
   .btn-danger { background: #fff; color: var(--red); border-color: var(--gray-200); }
   .btn-danger:hover { background: var(--red-bg); border-color: var(--red); }
   .btn-sm { padding: 6px 11px; font-size: 12px; }
@@ -250,7 +291,7 @@
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     background: #fff;
   }
-  .card-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--navy); }
+  .card-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--black); letter-spacing: 0.5px; text-transform: uppercase; }
   .card-body { padding: 18px; }
 
   /* ---------- Projects ---------- */
@@ -272,8 +313,8 @@
     color: var(--gray-500);
     transition: all 0.15s;
   }
-  .chip:hover { color: var(--navy); border-color: var(--gray-300); }
-  .chip.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .chip:hover { color: var(--black); border-color: var(--black); }
+  .chip.active { background: var(--black); color: #fff; border-color: var(--black); }
 
   .project-grid {
     display: grid;
@@ -291,22 +332,22 @@
     position: relative;
   }
   .project-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); border-color: var(--gray-300); }
-  .project-card.active { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(232,160,32,0.2), var(--shadow-md); }
+  .project-card.active { border-color: var(--black); box-shadow: 0 0 0 1px var(--black), var(--shadow-md); }
   .project-card-head {
     display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px;
   }
   .project-name {
-    font-size: 15px; font-weight: 700; color: var(--navy); margin: 0;
-    letter-spacing: -0.1px;
+    font-size: 15px; font-weight: 600; color: var(--black); margin: 0;
+    letter-spacing: 0.2px;
   }
-  .project-number { font-size: 11px; color: var(--gray-400); font-weight: 600; letter-spacing: 0.4px; }
+  .project-number { font-size: 11px; color: var(--gray-400); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
   .project-address { color: var(--gray-500); font-size: 12px; margin: 4px 0 12px 0; }
   .project-stats {
     display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 12px;
     border-top: 1px solid var(--gray-100);
   }
   .stat-label { font-size: 10px; color: var(--gray-400); text-transform: uppercase; font-weight: 600; letter-spacing: 0.6px; }
-  .stat-value { font-size: 14px; font-weight: 700; color: var(--navy); margin-top: 2px; }
+  .stat-value { font-size: 14px; font-weight: 700; color: var(--black); margin-top: 2px; }
 
   .progress-bar {
     height: 6px;
@@ -317,7 +358,7 @@
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--gold), var(--gold-dark));
+    background: var(--black);
     transition: width 0.4s ease;
   }
 
@@ -396,23 +437,23 @@
   table.data select.cell-input:hover { border-color: var(--gray-200); background: #fff; }
   table.data input.cell-input:focus,
   table.data select.cell-input:focus {
-    outline: none; border-color: var(--gold); background: #fff;
-    box-shadow: 0 0 0 2px rgba(232,160,32,0.15);
+    outline: none; border-color: var(--black); background: #fff;
+    box-shadow: 0 0 0 2px rgba(2,0,0,0.08);
   }
   table.data input.cell-input.num,
   table.data input.cell-input[type="number"] { text-align: right; font-variant-numeric: tabular-nums; }
 
   tfoot.totals td {
-    background: var(--gray-50);
+    background: var(--gray-100);
     font-weight: 700;
-    color: var(--navy);
-    border-top: 2px solid var(--gray-200);
+    color: var(--black);
+    border-top: 2px solid var(--black);
   }
 
   /* ---------- Forms / modals ---------- */
   .modal-overlay {
     position: fixed; inset: 0;
-    background: rgba(15, 29, 49, 0.5);
+    background: rgba(2, 0, 0, 0.55);
     backdrop-filter: blur(2px);
     z-index: 100;
     display: flex; align-items: center; justify-content: center;
@@ -437,14 +478,14 @@
     display: flex; justify-content: space-between; align-items: center;
     position: sticky; top: 0; background: #fff; z-index: 1;
   }
-  .modal-title { margin: 0; font-size: 16px; font-weight: 700; color: var(--navy); }
+  .modal-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--black); letter-spacing: 0.8px; text-transform: uppercase; }
   .modal-close {
     background: transparent; border: none; cursor: pointer;
     width: 30px; height: 30px; border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
     color: var(--gray-500); font-size: 18px;
   }
-  .modal-close:hover { background: var(--gray-100); color: var(--navy); }
+  .modal-close:hover { background: var(--gray-100); color: var(--black); }
   .modal-body { padding: 20px; }
   .modal-foot {
     padding: 14px 20px;
@@ -477,8 +518,8 @@
   }
   input:focus, textarea:focus, select:focus {
     outline: none;
-    border-color: var(--gold);
-    box-shadow: 0 0 0 3px rgba(232,160,32,0.12);
+    border-color: var(--black);
+    box-shadow: 0 0 0 3px rgba(2,0,0,0.08);
   }
   textarea { resize: vertical; min-height: 80px; }
 
@@ -500,7 +541,7 @@
     font-size: 10px; color: var(--gray-400); font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.6px;
   }
-  .tile-value { font-size: 19px; font-weight: 700; color: var(--navy); margin-top: 4px; }
+  .tile-value { font-size: 19px; font-weight: 700; color: var(--black); margin-top: 4px; }
   .tile-value.pos { color: var(--green); }
   .tile-value.neg { color: var(--red); }
   .tile-sub { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
@@ -523,14 +564,14 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  .doc-cat-card:hover { border-color: var(--gold); transform: translateY(-1px); }
+  .doc-cat-card:hover { border-color: var(--black); transform: translateY(-1px); }
   .doc-cat-icon {
     width: 38px; height: 38px;
     border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
     font-size: 18px;
   }
-  .doc-cat-name { font-weight: 600; color: var(--navy); font-size: 13px; }
+  .doc-cat-name { font-weight: 600; color: var(--black); font-size: 13px; }
   .doc-cat-count { font-size: 11px; color: var(--gray-400); }
 
   /* ---------- Empty state ---------- */
@@ -575,7 +616,7 @@
     min-width: 200px;
     font-family: inherit;
   }
-  .toolbar .search:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(232,160,32,0.12); }
+  .toolbar .search:focus { outline: none; border-color: var(--black); box-shadow: 0 0 0 3px rgba(2,0,0,0.08); }
 
   /* ---------- Toast ---------- */
   .toast {
@@ -583,12 +624,13 @@
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--navy);
+    background: var(--black);
     color: #fff;
     padding: 11px 18px;
     border-radius: var(--radius-sm);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
+    letter-spacing: 0.4px;
     box-shadow: var(--shadow-lg);
     z-index: 200;
     animation: slideUp 0.2s ease;
@@ -601,10 +643,13 @@
   /* ---------- Responsive ---------- */
   @media (max-width: 768px) {
     main { padding: 14px; }
-    .topbar { padding: 12px 14px; }
-    .brand-name { font-size: 14px; }
+    .topbar { padding: 12px 14px; flex-wrap: wrap; }
+    .brand-logo { width: 90px; }
     .brand-sub { display: none; }
-    .project-select { max-width: 160px; font-size: 12px; }
+    .brand-divider { display: none; }
+    .project-select { max-width: 160px; font-size: 11px; }
+    .role-pill { font-size: 9px; padding: 5px 9px; letter-spacing: 1px; }
+    .btn-logout { padding: 5px 9px; font-size: 10px; }
     .tab { padding: 12px 12px; font-size: 12px; }
     .page-title { font-size: 19px; }
     .project-grid { grid-template-columns: 1fr; }
@@ -628,8 +673,8 @@
     .project-card { break-inside: avoid; }
     .tab-page { display: block !important; }
     .tab-page:not(.print-target) { display: none !important; }
-    .print-header { display: block !important; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--navy); }
-    .print-header h1 { color: var(--navy); margin: 0; }
+    .print-header { display: block !important; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--black); }
+    .print-header h1 { color: var(--black); margin: 0; }
     .print-header .sub { color: var(--gray-500); font-size: 12px; margin-top: 4px; }
   }
   .print-header { display: none; }
@@ -645,25 +690,196 @@
   .mt-12 { margin-top: 12px; }
   .mb-12 { margin-bottom: 12px; }
   .nowrap { white-space: nowrap; }
+
+  /* =========================================================================
+     LOGIN GATE (shown on first load until valid key/password is supplied)
+     ========================================================================= */
+  .login-overlay {
+    position: fixed; inset: 0;
+    background: #FFFFFF;
+    z-index: 999;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .login-card {
+    width: 100%;
+    max-width: 380px;
+    text-align: center;
+  }
+  .login-logo { width: 180px; margin: 0 auto 28px auto; }
+  .login-logo svg { display: block; width: 100%; height: auto; }
+  .login-title {
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--gray-400);
+    margin-bottom: 32px;
+    font-weight: 400;
+  }
+  .login-input {
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid var(--gray-200);
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: 14px;
+    letter-spacing: 0.4px;
+    background: #FFFFFF;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .login-input:focus { outline: none; border-color: var(--black); box-shadow: 0 0 0 3px rgba(2,0,0,0.06); }
+  .login-btn {
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--black);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .login-btn:hover { background: #1a1818; }
+  .login-error {
+    color: var(--red);
+    font-size: 12px;
+    margin-top: 12px;
+    min-height: 18px;
+    letter-spacing: 0.3px;
+  }
+  .login-footer {
+    margin-top: 40px;
+    font-size: 10px;
+    color: var(--gray-400);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+
+  /* =========================================================================
+     PAGE FOOTER
+     ========================================================================= */
+  .app-footer {
+    padding: 30px 22px 36px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--gray-400);
+    letter-spacing: 1px;
+    border-top: 1px solid var(--gray-200);
+    margin-top: 40px;
+  }
+
+  /* =========================================================================
+     ACCESS / TOKEN MANAGEMENT (owner-only tab)
+     ========================================================================= */
+  .access-modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .access-module-chk {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--gray-200);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .access-module-chk:hover { border-color: var(--black); }
+  .access-module-chk input { width: auto; margin: 0; }
+  .copy-row {
+    display: flex; gap: 6px; align-items: center;
+    background: var(--gray-100);
+    padding: 10px 12px;
+    border-radius: 4px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .copy-row input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+    padding: 0;
+  }
+  .copy-row input:focus { box-shadow: none; }
+
+  /* =========================================================================
+     ROLE-BASED VISIBILITY
+     [data-role-hide="contractor"] hides element when contractor logged in
+     [data-role-hide="owner"]      hides when owner logged in
+     [data-perm-hide]              hides when contractor lacks the named permission
+     Applied by JS on boot.
+     ========================================================================= */
+  body.role-contractor [data-role-hide="contractor"] { display: none !important; }
+  body.role-owner      [data-role-hide="owner"]      { display: none !important; }
+  body.perm-no-edit-payapps  .perm-edit-payapps  { display: none !important; }
+  body.perm-no-edit-cos      .perm-edit-cos      { display: none !important; }
+  body.perm-no-edit-rfis     .perm-edit-rfis     { display: none !important; }
+  body.perm-no-edit-subs     .perm-edit-subs     { display: none !important; }
+  body.perm-no-edit-docs     .perm-edit-docs     { display: none !important; }
+  body.perm-no-edit-projects .perm-edit-projects { display: none !important; }
+  body.perm-no-view-rfis     [data-tab="rfis"],
+  body.perm-no-view-rfis     #page-rfis           { display: none !important; }
+  body.perm-no-view-subs     [data-tab="submittals"],
+  body.perm-no-view-subs     #page-submittals     { display: none !important; }
+  body.perm-no-view-docs     [data-tab="docs"],
+  body.perm-no-view-docs     #page-docs           { display: none !important; }
+  body.perm-no-view-cos      [data-tab="cos"],
+  body.perm-no-view-cos      #page-cos            { display: none !important; }
+  body.perm-no-view-payapps  [data-tab="sov"],
+  body.perm-no-view-payapps  #page-sov            { display: none !important; }
 </style>
 </head>
-<body>
-<div class="app">
-  <!-- Top bar -->
+<body class="app-booting">
+
+<!-- =========================================================================
+     LOGIN OVERLAY — always rendered first; JS hides it once auth succeeds.
+     Plaza logo + single password input. URL ?key=<token> bypasses for contractors.
+     ========================================================================= -->
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-card">
+    <div class="login-logo" id="loginLogo"></div>
+    <div class="login-title">Construction Platform</div>
+    <form id="loginForm" autocomplete="off">
+      <input id="loginInput" class="login-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button type="submit" class="login-btn">Enter</button>
+      <div class="login-error" id="loginError"></div>
+    </form>
+    <div class="login-footer">Plaza &amp; Associates, LLC · Coral Gables, FL</div>
+  </div>
+</div>
+
+<div class="app" id="appShell" style="display:none;">
+  <!-- =========================================================================
+       TOP BAR — Plaza logo + role indicator. Project selector is owner-only
+       (contractors are auto-locked to a single project from their token).
+       ========================================================================= -->
   <header class="topbar">
     <div class="brand">
-      <div class="brand-mark">P</div>
-      <div>
-        <div class="brand-name">Plaza &amp; Associates</div>
-        <div class="brand-sub">Project Hub</div>
-      </div>
+      <a href="#" id="brandLogo" class="brand-logo" aria-label="Plaza & Associates" onclick="event.preventDefault(); switchTab('projects');"></a>
+      <div class="brand-divider"></div>
+      <div class="brand-sub">Construction<br/>Platform</div>
     </div>
     <div class="top-actions">
-      <select id="projectSelect" class="project-select" aria-label="Active project"></select>
+      <select id="projectSelect" class="project-select" aria-label="Active project" data-role-hide="contractor"></select>
+      <span id="contractorProjectLabel" class="role-pill contractor" data-role-hide="owner" style="display:none;"></span>
+      <span id="roleIndicator" class="role-pill"></span>
+      <button type="button" class="btn-logout" id="logoutBtn" onclick="logout()">Logout</button>
     </div>
   </header>
 
-  <!-- Tabs -->
+  <!-- =========================================================================
+       TABS — "Access" tab is owner-only (hidden via [data-role-hide]).
+       Individual tabs are also hidden per-permission for contractors.
+       ========================================================================= -->
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="projects"><span>📋</span> Projects</button>
     <button class="tab" data-tab="sov"><span>💰</span> Pay Apps <span class="count" id="cnt-sov">0</span></button>
@@ -671,6 +887,7 @@
     <button class="tab" data-tab="submittals"><span>📤</span> Submittals <span class="count" id="cnt-subs">0</span></button>
     <button class="tab" data-tab="cos"><span>🔁</span> Change Orders <span class="count" id="cnt-cos">0</span></button>
     <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
+    <button class="tab" data-tab="access" data-role-hide="contractor"><span>🔑</span> Access</button>
   </nav>
 
   <main id="main">
@@ -681,7 +898,7 @@
           <h1 class="page-title">Projects</h1>
           <div class="page-subtitle">Forensic enclosure &amp; waterproofing — active portfolio</div>
         </div>
-        <button class="btn btn-primary" onclick="openProjectModal()">＋ New Project</button>
+        <button class="btn btn-primary perm-edit-projects" onclick="openProjectModal()">＋ New Project</button>
       </div>
 
       <div class="filter-bar" id="projectFilters">
@@ -704,7 +921,7 @@
         </div>
         <div class="flex gap-8">
           <button class="btn btn-secondary" onclick="window.print()">🖨 Print</button>
-          <button class="btn btn-primary" onclick="newPayApp()">＋ New Pay App</button>
+          <button class="btn btn-primary perm-edit-payapps" onclick="newPayApp()">＋ New Pay App</button>
         </div>
       </div>
 
@@ -725,7 +942,7 @@
               <option value="Paid">Paid</option>
             </select>
             <input type="date" id="payAppDate" style="width:auto;" />
-            <button class="btn btn-ghost btn-sm" onclick="deletePayApp()">Delete</button>
+            <button class="btn btn-ghost btn-sm perm-edit-payapps" onclick="deletePayApp()">Delete</button>
           </div>
         </div>
         <div class="card-body" style="padding:0;">
@@ -751,7 +968,7 @@
             </table>
           </div>
           <div style="padding:12px 16px; border-top:1px solid var(--gray-200);">
-            <button class="btn btn-secondary btn-sm" onclick="addSovLine()">＋ Add Line Item</button>
+            <button class="btn btn-secondary btn-sm perm-edit-payapps" onclick="addSovLine()">＋ Add Line Item</button>
           </div>
         </div>
       </div>
@@ -765,7 +982,7 @@
           <div class="page-subtitle">Field questions &amp; engineering clarifications</div>
           <div class="page-context-pill" id="rfis-context"></div>
         </div>
-        <button class="btn btn-primary" onclick="openRfiModal()">＋ New RFI</button>
+        <button class="btn btn-primary perm-edit-rfis" onclick="openRfiModal()">＋ New RFI</button>
       </div>
 
       <div class="toolbar">
@@ -807,7 +1024,7 @@
           <div class="page-subtitle">Product data, shop drawings &amp; samples</div>
           <div class="page-context-pill" id="subs-context"></div>
         </div>
-        <button class="btn btn-primary" onclick="openSubmittalModal()">＋ New Submittal</button>
+        <button class="btn btn-primary perm-edit-subs" onclick="openSubmittalModal()">＋ New Submittal</button>
       </div>
 
       <div class="toolbar">
@@ -851,7 +1068,7 @@
           <div class="page-subtitle">Contract modifications &amp; potential change orders</div>
           <div class="page-context-pill" id="cos-context"></div>
         </div>
-        <button class="btn btn-primary" onclick="openCoModal()">＋ New Change Order</button>
+        <button class="btn btn-primary perm-edit-cos" onclick="openCoModal()">＋ New Change Order</button>
       </div>
 
       <div class="summary-tiles" id="co-tiles"></div>
@@ -883,7 +1100,7 @@
           <div class="page-subtitle">Drawing sets, spec sections &amp; reference documents</div>
           <div class="page-context-pill" id="docs-context"></div>
         </div>
-        <button class="btn btn-primary" onclick="openDocModal()">⤴ Upload Document</button>
+        <button class="btn btn-primary perm-edit-docs" onclick="openDocModal()">⤴ Upload Document</button>
       </div>
 
       <div class="hint-banner">
@@ -923,7 +1140,45 @@
         </table>
       </div>
     </section>
+
+    <!-- ========================================================================
+         ACCESS — Owner-only. Generates shareable contractor links scoped to a
+         single project with per-module permissions. Tokens stored in localStorage.
+         ======================================================================== -->
+    <section id="page-access" class="tab-page" data-role-hide="contractor">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Contractor Access</h1>
+          <div class="page-subtitle">Generate scoped share links — each contractor sees only the project &amp; modules you grant.</div>
+        </div>
+        <button class="btn btn-primary" onclick="openAccessModal()">＋ New Access Link</button>
+      </div>
+
+      <div class="hint-banner" style="background:var(--gray-100); border-color:var(--gray-200); color:var(--ink);">
+        🔒 Links are encoded into the URL itself. Revoking a link deletes the matching token from this browser's storage — the old URL stops working immediately on this device.
+      </div>
+
+      <div class="table-wrap">
+        <table class="data" id="accessTable">
+          <thead>
+            <tr>
+              <th>Contractor</th>
+              <th>Project</th>
+              <th>Modules</th>
+              <th>Created</th>
+              <th>Link</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="accessBody"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
+
+  <footer class="app-footer">
+    Plaza &amp; Associates, LLC · Consulting Engineering · Coral Gables, FL
+  </footer>
 </div>
 
 <!-- Modal container -->
@@ -932,9 +1187,206 @@
 
 <script>
 /* =========================================================================
-   PLAZA & ASSOCIATES — PROJECT HUB
+   PLAZA & ASSOCIATES — CONSTRUCTION PLATFORM
    Single-page vanilla JS app. localStorage persistence.
    ========================================================================= */
+
+/* =========================================================================
+   ACCESS CONTROL
+   -------------------------------------------------------------------------
+   Two roles:
+     1) OWNER — unlocks with the password constant below. Full edit access
+                across all projects. Can generate contractor share links.
+     2) CONTRACTOR — lands via URL ?key=<base64-json>. Token specifies the
+                projectId, contractor display name, and per-module perms.
+                Tokens are stored in localStorage so the owner can revoke
+                them; revoke deletes the token and the link stops working
+                on this device immediately.
+
+   Session auth is stored in sessionStorage so re-auth is required per tab.
+   ========================================================================= */
+const OWNER_PASSWORD     = 'PlazaOwner2026';   // configurable — share with William
+const SESSION_AUTH_KEY   = 'plaza_session_auth';
+const TOKEN_STORAGE_KEY  = 'plaza_access_tokens';
+
+// Plaza official logo — inlined so the platform works fully offline.
+const PLAZA_LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 302.24 167.42" aria-hidden="true"><path fill="#020000" d="M59,147.89h5.08L72.16,167H66.51l-1.38-3.39H57.79L56.44,167H50.9Zm4.62,11.65-2.12-5.4-2.15,5.4Z"/><path fill="#020000" d="M76.8,164.22l2.94-3.51A9.73,9.73,0,0,0,85.9,163c1.41,0,2.17-.49,2.17-1.3v-.06c0-.78-.62-1.22-3.2-1.81-4.05-.93-7.17-2.07-7.17-6v-.05c0-3.54,2.8-6.09,7.36-6.09a11.94,11.94,0,0,1,7.82,2.53L90.25,154a9.57,9.57,0,0,0-5.33-1.88c-1.27,0-1.9.55-1.9,1.23v0c0,.87.65,1.25,3.29,1.85,4.37,1,7.09,2.36,7.09,5.92v0c0,3.89-3.07,6.2-7.69,6.2A13.29,13.29,0,0,1,76.8,164.22Z"/><path fill="#020000" d="M98.75,164.22l2.93-3.51a9.76,9.76,0,0,0,6.17,2.28c1.41,0,2.17-.49,2.17-1.3v-.06c0-.78-.63-1.22-3.21-1.81-4-.93-7.17-2.07-7.17-6v-.05c0-3.54,2.8-6.09,7.36-6.09a12,12,0,0,1,7.83,2.53L112.19,154a9.57,9.57,0,0,0-5.32-1.88c-1.28,0-1.9.55-1.9,1.23v0c0,.87.65,1.25,3.28,1.85,4.38,1,7.09,2.36,7.09,5.92v0c0,3.89-3.07,6.2-7.68,6.2A13.28,13.28,0,0,1,98.75,164.22Z"/><path fill="#020000" d="M121.75,157.59v-.06a10.25,10.25,0,0,1,20.48-.05v.05a10.25,10.25,0,0,1-20.48.06Zm15.1,0v-.06A4.94,4.94,0,0,0,132,152.4a4.85,4.85,0,0,0-4.81,5.08v.05a4.94,4.94,0,0,0,4.87,5.14A4.85,4.85,0,0,0,136.85,157.59Z"/><path fill="#020000" d="M148.83,157.59v-.06a9.76,9.76,0,0,1,10-9.88,9.31,9.31,0,0,1,8.06,4l-4,3.07a5.09,5.09,0,0,0-4.16-2.22c-2.66,0-4.53,2.25-4.53,5v.05c0,2.86,1.87,5.08,4.53,5.08a5.17,5.17,0,0,0,4.29-2.31l4,2.83a10,10,0,0,1-18.22-5.54Z"/><path fill="#020000" d="M173.92,148h5.29v19h-5.29Z"/><path fill="#020000" d="M193.77,147.89h5.08L206.94,167H201.3l-1.39-3.39h-7.33L191.22,167h-5.54Zm4.62,11.65-2.12-5.4-2.15,5.4Z"/><path fill="#020000" d="M215.5,152.64h-5.71V148h16.68v4.61h-5.7V167H215.5Z"/><path fill="#020000" d="M233.29,148h15.29v4.48H238.5v2.88h9.13v4.15H238.5v3h10.21V167H233.29Z"/><path fill="#020000" d="M254.47,164.22l2.93-3.51a9.76,9.76,0,0,0,6.17,2.28c1.41,0,2.17-.49,2.17-1.3v-.06c0-.78-.63-1.22-3.21-1.81-4-.93-7.17-2.07-7.17-6v-.05c0-3.54,2.8-6.09,7.36-6.09a12,12,0,0,1,7.83,2.53L267.91,154a9.57,9.57,0,0,0-5.32-1.88c-1.28,0-1.9.55-1.9,1.23v0c0,.87.65,1.25,3.28,1.85,4.38,1,7.09,2.36,7.09,5.92v0c0,3.89-3.07,6.2-7.68,6.2A13.28,13.28,0,0,1,254.47,164.22Z"/><path fill="#020000" d="M17.84,159.31a8,8,0,0,0,8,8,10.68,10.68,0,0,0,6.28-2c.88.8,1.49,1.37,1.59,1.45L34,167h6.4l-2.81-2.59-3.08-2.81a8.3,8.3,0,0,0,.33-2.3v-2.69H30.56V158l-4.15-3.8-.27-.25a3.18,3.18,0,0,1-1.42-2.5,1.54,1.54,0,0,1,2.92-.69l-.8,1.1,3.1,2.85,2.15-2.37v-.89a5.83,5.83,0,0,0-11.66,0,6.85,6.85,0,0,0,.46,2.48l-2.57,3.32A5,5,0,0,0,17.84,159.31Zm8,3.74a4.79,4.79,0,0,1-3.73-3.74c0-.05,1.45-1.9,1.48-1.87L29,162.37A4.44,4.44,0,0,1,25.86,163.05Z"/><path fill="#020000" d="M131.43,131.6h14.42V36.09c-5.11,5-14.15,17.52-14.42,29.36ZM145.85,0h-.91V17.05c-3.09,2.92-13,13.66-13.48,31.91,4.89-11.17,10.14-17.36,14.39-20.85V16.25h0Zm5.05,53.16V131.6h14.42l0-47.81C165.29,61.82,150.9,53.16,150.9,53.16ZM116.13,131.6h10.26V82.32c-3.61,4.29-8.91,9.18-10.26,20.9ZM42.29,68.88c-5.58-4.53-12.18-6.43-19.21-6.7C15.64,61.89.29,62,0,62v70.25H14.47V116.31h4.71a45.07,45.07,0,0,0,14.13-2.06c7.22-2.43,12.78-6.77,15.74-13.91a29.81,29.81,0,0,0,1.42-17.71A23.07,23.07,0,0,0,42.29,68.88ZM35.59,94.1c-1.3,5.17-5,7.78-10,8.87-3.63.79-7.32.62-11.1.61V74.7c2,0,4-.06,6,0A24.16,24.16,0,0,1,28,76,11.41,11.41,0,0,1,35.73,85,20.44,20.44,0,0,1,35.59,94.1ZM183.52,62V74.64h26.73L177,132.26h54V119.62H200.36L233.82,62ZM77.05,62H62.65v70.26h46.47V119.57H77.05Zm192.24-1L237.57,132.3h14c.1-.23.33-.8.67-1.65A58.25,58.25,0,0,1,265,113.18a66.1,66.1,0,0,1,11.36-8.25c5.16,12.54,11.26,27.37,11.23,27.37,4.82,0,9.64,0,14.62,0C302.05,131.88,269.29,61,269.29,61Zm-8,48.17c-.3.28-.58.57-.87.85,4.45-11.15,8.88-22.28,8.88-22.28s2.15,5.21,5,12.07A73.38,73.38,0,0,0,261.32,109.2Z"/></svg>';
+
+// Inject logo into header + login screen as soon as the script runs.
+(function injectLogos() {
+  const targets = ['brandLogo', 'loginLogo'];
+  targets.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = PLAZA_LOGO_SVG;
+  });
+})();
+
+/* ---------- Token helpers (base64 JSON, URL-safe) ---------- */
+function encodeToken(payload) {
+  // payload = { id, contractorName, projectId, modules, created }
+  const json = JSON.stringify(payload);
+  // btoa with URL-safe variant
+  return btoa(unescape(encodeURIComponent(json)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeToken(str) {
+  try {
+    const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '==='.slice((b64.length + 3) % 4);
+    const json = decodeURIComponent(escape(atob(padded)));
+    return JSON.parse(json);
+  } catch (e) { return null; }
+}
+function loadTokens() {
+  try { return JSON.parse(localStorage.getItem(TOKEN_STORAGE_KEY)) || []; }
+  catch (e) { return []; }
+}
+function saveTokens(tokens) {
+  try { localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens)); }
+  catch (e) { console.warn('Token save failed', e); }
+}
+
+/* ---------- AUTH state ---------- */
+//   AUTH = { role: 'owner'|'contractor', name, projectId?, modules? }
+//   modules shape: { payapps:'view'|'none', rfis:'view+create'|'view'|'none',
+//                    submittals:'view+create'|'view'|'none', plans:'view'|'none',
+//                    cos:'view'|'none' }
+let AUTH = null;
+
+function defaultContractorModules() {
+  return {
+    payapps: 'none',
+    rfis:    'none',
+    submittals: 'none',
+    plans:   'none',
+    cos:     'none',
+  };
+}
+
+// Try to authenticate from URL ?key= or sessionStorage on boot.
+function tryBootAuth() {
+  // 1) URL contractor token wins (so a shared link always works first try).
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get('key');
+  if (key) {
+    const payload = decodeToken(key);
+    const tokens = loadTokens();
+    if (payload && payload.id && tokens.some(t => t.id === payload.id)) {
+      AUTH = {
+        role: 'contractor',
+        name: payload.contractorName,
+        projectId: payload.projectId,
+        modules: { ...defaultContractorModules(), ...(payload.modules || {}) },
+        tokenId: payload.id,
+      };
+      sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(AUTH));
+      return true;
+    }
+    // Token in URL but not recognised → fall through (revoked / wrong browser).
+  }
+  // 2) Session-restored auth.
+  try {
+    const raw = sessionStorage.getItem(SESSION_AUTH_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      // Re-validate contractor tokens against current storage — owner can revoke.
+      if (saved.role === 'contractor') {
+        const tokens = loadTokens();
+        if (!tokens.some(t => t.id === saved.tokenId)) return false;
+      }
+      AUTH = saved;
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function handleLogin(password) {
+  if (password === OWNER_PASSWORD) {
+    AUTH = { role: 'owner', name: 'William Plaza' };
+    sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(AUTH));
+    return true;
+  }
+  return false;
+}
+
+function logout() {
+  sessionStorage.removeItem(SESSION_AUTH_KEY);
+  // Strip the ?key= so the login screen is shown cleanly.
+  if (window.location.search) {
+    window.location.href = window.location.pathname;
+  } else {
+    window.location.reload();
+  }
+}
+
+/* ---------- Permission helpers used throughout the app ---------- */
+function isOwner()      { return AUTH && AUTH.role === 'owner'; }
+function isContractor() { return AUTH && AUTH.role === 'contractor'; }
+
+// canEdit('payapps'|'rfis'|'submittals'|'cos'|'docs'|'projects')
+function canEdit(scope) {
+  if (isOwner()) return true;
+  if (!isContractor()) return false;
+  const m = AUTH.modules || {};
+  switch (scope) {
+    case 'rfis':       return m.rfis === 'view+create';       // create only, not close
+    case 'submittals': return m.submittals === 'view+create'; // submit revisions
+    default: return false; // payapps, cos, docs, projects = view only
+  }
+}
+// canView('payapps'|'rfis'|'submittals'|'cos'|'plans'|'projects')
+function canView(scope) {
+  if (isOwner()) return true;
+  if (!isContractor()) return false;
+  const m = AUTH.modules || {};
+  if (scope === 'projects') return true; // always see the one project they're on
+  if (scope === 'plans')    return m.plans !== 'none';
+  return m[scope] && m[scope] !== 'none';
+}
+
+function applyRoleBodyClasses() {
+  const body = document.body;
+  body.classList.remove('role-owner', 'role-contractor', 'app-booting');
+  body.classList.add(isOwner() ? 'role-owner' : 'role-contractor');
+  // Reset all perm-* classes
+  ['payapps','cos','rfis','subs','docs','projects'].forEach(s => {
+    body.classList.remove('perm-no-edit-' + s);
+    body.classList.remove('perm-no-view-' + s);
+  });
+  if (isContractor()) {
+    if (!canEdit('payapps'))    body.classList.add('perm-no-edit-payapps');
+    if (!canEdit('rfis'))       body.classList.add('perm-no-edit-rfis');
+    if (!canEdit('submittals')) body.classList.add('perm-no-edit-subs');
+    if (!canEdit('cos'))        body.classList.add('perm-no-edit-cos');
+    if (!canEdit('docs'))       body.classList.add('perm-no-edit-docs');
+    if (!canEdit('projects'))   body.classList.add('perm-no-edit-projects');
+    if (!canView('payapps'))    body.classList.add('perm-no-view-payapps');
+    if (!canView('rfis'))       body.classList.add('perm-no-view-rfis');
+    if (!canView('submittals')) body.classList.add('perm-no-view-subs');
+    if (!canView('cos'))        body.classList.add('perm-no-view-cos');
+    if (!canView('plans'))      body.classList.add('perm-no-view-docs');
+  }
+}
+
+function renderRoleIndicator() {
+  const el = document.getElementById('roleIndicator');
+  if (!el) return;
+  if (isOwner()) {
+    el.className = 'role-pill';
+    el.textContent = 'Owner Mode — ' + (AUTH.name || 'William');
+  } else if (isContractor()) {
+    el.className = 'role-pill contractor';
+    el.textContent = 'Contractor — ' + AUTH.name;
+  }
+  // Show contractor project name beside role pill
+  const proj = document.getElementById('contractorProjectLabel');
+  if (proj && isContractor()) {
+    const p = (DATA && DATA.projects) ? DATA.projects.find(x => x.id === AUTH.projectId) : null;
+    proj.textContent = p ? p.name : '';
+    proj.style.display = p ? '' : 'none';
+  }
+}
 
 const STORAGE_KEY = 'plaza-hub-v1';
 const STATE = {
@@ -1183,6 +1635,14 @@ document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => switchTab(t.dataset.tab));
 });
 function switchTab(tab) {
+  // Access tab is owner-only — hard-stop contractors trying to URL-hack it.
+  if (tab === 'access' && !isOwner()) tab = 'projects';
+  // Contractor visibility: silently fall back to projects if they hit a hidden tab.
+  if (isContractor()) {
+    const scopeMap = { sov: 'payapps', rfis: 'rfis', submittals: 'submittals',
+                       cos: 'cos', docs: 'plans' };
+    if (scopeMap[tab] && !canView(scopeMap[tab])) tab = 'projects';
+  }
   STATE.activeTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.tab-page').forEach(p => p.classList.toggle('active', p.id === 'page-' + tab));
@@ -1195,16 +1655,22 @@ function switchTab(tab) {
    ========================================================================= */
 function renderProjectSelect() {
   const sel = document.getElementById('projectSelect');
-  if (!DATA.projects.length) {
+  // Contractors are locked to their single project — the selector is hidden
+  // entirely (CSS [data-role-hide="contractor"]) but we still keep it populated.
+  const list = isContractor()
+    ? DATA.projects.filter(p => p.id === AUTH.projectId)
+    : DATA.projects;
+  if (!list.length) {
     sel.innerHTML = '<option>No projects</option>';
     return;
   }
-  if (!STATE.activeProjectId || !getProject(STATE.activeProjectId)) {
-    STATE.activeProjectId = DATA.projects[0].id;
+  if (!STATE.activeProjectId || !list.some(p => p.id === STATE.activeProjectId)) {
+    STATE.activeProjectId = list[0].id;
   }
-  sel.innerHTML = DATA.projects.map(p =>
+  sel.innerHTML = list.map(p =>
     `<option value="${p.id}" ${p.id === STATE.activeProjectId ? 'selected' : ''}>${escapeHtml(p.number)} — ${escapeHtml(p.name)}</option>`
   ).join('');
+  renderRoleIndicator(); // refresh contractor project label
 }
 document.getElementById('projectSelect').addEventListener('change', e => {
   STATE.activeProjectId = e.target.value;
@@ -1217,7 +1683,11 @@ document.getElementById('projectSelect').addEventListener('change', e => {
 function renderProjects() {
   const grid = document.getElementById('projectGrid');
   const filter = STATE.projectFilter;
-  const list = DATA.projects.filter(p => filter === 'all' || p.status === filter);
+  // Contractor isolation: only their assigned project, regardless of chip filter.
+  const base = isContractor()
+    ? DATA.projects.filter(p => p.id === AUTH.projectId)
+    : DATA.projects;
+  const list = base.filter(p => filter === 'all' || p.status === filter);
   if (!list.length) {
     grid.innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No projects</div><div class="empty-sub">Add a new project to get started.</div></div>`;
     return;
@@ -1254,7 +1724,7 @@ function renderProjects() {
             <div class="stat-value">${rfiCount + subCount}</div>
           </div>
         </div>
-        <div class="row-actions" style="position:absolute; top:10px; right:10px;">
+        <div class="row-actions perm-edit-projects" style="position:absolute; top:10px; right:10px;">
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openProjectModal('${p.id}')">✏️</button>
         </div>
       </div>
@@ -1262,6 +1732,8 @@ function renderProjects() {
   }).join('');
 }
 function selectProject(id) {
+  // Contractors cannot switch projects — enforce server-side too.
+  if (isContractor() && id !== AUTH.projectId) return;
   STATE.activeProjectId = id;
   render();
 }
@@ -1435,12 +1907,14 @@ function renderSov() {
         <td class="num nowrap">${fmt$2(totalCompleted)}</td>
         <td class="num nowrap">${fmt$2(balance)}</td>
         <td class="num nowrap">${fmt$2(retainage)}</td>
-        <td><div class="row-actions"><button class="btn btn-ghost btn-sm" onclick="deleteSovLine(${idx})">✕</button></div></td>
+        <td><div class="row-actions perm-edit-payapps"><button class="btn btn-ghost btn-sm" onclick="deleteSovLine(${idx})">✕</button></div></td>
       </tr>
     `;
   }).join('');
-  // Wire inputs
+  // Wire inputs — read-only for contractors.
+  const editable = canEdit('payapps');
   body.querySelectorAll('input.cell-input').forEach(inp => {
+    if (!editable) { inp.setAttribute('readonly', 'readonly'); inp.style.pointerEvents = 'none'; return; }
     inp.addEventListener('input', e => {
       const i = +e.target.dataset.i;
       const f = e.target.dataset.f;
@@ -1451,6 +1925,9 @@ function renderSov() {
       renderSovTotalsOnly();
     });
   });
+  // Disable status/date editing for contractors
+  document.getElementById('payAppStatus').disabled = !editable;
+  document.getElementById('payAppDate').disabled   = !editable;
 
   renderSovTotalsOnly();
 }
@@ -2011,7 +2488,7 @@ function renderDocs() {
         <td>
           <div class="row-actions">
             <button class="btn btn-ghost btn-sm" onclick="viewDoc('${d.id}')">View</button>
-            <button class="btn btn-ghost btn-sm" onclick="openDocModal('${d.id}')">✏️</button>
+            <button class="btn btn-ghost btn-sm perm-edit-docs" onclick="openDocModal('${d.id}')">✏️</button>
           </div>
         </td>
       </tr>
@@ -2097,9 +2574,11 @@ function openDocModal(id) {
       <div class="form-row"><label class="form-label">Storage Link (Dropbox / SharePoint / Box)</label><input id="dc-link" value="${escapeHtml(editing?.link || '')}" placeholder="https://…" /></div>
       <div class="hint-banner">📎 File upload placeholder — production version connects to your cloud storage. For now, paste the share link above.</div>
     `,
-    footer: editing
-      ? `<button class="btn btn-danger" onclick="deleteDoc('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDoc('${editing.id}')">Save</button>`
-      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDoc()">Upload</button>`
+    footer: !canEdit('docs')
+      ? `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button>`
+      : editing
+        ? `<button class="btn btn-danger" onclick="deleteDoc('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDoc('${editing.id}')">Save</button>`
+        : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDoc()">Upload</button>`
   });
 }
 function saveDoc(id) {
@@ -2179,20 +2658,224 @@ function render() {
   renderProjectSelect();
   updateCounts();
   switch (STATE.activeTab) {
-    case 'projects': renderProjects(); break;
-    case 'sov': renderSov(); break;
-    case 'rfis': renderRfis(); break;
+    case 'projects':   renderProjects(); break;
+    case 'sov':        renderSov(); break;
+    case 'rfis':       renderRfis(); break;
     case 'submittals': renderSubmittals(); break;
-    case 'cos': renderCos(); break;
-    case 'docs': renderDocs(); break;
+    case 'cos':        renderCos(); break;
+    case 'docs':       renderDocs(); break;
+    case 'access':     if (isOwner()) renderAccess(); break;
   }
 }
 
-// Boot
-if (!STATE.activeProjectId && DATA.projects.length) {
-  STATE.activeProjectId = DATA.projects[0].id;
+/* =========================================================================
+   ACCESS MANAGEMENT — owner-only token generator + revoke UI.
+   ========================================================================= */
+const MODULE_DEFS = [
+  { key: 'rfis',       label: 'RFIs',          access: 'view+create' },
+  { key: 'submittals', label: 'Submittals',    access: 'view+create' },
+  { key: 'plans',      label: 'Plans / Specs', access: 'view' },
+  { key: 'payapps',    label: 'Pay Apps',      access: 'view' },
+  { key: 'cos',        label: 'Change Orders', access: 'view' },
+];
+
+function modulesSummary(modules) {
+  return MODULE_DEFS
+    .filter(m => modules[m.key] && modules[m.key] !== 'none')
+    .map(m => m.label + (modules[m.key] === 'view+create' ? ' (view+create)' : ''))
+    .join(', ') || '—';
 }
-render();
+
+function tokenShareUrl(token) {
+  // Encode the full payload into the URL so the contractor can use the link
+  // on any device. We *also* store the token id locally so the owner can
+  // revoke it later (revocation only enforces on devices that have the store).
+  const key = encodeToken({
+    id: token.id,
+    contractorName: token.contractorName,
+    projectId: token.projectId,
+    modules: token.modules,
+    created: token.created,
+  });
+  const base = window.location.origin + window.location.pathname;
+  return base + '?key=' + key;
+}
+
+function renderAccess() {
+  const tokens = loadTokens();
+  const body = document.getElementById('accessBody');
+  if (!tokens.length) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">🔑</div><div class="empty-title">No access links yet</div><div class="empty-sub">Click “New Access Link” to generate a contractor share URL.</div></div></td></tr>`;
+    return;
+  }
+  body.innerHTML = tokens.map(t => {
+    const proj = getProject(t.projectId);
+    const url = tokenShareUrl(t);
+    return `
+      <tr>
+        <td><strong>${escapeHtml(t.contractorName)}</strong></td>
+        <td>${proj ? escapeHtml(proj.number) + ' — ' + escapeHtml(proj.name) : '<span class="text-muted">(deleted)</span>'}</td>
+        <td class="text-sm">${escapeHtml(modulesSummary(t.modules))}</td>
+        <td class="text-sm text-muted nowrap">${fmtDate(t.created)}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="copyAccessLink('${t.id}')">📋 Copy link</button></td>
+        <td><div class="row-actions"><button class="btn btn-danger btn-sm" onclick="revokeAccessToken('${t.id}')">Revoke</button></div></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openAccessModal() {
+  if (!isOwner()) return;
+  const projects = DATA.projects;
+  if (!projects.length) { toast('Add a project first'); return; }
+  showModal({
+    title: 'Generate Contractor Access Link',
+    body: `
+      <div class="form-row"><label class="form-label">Contractor Name / Company</label>
+        <input id="ac-name" type="text" placeholder="e.g. Sunshine Restoration LLC" />
+      </div>
+      <div class="form-row"><label class="form-label">Project</label>
+        <select id="ac-project">
+          ${projects.map(p => `<option value="${p.id}">${escapeHtml(p.number)} — ${escapeHtml(p.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Module Access</label>
+        <div class="access-modules-grid">
+          ${MODULE_DEFS.map(m => `
+            <label class="access-module-chk">
+              <input type="checkbox" data-module="${m.key}" data-access="${m.access}" ${(m.key==='rfis'||m.key==='submittals'||m.key==='plans')?'checked':''} />
+              <span>${m.label}<br/><span class="text-sm text-muted">${m.access}</span></span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="hint-banner" style="background:var(--gray-100); border-color:var(--gray-200); color:var(--ink);">
+        ℹ️ RFIs and Submittals allow view + create. Pay Apps, Change Orders, and Plans are view-only.
+      </div>
+    `,
+    footer: `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="createAccessToken()">Generate Link</button>`,
+  });
+}
+
+function createAccessToken() {
+  const name = document.getElementById('ac-name').value.trim();
+  const projectId = document.getElementById('ac-project').value;
+  if (!name)      { toast('Contractor name required'); return; }
+  if (!projectId) { toast('Select a project'); return; }
+  const modules = defaultContractorModules();
+  document.querySelectorAll('[data-module]').forEach(cb => {
+    if (cb.checked) modules[cb.dataset.module] = cb.dataset.access;
+  });
+  const token = {
+    id: 'tok_' + Math.random().toString(36).slice(2, 12),
+    contractorName: name,
+    projectId,
+    modules,
+    created: todayStr(),
+  };
+  const tokens = loadTokens();
+  tokens.push(token);
+  saveTokens(tokens);
+  closeModal();
+  renderAccess();
+  // Show the shareable URL immediately so William can copy it.
+  const url = tokenShareUrl(token);
+  showModal({
+    title: 'Access Link Ready',
+    body: `
+      <p style="margin-top:0;">Share this URL with <strong>${escapeHtml(name)}</strong>. They will be auto-signed-in to the project scoped to the modules you selected.</p>
+      <div class="copy-row">
+        <input id="ac-url" value="${escapeHtml(url)}" readonly />
+        <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('ac-url').value); toast('Copied');">Copy</button>
+      </div>
+      <p class="text-sm text-muted" style="margin-top:14px;">You can revoke this link any time from the Access tab.</p>
+    `,
+    footer: `<div style="flex:1"></div><button class="btn btn-primary" onclick="closeModal()">Done</button>`,
+  });
+}
+
+function revokeAccessToken(id) {
+  if (!confirm('Revoke this access link? It will stop working immediately.')) return;
+  const tokens = loadTokens().filter(t => t.id !== id);
+  saveTokens(tokens);
+  renderAccess();
+  toast('Access link revoked');
+}
+
+function copyAccessLink(id) {
+  const t = loadTokens().find(x => x.id === id);
+  if (!t) return;
+  const url = tokenShareUrl(t);
+  navigator.clipboard.writeText(url).then(
+    () => toast('Link copied'),
+    () => prompt('Copy this link:', url)
+  );
+}
+
+/* =========================================================================
+   BOOT — gated behind authentication.
+   Login overlay stays visible until auth succeeds.
+   ========================================================================= */
+function bootApp() {
+  // For contractors, force the active project to the one in their token.
+  if (isContractor() && AUTH.projectId) {
+    if (getProject(AUTH.projectId)) {
+      STATE.activeProjectId = AUTH.projectId;
+    } else {
+      // Their project hasn't been created in this browser's localStorage —
+      // create a placeholder so they at least see the platform.
+      DATA.projects.push({
+        id: AUTH.projectId, number: '—', name: AUTH.name + ' project',
+        address: '', status: 'Active', contractSum: 0, percentComplete: 0,
+        client: '', scope: '', startDate: '', targetClose: '',
+      });
+      saveData();
+      STATE.activeProjectId = AUTH.projectId;
+    }
+    // If their default tab is hidden, switch to one they can see.
+    if (!canView('projects')) {
+      // (We always allow 'projects' for contractors)
+    }
+  } else if (!STATE.activeProjectId && DATA.projects.length) {
+    STATE.activeProjectId = DATA.projects[0].id;
+  }
+
+  applyRoleBodyClasses();
+  renderRoleIndicator();
+
+  // Hide login, show app.
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('appShell').style.display = '';
+
+  render();
+}
+
+function wireLogin() {
+  const form  = document.getElementById('loginForm');
+  const input = document.getElementById('loginInput');
+  const error = document.getElementById('loginError');
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    error.textContent = '';
+    if (handleLogin(input.value)) {
+      bootApp();
+    } else {
+      error.textContent = 'Invalid access code.';
+      input.value = '';
+      input.focus();
+    }
+  });
+  // Autofocus on the input
+  setTimeout(() => input.focus(), 50);
+}
+
+// First-pass auth attempt; if it works, skip the login screen entirely.
+if (tryBootAuth()) {
+  bootApp();
+} else {
+  wireLogin();
+}
 
 // Expose for inline handlers
 window.openProjectModal = openProjectModal;
@@ -2219,6 +2902,12 @@ window.deleteDoc = deleteDoc;
 window.viewDoc = viewDoc;
 window.filterDocsByCat = filterDocsByCat;
 window.closeModal = closeModal;
+window.logout = logout;
+window.openAccessModal = openAccessModal;
+window.createAccessToken = createAccessToken;
+window.revokeAccessToken = revokeAccessToken;
+window.copyAccessLink = copyAccessLink;
+window.switchTab = switchTab;
 </script>
 </body>
 </html>
