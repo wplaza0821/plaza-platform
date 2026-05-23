@@ -994,6 +994,8 @@ function applyRoleBodyClasses() {
   const body = document.body;
   body.classList.remove('role-owner', 'role-contractor', 'app-booting');
   body.classList.add(isOwner() ? 'role-owner' : 'role-contractor');
+  const shell = document.getElementById('appShell');
+  if (shell) shell.style.display = '';
   ['payapps','cos','rfis','subs','docs','projects'].forEach(s => {
     body.classList.remove('perm-no-edit-' + s);
     body.classList.remove('perm-no-view-' + s);
