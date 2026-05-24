@@ -506,6 +506,11 @@
   body.perm-no-view-tasks    #page-tasks          { display: none !important; }
   body.perm-no-view-payapps  [data-tab="sov"],
   body.perm-no-view-payapps  #page-sov            { display: none !important; }
+  body.perm-no-edit-photos        .perm-edit-photos        { display: none !important; }
+  body.perm-no-edit-fieldreports  .perm-edit-fieldreports  { display: none !important; }
+  body.perm-no-edit-deficiencies  .perm-edit-deficiencies  { display: none !important; }
+  body.perm-no-edit-daily         .perm-edit-daily         { display: none !important; }
+  body.perm-no-edit-milestones    .perm-edit-milestones    { display: none !important; }
 </style>
 </head>
 <body class="app-booting">
@@ -546,6 +551,11 @@
     <button class="tab" data-tab="submittals"><span>📤</span> Submittals <span class="count" id="cnt-subs">0</span></button>
     <button class="tab" data-tab="cos"><span>🔁</span> Change Orders <span class="count" id="cnt-cos">0</span></button>
     <button class="tab" data-tab="tasks"><span>✅</span> Tasks <span class="count" id="cnt-tasks">0</span></button>
+    <button class="tab" data-tab="photos"><span>📸</span> Photos <span class="count" id="cnt-photos">0</span></button>
+    <button class="tab" data-tab="field_reports"><span>📋</span> Field Reports <span class="count" id="cnt-fieldreports">0</span></button>
+    <button class="tab" data-tab="deficiencies"><span>⚠️</span> Deficiencies <span class="count" id="cnt-deficiencies">0</span></button>
+    <button class="tab" data-tab="daily"><span>📅</span> Daily Log <span class="count" id="cnt-daily">0</span></button>
+    <button class="tab" data-tab="milestones"><span>🎯</span> Schedule <span class="count" id="cnt-milestones">0</span></button>
     <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
     <button class="tab" data-tab="access" data-role-hide="contractor"><span>🔑</span> Access</button>
   </nav>
@@ -806,6 +816,194 @@
       </div>
     </section>
 
+    <!-- ========== PHOTOS ========== -->
+    <section id="page-photos" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Photo Documentation</h1>
+          <div class="page-subtitle">Field evidence — tagged by location and module</div>
+          <div class="page-context-pill" id="photos-context"></div>
+        </div>
+        <button class="btn btn-primary perm-edit-photos" onclick="openPhotoUploadModal()">＋ Upload Photos</button>
+      </div>
+
+      <div class="toolbar">
+        <div class="filter-bar" id="photoFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">All</span>
+          <span class="chip" data-filter="field_report">Field Reports</span>
+          <span class="chip" data-filter="deficiency">Deficiencies</span>
+          <span class="chip" data-filter="rfi">RFIs</span>
+          <span class="chip" data-filter="general">General</span>
+        </div>
+        <div class="spacer"></div>
+        <input type="text" class="search" id="photoSearch" placeholder="Search by caption or location…" />
+      </div>
+
+      <div id="photoGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:14px;"></div>
+    </section>
+
+    <!-- ========== FIELD REPORTS ========== -->
+    <section id="page-field_reports" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Field Observation Reports</h1>
+          <div class="page-subtitle">FOR / Special Inspection / Daily Log reports for the record</div>
+          <div class="page-context-pill" id="fr-context"></div>
+        </div>
+        <button class="btn btn-primary perm-edit-fieldreports" onclick="openFieldReportModal()">＋ New Report</button>
+      </div>
+
+      <div class="toolbar">
+        <div class="filter-bar" id="frTypeFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">All</span>
+          <span class="chip" data-filter="field_observation">Field Observation</span>
+          <span class="chip" data-filter="special_inspection">Special Inspection</span>
+          <span class="chip" data-filter="daily_report">Daily Log</span>
+        </div>
+        <div class="spacer"></div>
+        <input type="text" class="search" id="frSearch" placeholder="Search reports…" />
+      </div>
+      <div class="toolbar" style="margin-top:-8px;">
+        <div class="filter-bar" id="frStatusFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">Any Status</span>
+          <span class="chip" data-filter="draft">Draft</span>
+          <span class="chip" data-filter="submitted">Submitted</span>
+          <span class="chip" data-filter="approved">Approved</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data" id="frTable">
+          <thead>
+            <tr>
+              <th style="width:100px;">Report #</th>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Inspector</th>
+              <th>Compliance</th>
+              <th>Status</th>
+              <th style="width:180px;"></th>
+            </tr>
+          </thead>
+          <tbody id="frBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== DEFICIENCIES ========== -->
+    <section id="page-deficiencies" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Deficiency Log</h1>
+          <div class="page-subtitle">Track and resolve field deficiencies</div>
+          <div class="page-context-pill" id="def-context"></div>
+        </div>
+        <button class="btn btn-primary perm-edit-deficiencies" onclick="openDeficiencyModal()">＋ New Deficiency</button>
+      </div>
+
+      <div class="summary-tiles" id="def-tiles"></div>
+
+      <div class="toolbar">
+        <div class="filter-bar" id="defSeverityFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">All</span>
+          <span class="chip" data-filter="critical">🔴 Critical</span>
+          <span class="chip" data-filter="major">🟠 Major</span>
+          <span class="chip" data-filter="moderate">🟡 Moderate</span>
+          <span class="chip" data-filter="minor">⚪ Minor</span>
+        </div>
+        <div class="spacer"></div>
+        <input type="text" class="search" id="defSearch" placeholder="Search deficiencies…" />
+      </div>
+      <div class="toolbar" style="margin-top:-8px;">
+        <div class="filter-bar" id="defStatusFilters" style="margin:0;">
+          <span class="chip active" data-filter="all">Any Status</span>
+          <span class="chip" data-filter="open">Open</span>
+          <span class="chip" data-filter="in_repair">In Repair</span>
+          <span class="chip" data-filter="repaired">Repaired</span>
+          <span class="chip" data-filter="verified">Verified</span>
+          <span class="chip" data-filter="closed">Closed</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data" id="defTable">
+          <thead>
+            <tr>
+              <th style="width:90px;">#</th>
+              <th>Location</th>
+              <th>Description</th>
+              <th>Severity</th>
+              <th>Responsible</th>
+              <th>Due</th>
+              <th>Status</th>
+              <th style="width:140px;"></th>
+            </tr>
+          </thead>
+          <tbody id="defBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== DAILY LOG ========== -->
+    <section id="page-daily" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Daily Field Log</h1>
+          <div class="page-subtitle">Day-by-day site record</div>
+          <div class="page-context-pill" id="daily-context"></div>
+        </div>
+        <button class="btn btn-primary perm-edit-daily" onclick="openDailyModal()">＋ New Entry</button>
+      </div>
+
+      <div class="toolbar">
+        <input type="text" class="search" id="dailySearch" placeholder="Search by inspector, work, notes…" />
+      </div>
+
+      <div class="table-wrap">
+        <table class="data" id="dailyTable">
+          <thead>
+            <tr>
+              <th style="width:120px;">Date</th>
+              <th>Inspector</th>
+              <th>Weather</th>
+              <th class="num" style="width:70px;">Crew</th>
+              <th>Work Summary</th>
+              <th>Status</th>
+              <th style="width:160px;"></th>
+            </tr>
+          </thead>
+          <tbody id="dailyBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== MILESTONES ========== -->
+    <section id="page-milestones" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Project Milestones</h1>
+          <div class="page-subtitle">Schedule the journey from NTP to closeout</div>
+          <div class="page-context-pill" id="ms-context"></div>
+        </div>
+        <div class="flex gap-8">
+          <button class="btn btn-secondary perm-edit-milestones" onclick="openMilestoneTemplateModal()">📋 From Template</button>
+          <button class="btn btn-primary perm-edit-milestones" onclick="openMilestoneModal()">＋ Add Milestone</button>
+        </div>
+      </div>
+
+      <div class="card mb-12">
+        <div class="card-body">
+          <div class="flex-between" style="margin-bottom:8px;">
+            <div class="sov-section-title">Overall Progress</div>
+            <div id="ms-progress-label" class="text-sm text-muted">0 of 0 complete</div>
+          </div>
+          <div class="progress-bar" style="height:10px;"><div class="progress-fill" id="ms-progress-fill" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <div id="msTimeline" style="display:flex; flex-direction:column; gap:10px;"></div>
+    </section>
+
     <!-- ========== DOCUMENTS ========== -->
     <section id="page-docs" class="tab-page">
       <div class="page-header">
@@ -983,6 +1181,8 @@ function canView(scope) {
   if (scope === 'projects') return true;
   if (scope === 'plans')    return !!p.plans;
   if (scope === 'tasks')    return true;
+  if (scope === 'photos' || scope === 'field_reports' || scope === 'deficiencies' ||
+      scope === 'daily'  || scope === 'milestones') return true;
   return !!p[scope];
 }
 
@@ -1054,7 +1254,7 @@ function applyRoleBodyClasses() {
   body.classList.add(isOwner() ? 'role-owner' : 'role-contractor');
   const shell = document.getElementById('appShell');
   if (shell) shell.style.display = '';
-  ['payapps','cos','rfis','subs','docs','projects','tasks'].forEach(s => {
+  ['payapps','cos','rfis','subs','docs','projects','tasks','photos','fieldreports','deficiencies','daily','milestones'].forEach(s => {
     body.classList.remove('perm-no-edit-' + s);
     body.classList.remove('perm-no-view-' + s);
   });
@@ -1066,6 +1266,11 @@ function applyRoleBodyClasses() {
     body.classList.add('perm-no-edit-docs');
     body.classList.add('perm-no-edit-projects');
     body.classList.add('perm-no-edit-tasks');
+    body.classList.add('perm-no-edit-photos');
+    body.classList.add('perm-no-edit-fieldreports');
+    body.classList.add('perm-no-edit-deficiencies');
+    body.classList.add('perm-no-edit-daily');
+    body.classList.add('perm-no-edit-milestones');
     if (!canView('payapps'))    body.classList.add('perm-no-view-payapps');
     if (!canView('rfis'))       body.classList.add('perm-no-view-rfis');
     if (!canView('submittals')) body.classList.add('perm-no-view-subs');
@@ -1107,6 +1312,11 @@ const DATA = {
   changeOrders: [],
   documents: [],
   tasks: [],
+  photos: [],
+  field_reports: [],
+  deficiencies: [],
+  daily_reports: [],
+  milestones: [],
 };
 
 async function loadAllData() {
@@ -1121,9 +1331,14 @@ async function loadAllData() {
   const coP   = sb.from('change_orders').select('*').order('co_number', { ascending: false });
   const docP  = sb.from('documents').select('*').order('uploaded_at', { ascending: false });
   const tkP   = sb.from('tasks').select('*').order('created_at', { ascending: false });
+  const phP   = sb.from('photos').select('*').order('created_at', { ascending: false });
+  const frP   = sb.from('field_reports').select('*').order('visit_date', { ascending: false });
+  const dfP   = sb.from('deficiencies').select('*').order('created_at', { ascending: false });
+  const dlP   = sb.from('daily_reports').select('*').order('report_date', { ascending: false });
+  const msP   = sb.from('milestones').select('*').order('sort_order', { ascending: true });
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1136,6 +1351,13 @@ async function loadAllData() {
   if (co.error)   handleSbError(co.error, 'Loading change orders');
   if (doc.error)  handleSbError(doc.error, 'Loading documents');
   if (tk.error && tk.error.code !== 'PGRST205') handleSbError(tk.error, 'Loading tasks');
+  // New modules — tables may not exist yet; silently treat PGRST205 as empty
+  const softErr = (res, label) => { if (res.error && res.error.code !== 'PGRST205' && res.error.code !== '42P01') handleSbError(res.error, label); };
+  softErr(ph, 'Loading photos');
+  softErr(fr, 'Loading field reports');
+  softErr(df, 'Loading deficiencies');
+  softErr(dl, 'Loading daily reports');
+  softErr(ms, 'Loading milestones');
 
   DATA.projects     = proj.data || [];
   DATA.contractors  = con.data  || [];
@@ -1148,6 +1370,11 @@ async function loadAllData() {
   DATA.changeOrders = co.data   || [];
   DATA.documents    = doc.data  || [];
   DATA.tasks        = tk.data   || [];
+  DATA.photos        = ph.data || [];
+  DATA.field_reports = fr.data || [];
+  DATA.deficiencies  = df.data || [];
+  DATA.daily_reports = dl.data || [];
+  DATA.milestones    = ms.data || [];
 }
 
 /* =========================================================================
@@ -1229,7 +1456,9 @@ function switchTab(tab) {
   if (tab === 'access' && !isOwner()) tab = 'projects';
   if (isContractor()) {
     const scopeMap = { sov: 'payapps', rfis: 'rfis', submittals: 'submittals',
-                       cos: 'cos', docs: 'plans', tasks: 'tasks' };
+                       cos: 'cos', docs: 'plans', tasks: 'tasks',
+                       photos: 'photos', field_reports: 'field_reports',
+                       deficiencies: 'deficiencies', daily: 'daily', milestones: 'milestones' };
     if (scopeMap[tab] && !canView(scopeMap[tab])) tab = 'projects';
   }
   STATE.activeTab = tab;
@@ -3363,6 +3592,11 @@ function refreshCounts() {
     setCnt('cnt-sov', 0); setCnt('cnt-rfis', 0);
     setCnt('cnt-subs', 0); setCnt('cnt-cos', 0);
     setCnt('cnt-tasks', '');
+    setCnt('cnt-photos', '');
+    setCnt('cnt-fieldreports', '');
+    setCnt('cnt-deficiencies', '');
+    setCnt('cnt-daily', '');
+    setCnt('cnt-milestones', '');
     return;
   }
   setCnt('cnt-sov',  DATA.payApps.filter(p => p.project_id === pid).length);
@@ -3372,6 +3606,17 @@ function refreshCounts() {
   const openTasks = DATA.tasks.filter(t => t.project_id === pid && t.status !== 'completed' && t.status !== 'cancelled').length;
   const cntTasksEl = document.getElementById('cnt-tasks');
   if (cntTasksEl) cntTasksEl.textContent = openTasks || '';
+
+  const photoN = DATA.photos.filter(p => p.project_id === pid).length;
+  setCnt('cnt-photos', photoN || '');
+  const frN = DATA.field_reports.filter(r => r.project_id === pid && r.status !== 'approved').length;
+  setCnt('cnt-fieldreports', frN || '');
+  const defOpen = DATA.deficiencies.filter(d => d.project_id === pid && !['closed','verified'].includes(d.status)).length;
+  setCnt('cnt-deficiencies', defOpen || '');
+  const dailyN = DATA.daily_reports.filter(d => d.project_id === pid).length;
+  setCnt('cnt-daily', dailyN || '');
+  const msOpen = DATA.milestones.filter(m => m.project_id === pid && m.status !== 'completed' && m.status !== 'cancelled').length;
+  setCnt('cnt-milestones', msOpen || '');
 }
 
 /* =========================================================================
@@ -3391,6 +3636,11 @@ function render() {
     else if (tab === 'submittals') renderSubmittals();
     else if (tab === 'cos')        renderCos();
     else if (tab === 'tasks')      renderTasks();
+    else if (tab === 'photos')        renderPhotos();
+    else if (tab === 'field_reports') renderFieldReports();
+    else if (tab === 'deficiencies')  renderDeficiencies();
+    else if (tab === 'daily')         renderDailyReports();
+    else if (tab === 'milestones')    renderMilestones();
     else if (tab === 'docs')       renderDocs();
     else if (tab === 'access')     renderAccess();
   } catch (e) {
@@ -3850,6 +4100,1156 @@ async function deleteTask(id) {
   render();
 }
 window.deleteTask = deleteTask;
+
+/* =========================================================================
+   PHOTOS · FIELD REPORTS · DEFICIENCIES · DAILY · MILESTONES
+   ========================================================================= */
+
+// --- shared state for new modules ---
+STATE.photoFilter = 'all';
+STATE.photoSearch = '';
+STATE.frTypeFilter = 'all';
+STATE.frStatusFilter = 'all';
+STATE.frSearch = '';
+STATE.defSeverityFilter = 'all';
+STATE.defStatusFilter = 'all';
+STATE.defSearch = '';
+STATE.dailySearch = '';
+
+/* =========================================================================
+   PHOTOS MODULE
+   ========================================================================= */
+const PHOTO_MODULE_LABELS = {
+  general: 'General',
+  rfi: 'RFI',
+  deficiency: 'Deficiency',
+  field_report: 'Field Report',
+};
+
+async function photoSignedUrl(filePath) {
+  if (!filePath) return null;
+  try {
+    const { data, error } = await sb.storage.from('project-photos').createSignedUrl(filePath, 3600);
+    if (error) return null;
+    return data?.signedUrl || null;
+  } catch (e) { return null; }
+}
+
+function renderPhotos() {
+  const proj = activeProject();
+  const ctxEl = document.getElementById('photos-context');
+  if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
+  const grid = document.getElementById('photoGrid');
+  if (!grid) return;
+  if (!proj) { grid.innerHTML = ''; return; }
+
+  let list = DATA.photos.filter(p => p.project_id === proj.id);
+  if (STATE.photoFilter && STATE.photoFilter !== 'all') {
+    list = list.filter(p => (p.linked_module || 'general') === STATE.photoFilter);
+  }
+  const search = (STATE.photoSearch || '').toLowerCase();
+  if (search) {
+    list = list.filter(p => ((p.caption || '') + ' ' + (p.location_tag || '') + ' ' + (p.file_name || '')).toLowerCase().includes(search));
+  }
+
+  if (!list.length) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">📸</div><div class="empty-title">No photos</div><div class="empty-sub">Upload field photos to document conditions.</div></div>`;
+    return;
+  }
+
+  grid.innerHTML = list.map(p => {
+    const id = 'photo-img-' + p.id;
+    const linkedLabel = PHOTO_MODULE_LABELS[p.linked_module || 'general'] || 'General';
+    const linkedBadge = p.linked_module && p.linked_module !== 'general'
+      ? `<span class="badge badge-blue" style="margin-top:6px;">${escapeHtml(linkedLabel)}</span>` : '';
+    return `
+      <div class="card" style="overflow:hidden;">
+        <div style="background:var(--gray-100); height:180px; display:flex; align-items:center; justify-content:center; cursor:pointer;" onclick="openPhotoFullscreen('${p.id}')">
+          <img id="${id}" alt="${escapeHtml(p.caption || p.file_name || 'Photo')}"
+               style="width:100%; height:100%; object-fit:cover; display:block;"
+               data-photo-path="${escapeHtml(p.file_path)}" />
+        </div>
+        <div style="padding:10px 12px;">
+          <div style="font-weight:600; color:var(--black); font-size:13px; min-height:18px;">${escapeHtml(p.caption || p.file_name || 'Untitled')}</div>
+          <div class="text-sm text-muted" style="margin-top:4px;">
+            ${p.location_tag ? `📍 ${escapeHtml(p.location_tag)}` : ''}
+            ${p.location_tag && p.taken_at ? ' · ' : ''}
+            ${p.taken_at ? fmtDate(p.taken_at) : ''}
+          </div>
+          ${linkedBadge}
+          <div class="row-actions perm-edit-photos" style="margin-top:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="openPhotoEditModal('${p.id}')">✏️</button>
+            <button class="btn btn-ghost btn-sm" onclick="deletePhoto('${p.id}')">🗑</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Async load signed URLs for each thumbnail
+  list.forEach(async p => {
+    const img = document.getElementById('photo-img-' + p.id);
+    if (!img) return;
+    const url = await photoSignedUrl(p.file_path);
+    if (url) img.src = url;
+    else img.alt = '⚠ unable to load';
+  });
+}
+window.renderPhotos = renderPhotos;
+
+document.getElementById('photoFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.photoFilter = chip.dataset.filter;
+  document.querySelectorAll('#photoFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderPhotos();
+});
+document.getElementById('photoSearch')?.addEventListener('input', e => {
+  STATE.photoSearch = e.target.value; renderPhotos();
+});
+
+async function openPhotoFullscreen(id) {
+  const p = DATA.photos.find(x => x.id === id);
+  if (!p) return;
+  const url = await photoSignedUrl(p.file_path);
+  if (!url) { toast('Could not load photo'); return; }
+  showModal({
+    title: p.caption || p.file_name || 'Photo',
+    size: 'wide',
+    body: `
+      <div style="text-align:center;">
+        <img src="${url}" alt="${escapeHtml(p.caption || '')}" style="max-width:100%; max-height:70vh; border-radius:4px;" />
+      </div>
+      <div style="margin-top:14px; font-size:13px;">
+        ${p.location_tag ? `<div><strong>Location:</strong> ${escapeHtml(p.location_tag)}</div>` : ''}
+        ${p.taken_at ? `<div><strong>Taken:</strong> ${fmtDate(p.taken_at)}</div>` : ''}
+        ${p.linked_module && p.linked_module !== 'general' ? `<div><strong>Linked:</strong> ${escapeHtml(PHOTO_MODULE_LABELS[p.linked_module] || p.linked_module)}</div>` : ''}
+      </div>
+    `,
+    footer: `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`
+  });
+}
+window.openPhotoFullscreen = openPhotoFullscreen;
+
+function openPhotoUploadModal() {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  showModal({
+    title: 'Upload Photos',
+    body: `
+      <div class="form-row">
+        <label class="form-label">Files (one or more images)</label>
+        <input type="file" id="pu-files" accept="image/*" multiple />
+      </div>
+      <div class="form-row two-col">
+        <div>
+          <label class="form-label">Caption (applies to all)</label>
+          <input id="pu-caption" type="text" placeholder="e.g., Cracked balcony slab" />
+        </div>
+        <div>
+          <label class="form-label">Location Tag</label>
+          <input id="pu-location" type="text" placeholder="Level 12, Unit 1204" />
+        </div>
+      </div>
+      <div class="form-row two-col">
+        <div>
+          <label class="form-label">Date Taken</label>
+          <input id="pu-date" type="date" value="${todayStr()}" />
+        </div>
+        <div>
+          <label class="form-label">Link to Module</label>
+          <select id="pu-module">
+            <option value="general">General</option>
+            <option value="rfi">RFI</option>
+            <option value="deficiency">Deficiency</option>
+            <option value="field_report">Field Report</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Linked Item ID (optional)</label>
+        <input id="pu-linkid" type="text" placeholder="UUID of RFI / Deficiency / Field Report" />
+      </div>
+    `,
+    footer: `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="pu-upload-btn" onclick="uploadPhotos()">Upload</button>`
+  });
+}
+window.openPhotoUploadModal = openPhotoUploadModal;
+
+async function uploadPhotos() {
+  const btn = document.getElementById('pu-upload-btn');
+  const files = document.getElementById('pu-files')?.files;
+  if (!files || !files.length) { toast('Select at least one file'); return; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
+
+  const caption  = document.getElementById('pu-caption').value.trim() || null;
+  const location = document.getElementById('pu-location').value.trim() || null;
+  const taken    = document.getElementById('pu-date').value || null;
+  const linkedModule = document.getElementById('pu-module').value || 'general';
+  const linkedIdRaw  = document.getElementById('pu-linkid').value.trim();
+  const linkedId = /^[0-9a-f-]{36}$/i.test(linkedIdRaw) ? linkedIdRaw : null;
+
+  let okCount = 0;
+  for (const file of files) {
+    if (file.size > 25 * 1024 * 1024) { toast(`${file.name} > 25MB, skipped`, 'error'); continue; }
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${STATE.activeProjectId}/${crypto.randomUUID()}-${safe}`;
+    const { error: upErr } = await sb.storage.from('project-photos').upload(path, file);
+    if (upErr) { handleSbError(upErr, 'Upload ' + file.name); continue; }
+    const { error: insErr } = await sb.from('photos').insert({
+      project_id: STATE.activeProjectId,
+      file_path: path,
+      file_name: file.name,
+      caption,
+      location_tag: location,
+      taken_at: taken,
+      linked_module: linkedModule,
+      linked_id: linkedId,
+      uploaded_by: (AUTH && AUTH.name) || 'owner',
+    });
+    if (insErr) { handleSbError(insErr, 'Save photo record'); continue; }
+    okCount++;
+  }
+
+  await loadAllData();
+  toast(`Uploaded ${okCount} photo${okCount === 1 ? '' : 's'}`);
+  closeModal();
+  render();
+}
+window.uploadPhotos = uploadPhotos;
+
+function openPhotoEditModal(id) {
+  const p = DATA.photos.find(x => x.id === id);
+  if (!p) return;
+  showModal({
+    title: 'Edit Photo',
+    body: `
+      <div class="form-row"><label class="form-label">Caption</label><input id="pe-caption" type="text" value="${escapeHtml(p.caption || '')}" /></div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Location Tag</label><input id="pe-location" type="text" value="${escapeHtml(p.location_tag || '')}" /></div>
+        <div><label class="form-label">Date Taken</label><input id="pe-date" type="date" value="${p.taken_at || ''}" /></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Link to Module</label>
+          <select id="pe-module">
+            <option value="general" ${(p.linked_module || 'general') === 'general' ? 'selected' : ''}>General</option>
+            <option value="rfi" ${p.linked_module === 'rfi' ? 'selected' : ''}>RFI</option>
+            <option value="deficiency" ${p.linked_module === 'deficiency' ? 'selected' : ''}>Deficiency</option>
+            <option value="field_report" ${p.linked_module === 'field_report' ? 'selected' : ''}>Field Report</option>
+          </select>
+        </div>
+        <div><label class="form-label">Linked Item ID</label><input id="pe-linkid" type="text" value="${escapeHtml(p.linked_id || '')}" /></div>
+      </div>
+    `,
+    footer: `<button class="btn btn-danger" onclick="deletePhoto('${id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="savePhotoEdit('${id}')">Save</button>`
+  });
+}
+window.openPhotoEditModal = openPhotoEditModal;
+
+async function savePhotoEdit(id) {
+  const linkedIdRaw = document.getElementById('pe-linkid').value.trim();
+  const data = {
+    caption: document.getElementById('pe-caption').value.trim() || null,
+    location_tag: document.getElementById('pe-location').value.trim() || null,
+    taken_at: document.getElementById('pe-date').value || null,
+    linked_module: document.getElementById('pe-module').value || 'general',
+    linked_id: /^[0-9a-f-]{36}$/i.test(linkedIdRaw) ? linkedIdRaw : null,
+  };
+  const { error } = await sb.from('photos').update(data).eq('id', id);
+  if (error) { handleSbError(error, 'Update photo'); return; }
+  await loadAllData();
+  toast('Photo updated');
+  closeModal();
+  render();
+}
+window.savePhotoEdit = savePhotoEdit;
+
+async function deletePhoto(id) {
+  if (!confirm('Delete this photo?')) return;
+  const p = DATA.photos.find(x => x.id === id);
+  if (p?.file_path) {
+    await sb.storage.from('project-photos').remove([p.file_path]).catch(()=>{});
+  }
+  const { error } = await sb.from('photos').delete().eq('id', id);
+  if (error) { handleSbError(error, 'Delete photo'); return; }
+  await loadAllData();
+  toast('Photo deleted');
+  closeModal();
+  render();
+}
+window.deletePhoto = deletePhoto;
+
+
+/* =========================================================================
+   FIELD REPORTS MODULE
+   ========================================================================= */
+const FR_TYPE_META = {
+  field_observation:  { label: 'Field Observation', prefix: 'FOR' },
+  special_inspection: { label: 'Special Inspection', prefix: 'SI' },
+  daily_report:       { label: 'Daily Log',          prefix: 'DLR' },
+};
+const FR_COMPLIANCE_META = {
+  compliant:      { label: 'Compliant',      cls: 'badge-green' },
+  non_compliant:  { label: 'Non-Compliant',  cls: 'badge-red' },
+  conditional:    { label: 'Conditional',    cls: 'badge-yellow' },
+  not_applicable: { label: 'N/A',            cls: 'badge-gray' },
+};
+const FR_STATUS_META = {
+  draft:     { label: 'Draft',     cls: 'badge-gray' },
+  submitted: { label: 'Submitted', cls: 'badge-blue' },
+  approved:  { label: 'Approved',  cls: 'badge-green' },
+};
+
+function nextFieldReportNumber(projectId, type) {
+  const prefix = (FR_TYPE_META[type] || FR_TYPE_META.field_observation).prefix;
+  const existing = DATA.field_reports
+    .filter(r => r.project_id === projectId && r.report_type === type)
+    .map(r => {
+      const m = (r.report_number || '').match(/(\d+)\s*$/);
+      return m ? parseInt(m[1], 10) : 0;
+    });
+  const max = existing.length ? Math.max(...existing) : 0;
+  return `${prefix}-${String(max + 1).padStart(3, '0')}`;
+}
+
+function renderFieldReports() {
+  const proj = activeProject();
+  const ctxEl = document.getElementById('fr-context');
+  if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
+  const body = document.getElementById('frBody');
+  if (!body) return;
+  if (!proj) { body.innerHTML = ''; return; }
+
+  let list = DATA.field_reports.filter(r => r.project_id === proj.id);
+  if (STATE.frTypeFilter && STATE.frTypeFilter !== 'all') {
+    list = list.filter(r => r.report_type === STATE.frTypeFilter);
+  }
+  if (STATE.frStatusFilter && STATE.frStatusFilter !== 'all') {
+    list = list.filter(r => r.status === STATE.frStatusFilter);
+  }
+  const search = (STATE.frSearch || '').toLowerCase();
+  if (search) {
+    list = list.filter(r =>
+      ((r.report_number || '') + ' ' + (r.inspector || '') + ' ' + (r.findings || '') + ' ' + (r.work_observed || ''))
+        .toLowerCase().includes(search));
+  }
+  list.sort((a, b) => (b.visit_date || '').localeCompare(a.visit_date || ''));
+
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No field reports</div><div class="empty-sub">Create your first observation report.</div></div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = list.map(r => {
+    const typeMeta = FR_TYPE_META[r.report_type] || FR_TYPE_META.field_observation;
+    const complMeta = FR_COMPLIANCE_META[r.compliance || 'compliant'];
+    const statusMeta = FR_STATUS_META[r.status || 'draft'];
+    return `
+      <tr>
+        <td style="font-weight:600;">${escapeHtml(r.report_number || '—')}</td>
+        <td>${fmtDate(r.visit_date)}</td>
+        <td>${escapeHtml(typeMeta.label)}</td>
+        <td>${escapeHtml(r.inspector || '—')}</td>
+        <td><span class="badge ${complMeta.cls}">${escapeHtml(complMeta.label)}</span></td>
+        <td><span class="badge ${statusMeta.cls} badge-dot">${escapeHtml(statusMeta.label)}</span></td>
+        <td>
+          <div class="row-actions">
+            <button class="btn btn-ghost btn-sm" onclick="printFieldReport('${r.id}')">🖨 PDF</button>
+            <button class="btn btn-ghost btn-sm" onclick="openFieldReportModal('${r.id}')">View</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+window.renderFieldReports = renderFieldReports;
+
+document.getElementById('frTypeFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.frTypeFilter = chip.dataset.filter;
+  document.querySelectorAll('#frTypeFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderFieldReports();
+});
+document.getElementById('frStatusFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.frStatusFilter = chip.dataset.filter;
+  document.querySelectorAll('#frStatusFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderFieldReports();
+});
+document.getElementById('frSearch')?.addEventListener('input', e => {
+  STATE.frSearch = e.target.value; renderFieldReports();
+});
+
+function openFieldReportModal(id) {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  const editing = id ? DATA.field_reports.find(r => r.id === id) : null;
+  const type = editing?.report_type || 'field_observation';
+  const reportNum = editing?.report_number || nextFieldReportNumber(STATE.activeProjectId, type);
+
+  const typeOpts = Object.keys(FR_TYPE_META).map(k =>
+    `<option value="${k}" ${type === k ? 'selected' : ''}>${FR_TYPE_META[k].label}</option>`
+  ).join('');
+  const complOpts = Object.keys(FR_COMPLIANCE_META).map(k =>
+    `<option value="${k}" ${(editing?.compliance || 'compliant') === k ? 'selected' : ''}>${FR_COMPLIANCE_META[k].label}</option>`
+  ).join('');
+  const statusOpts = Object.keys(FR_STATUS_META).map(k =>
+    `<option value="${k}" ${(editing?.status || 'draft') === k ? 'selected' : ''}>${FR_STATUS_META[k].label}</option>`
+  ).join('');
+
+  showModal({
+    title: editing ? `Field Report — ${editing.report_number || ''}` : 'New Field Report',
+    size: 'wide',
+    body: `
+      <div class="sov-section-title" style="margin-bottom:8px;">1. Header</div>
+      <div class="form-row three-col">
+        <div><label class="form-label">Report #</label><input id="fr-num" type="text" value="${escapeHtml(reportNum)}" /></div>
+        <div><label class="form-label">Type</label><select id="fr-type" onchange="window.__frTypeChanged()">${typeOpts}</select></div>
+        <div><label class="form-label">Date of Visit</label><input id="fr-date" type="date" value="${editing?.visit_date || todayStr()}" /></div>
+      </div>
+      <div class="form-row"><label class="form-label">Inspector</label><input id="fr-inspector" type="text" value="${escapeHtml(editing?.inspector || (AUTH?.name || ''))}" /></div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">2. Site Conditions</div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Weather</label><input id="fr-weather" type="text" value="${escapeHtml(editing?.weather || '')}" placeholder="Clear, partly cloudy, etc." /></div>
+        <div><label class="form-label">Temperature Range</label><input id="fr-temp" type="text" value="${escapeHtml(editing?.temp_range || '')}" placeholder="78°F – 85°F" /></div>
+      </div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">3. Work Observed</div>
+      <div class="form-row"><textarea id="fr-work" rows="3">${escapeHtml(editing?.work_observed || '')}</textarea></div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">4. Materials &amp; Equipment</div>
+      <div class="form-row"><textarea id="fr-materials" rows="2">${escapeHtml(editing?.materials_used || '')}</textarea></div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">5. Findings &amp; Observations</div>
+      <div class="form-row"><textarea id="fr-findings" rows="5">${escapeHtml(editing?.findings || '')}</textarea></div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">6. Deficiencies Noted</div>
+      <div class="form-row"><textarea id="fr-defs" rows="3">${escapeHtml(editing?.deficiencies_noted || '')}</textarea></div>
+      <div class="form-row" style="margin-top:-6px;">
+        <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px;">
+          <input type="checkbox" id="fr-log-defs" style="width:auto; margin:0;" />
+          Also log these as separate deficiency items
+        </label>
+      </div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">7. Recommendations</div>
+      <div class="form-row"><textarea id="fr-rec" rows="3">${escapeHtml(editing?.recommendations || '')}</textarea></div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">8. Compliance &amp; Status</div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Compliance</label><select id="fr-compl">${complOpts}</select></div>
+        <div><label class="form-label">Status</label><select id="fr-status">${statusOpts}</select></div>
+      </div>
+    `,
+    footer: editing
+      ? `<button class="btn btn-danger" onclick="deleteFieldReport('${editing.id}')">Delete</button>
+         <div style="flex:1"></div>
+         <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+         <button class="btn btn-secondary" onclick="printFieldReport('${editing.id}')">🖨 Print/PDF</button>
+         <button class="btn btn-primary" onclick="saveFieldReport('${editing.id}')">Save</button>`
+      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+         <button class="btn btn-primary" onclick="saveFieldReport()">Create</button>`
+  });
+
+  window.__frTypeChanged = () => {
+    const t = document.getElementById('fr-type').value;
+    const numEl = document.getElementById('fr-num');
+    if (numEl && (!editing || !editing.report_number)) {
+      numEl.value = nextFieldReportNumber(STATE.activeProjectId, t);
+    }
+  };
+}
+window.openFieldReportModal = openFieldReportModal;
+
+async function saveFieldReport(id) {
+  const type = document.getElementById('fr-type').value;
+  const data = {
+    project_id: STATE.activeProjectId,
+    report_number: document.getElementById('fr-num').value.trim() || null,
+    report_type: type,
+    visit_date: document.getElementById('fr-date').value || todayStr(),
+    inspector: document.getElementById('fr-inspector').value.trim() || null,
+    weather: document.getElementById('fr-weather').value.trim() || null,
+    temp_range: document.getElementById('fr-temp').value.trim() || null,
+    work_observed: document.getElementById('fr-work').value.trim() || null,
+    materials_used: document.getElementById('fr-materials').value.trim() || null,
+    findings: document.getElementById('fr-findings').value.trim() || null,
+    deficiencies_noted: document.getElementById('fr-defs').value.trim() || null,
+    recommendations: document.getElementById('fr-rec').value.trim() || null,
+    compliance: document.getElementById('fr-compl').value,
+    status: document.getElementById('fr-status').value,
+    updated_at: new Date().toISOString(),
+  };
+  if (!data.visit_date) { toast('Visit date required'); return; }
+
+  let res, newId = id;
+  if (id) {
+    res = await sb.from('field_reports').update(data).eq('id', id);
+  } else {
+    res = await sb.from('field_reports').insert(data).select().single();
+    if (!res.error && res.data) newId = res.data.id;
+  }
+  if (res.error) { handleSbError(res.error, 'Save field report'); return; }
+
+  // Optional: also create deficiency items
+  const logDefs = document.getElementById('fr-log-defs')?.checked;
+  if (logDefs && data.deficiencies_noted) {
+    const lines = data.deficiencies_noted.split(/\n+/).map(s => s.trim()).filter(Boolean);
+    const rows = lines.map(line => ({
+      project_id: STATE.activeProjectId,
+      deficiency_no: nextDeficiencyNumber(STATE.activeProjectId, lines.indexOf(line)),
+      description: line,
+      severity: 'moderate',
+      status: 'open',
+      field_report_id: newId,
+    }));
+    if (rows.length) {
+      const { error } = await sb.from('deficiencies').insert(rows);
+      if (error) handleSbError(error, 'Auto-create deficiencies');
+    }
+  }
+
+  await loadAllData();
+  toast(id ? 'Field report saved' : 'Field report created');
+  closeModal();
+  render();
+}
+window.saveFieldReport = saveFieldReport;
+
+async function deleteFieldReport(id) {
+  if (!confirm('Delete this field report?')) return;
+  const { error } = await sb.from('field_reports').delete().eq('id', id);
+  if (error) { handleSbError(error, 'Delete field report'); return; }
+  await loadAllData();
+  toast('Field report deleted');
+  closeModal();
+  render();
+}
+window.deleteFieldReport = deleteFieldReport;
+
+function printFieldReport(id) {
+  const r = DATA.field_reports.find(x => x.id === id);
+  if (!r) { toast('Report not found'); return; }
+  const proj = DATA.projects.find(p => p.id === r.project_id);
+  const typeLabel = (FR_TYPE_META[r.report_type] || FR_TYPE_META.field_observation).label;
+  const complLabel = (FR_COMPLIANCE_META[r.compliance] || FR_COMPLIANCE_META.compliant).label;
+  const statusLabel = (FR_STATUS_META[r.status] || FR_STATUS_META.draft).label;
+
+  const w = window.open('', '_blank', 'width=850,height=1100');
+  if (!w) { toast('Popup blocked', 'error'); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(r.report_number || 'Field Report')}</title>
+    <style>
+      body { font-family: 'Times New Roman', serif; color:#020000; padding:40px; max-width:800px; margin:0 auto; }
+      .hdr { border-bottom:2px solid #020000; padding-bottom:12px; margin-bottom:18px; }
+      .hdr h1 { margin:0; font-size:22px; letter-spacing:2px; text-transform:uppercase; }
+      .hdr .sub { font-size:11px; color:#666; letter-spacing:2px; text-transform:uppercase; margin-top:4px; }
+      h2 { font-size:13px; text-transform:uppercase; letter-spacing:1px; border-bottom:1px solid #ccc; padding-bottom:4px; margin-top:22px; }
+      .meta { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:18px; }
+      .meta td { padding:6px 8px; border-bottom:1px solid #e5e5e5; vertical-align:top; }
+      .meta td.label { width:30%; color:#666; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.5px; }
+      .section { font-size:13px; line-height:1.55; white-space:pre-wrap; padding:8px 0; }
+      .compliance-badge { display:inline-block; padding:4px 12px; border:1px solid #020000; font-size:11px; letter-spacing:1px; text-transform:uppercase; font-weight:600; }
+      .sigs { display:grid; grid-template-columns:1fr 1fr; gap:40px; margin-top:60px; }
+      .sig { border-top:1px solid #020000; padding-top:6px; font-size:10px; color:#666; text-transform:uppercase; letter-spacing:1px; }
+      @media print { body { padding:20px; } }
+    </style></head><body>
+    <div class="hdr">
+      <h1>PLAZA &amp; ASSOCIATES</h1>
+      <div class="sub">Consulting Engineering · Coral Gables, FL</div>
+    </div>
+    <h2>${escapeHtml(typeLabel)} — ${escapeHtml(r.report_number || '')}</h2>
+    <table class="meta">
+      <tr><td class="label">Project</td><td>${escapeHtml(proj?.name || '')} (${escapeHtml(proj?.code || '')})</td></tr>
+      ${proj?.address ? `<tr><td class="label">Address</td><td>${escapeHtml(proj.address)}</td></tr>` : ''}
+      <tr><td class="label">Date of Visit</td><td>${fmtDate(r.visit_date)}</td></tr>
+      <tr><td class="label">Inspector</td><td>${escapeHtml(r.inspector || '')}</td></tr>
+      <tr><td class="label">Weather</td><td>${escapeHtml(r.weather || '—')} · ${escapeHtml(r.temp_range || '')}</td></tr>
+      <tr><td class="label">Status</td><td>${escapeHtml(statusLabel)}</td></tr>
+      <tr><td class="label">Compliance</td><td><span class="compliance-badge">${escapeHtml(complLabel)}</span></td></tr>
+    </table>
+
+    ${r.work_observed ? `<h2>Work Observed</h2><div class="section">${escapeHtml(r.work_observed)}</div>` : ''}
+    ${r.materials_used ? `<h2>Materials &amp; Equipment</h2><div class="section">${escapeHtml(r.materials_used)}</div>` : ''}
+    ${r.findings ? `<h2>Findings &amp; Observations</h2><div class="section">${escapeHtml(r.findings)}</div>` : ''}
+    ${r.deficiencies_noted ? `<h2>Deficiencies Noted</h2><div class="section">${escapeHtml(r.deficiencies_noted)}</div>` : ''}
+    ${r.recommendations ? `<h2>Recommendations</h2><div class="section">${escapeHtml(r.recommendations)}</div>` : ''}
+
+    <div class="sigs">
+      <div class="sig">Inspector Signature / Date</div>
+      <div class="sig">Engineer of Record / Date</div>
+    </div>
+    <script>setTimeout(() => window.print(), 250);<\/script>
+  </body></html>`;
+  w.document.write(html);
+  w.document.close();
+}
+window.printFieldReport = printFieldReport;
+
+
+/* =========================================================================
+   DEFICIENCIES MODULE
+   ========================================================================= */
+const DEF_SEVERITY_META = {
+  critical: { label: 'Critical', dot: '🔴', cls: 'badge-red' },
+  major:    { label: 'Major',    dot: '🟠', cls: 'badge-yellow' },
+  moderate: { label: 'Moderate', dot: '🟡', cls: 'badge-yellow' },
+  minor:    { label: 'Minor',    dot: '⚪', cls: 'badge-gray' },
+};
+const DEF_STATUS_META = {
+  open:      { label: 'Open',       cls: 'badge-red' },
+  in_repair: { label: 'In Repair',  cls: 'badge-yellow' },
+  repaired:  { label: 'Repaired',   cls: 'badge-blue' },
+  verified:  { label: 'Verified',   cls: 'badge-green' },
+  closed:    { label: 'Closed',     cls: 'badge-gray' },
+  rejected:  { label: 'Rejected',   cls: 'badge-purple' },
+};
+
+function nextDeficiencyNumber(projectId, offset = 0) {
+  const nums = DATA.deficiencies
+    .filter(d => d.project_id === projectId)
+    .map(d => { const m = (d.deficiency_no || '').match(/(\d+)\s*$/); return m ? parseInt(m[1], 10) : 0; });
+  const max = nums.length ? Math.max(...nums) : 0;
+  return `DEF-${String(max + 1 + offset).padStart(3, '0')}`;
+}
+
+function defSeverityBadge(s) {
+  const m = DEF_SEVERITY_META[s] || DEF_SEVERITY_META.moderate;
+  return `<span class="badge ${m.cls}">${m.dot} ${escapeHtml(m.label)}</span>`;
+}
+function defStatusBadge(s) {
+  const m = DEF_STATUS_META[s] || DEF_STATUS_META.open;
+  return `<span class="badge ${m.cls} badge-dot">${escapeHtml(m.label)}</span>`;
+}
+
+function renderDeficiencies() {
+  const proj = activeProject();
+  const ctxEl = document.getElementById('def-context');
+  if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
+  const tiles = document.getElementById('def-tiles');
+  const body = document.getElementById('defBody');
+  if (!body || !proj) { if (body) body.innerHTML = ''; if (tiles) tiles.innerHTML = ''; return; }
+
+  let list = DATA.deficiencies.filter(d => d.project_id === proj.id);
+  const today = todayStr();
+  const totalOpen = list.filter(d => !['closed','verified'].includes(d.status)).length;
+  const totalCritical = list.filter(d => d.severity === 'critical' && !['closed','verified'].includes(d.status)).length;
+  const totalMajor = list.filter(d => d.severity === 'major' && !['closed','verified'].includes(d.status)).length;
+  const monthStart = today.slice(0, 7) + '-01';
+  const resolvedMonth = list.filter(d => ['closed','verified'].includes(d.status) && (d.updated_at || '') >= monthStart).length;
+  if (tiles) tiles.innerHTML = `
+    <div class="tile"><div class="tile-label">Total Open</div><div class="tile-value ${totalOpen ? 'neg' : ''}">${totalOpen}</div></div>
+    <div class="tile"><div class="tile-label">Critical</div><div class="tile-value ${totalCritical ? 'neg' : ''}">${totalCritical}</div></div>
+    <div class="tile"><div class="tile-label">Major</div><div class="tile-value">${totalMajor}</div></div>
+    <div class="tile"><div class="tile-label">Resolved (This Month)</div><div class="tile-value pos">${resolvedMonth}</div></div>
+  `;
+
+  if (STATE.defSeverityFilter && STATE.defSeverityFilter !== 'all') {
+    list = list.filter(d => (d.severity || 'moderate') === STATE.defSeverityFilter);
+  }
+  if (STATE.defStatusFilter && STATE.defStatusFilter !== 'all') {
+    list = list.filter(d => d.status === STATE.defStatusFilter);
+  }
+  const search = (STATE.defSearch || '').toLowerCase();
+  if (search) {
+    list = list.filter(d => ((d.description || '') + ' ' + (d.location || '') + ' ' + (d.responsible_party || '') + ' ' + (d.deficiency_no || '')).toLowerCase().includes(search));
+  }
+
+  // Sort: open first by severity rank, then due_date
+  const sevRank = { critical: 0, major: 1, moderate: 2, minor: 3 };
+  const statusRank = { open: 0, in_repair: 1, repaired: 2, verified: 3, closed: 4, rejected: 5 };
+  list.sort((a, b) => {
+    const sa = statusRank[a.status] ?? 9, sb_ = statusRank[b.status] ?? 9;
+    if (sa !== sb_) return sa - sb_;
+    const ra = sevRank[a.severity || 'moderate'], rb = sevRank[b.severity || 'moderate'];
+    if (ra !== rb) return ra - rb;
+    return (a.due_date || '').localeCompare(b.due_date || '');
+  });
+
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">No deficiencies</div><div class="empty-sub">Log field deficiencies to track repairs.</div></div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = list.map(d => {
+    const overdue = d.due_date && d.due_date < today && !['closed','verified'].includes(d.status);
+    const rowStyle = overdue ? 'background:rgba(207,46,46,0.06);' : '';
+    let dueCell = '<span class="text-muted">—</span>';
+    if (d.due_date) {
+      dueCell = fmtDate(d.due_date);
+      if (overdue) dueCell += ` <span class="text-sm" style="color:var(--red); font-weight:600;">overdue</span>`;
+    }
+    return `
+      <tr style="${rowStyle}">
+        <td style="font-weight:600;">${escapeHtml(d.deficiency_no || '—')}</td>
+        <td>${escapeHtml(d.location || '—')}</td>
+        <td>${escapeHtml((d.description || '').slice(0, 100))}${(d.description || '').length > 100 ? '…' : ''}</td>
+        <td>${defSeverityBadge(d.severity || 'moderate')}</td>
+        <td>${escapeHtml(d.responsible_party || '—')}</td>
+        <td>${dueCell}</td>
+        <td>${defStatusBadge(d.status || 'open')}</td>
+        <td>
+          <div class="row-actions">
+            <button class="btn btn-ghost btn-sm" onclick="openDeficiencyModal('${d.id}')">Edit</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+window.renderDeficiencies = renderDeficiencies;
+
+document.getElementById('defSeverityFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.defSeverityFilter = chip.dataset.filter;
+  document.querySelectorAll('#defSeverityFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderDeficiencies();
+});
+document.getElementById('defStatusFilters')?.addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  STATE.defStatusFilter = chip.dataset.filter;
+  document.querySelectorAll('#defStatusFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderDeficiencies();
+});
+document.getElementById('defSearch')?.addEventListener('input', e => {
+  STATE.defSearch = e.target.value; renderDeficiencies();
+});
+
+function openDeficiencyModal(id) {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  const editing = id ? DATA.deficiencies.find(d => d.id === id) : null;
+  const number = editing?.deficiency_no || nextDeficiencyNumber(STATE.activeProjectId);
+
+  const sevOpts = Object.keys(DEF_SEVERITY_META).map(k =>
+    `<option value="${k}" ${(editing?.severity || 'moderate') === k ? 'selected' : ''}>${DEF_SEVERITY_META[k].label}</option>`
+  ).join('');
+  const statusOpts = Object.keys(DEF_STATUS_META).map(k =>
+    `<option value="${k}" ${(editing?.status || 'open') === k ? 'selected' : ''}>${DEF_STATUS_META[k].label}</option>`
+  ).join('');
+
+  const frOpts = DATA.field_reports
+    .filter(r => r.project_id === STATE.activeProjectId)
+    .map(r => `<option value="${r.id}" ${editing?.field_report_id === r.id ? 'selected' : ''}>${escapeHtml(r.report_number || 'Report')} — ${fmtDate(r.visit_date)}</option>`)
+    .join('');
+
+  showModal({
+    title: editing ? `Deficiency — ${editing.deficiency_no || ''}` : 'New Deficiency',
+    body: `
+      <div class="form-row two-col">
+        <div><label class="form-label">Deficiency #</label><input id="d-num" type="text" value="${escapeHtml(number)}" /></div>
+        <div><label class="form-label">Severity</label><select id="d-sev">${sevOpts}</select></div>
+      </div>
+      <div class="form-row"><label class="form-label">Location</label><input id="d-loc" type="text" value="${escapeHtml(editing?.location || '')}" placeholder="Level 12, Unit 1204, North Balcony" /></div>
+      <div class="form-row"><label class="form-label">Description <span style="color:var(--red);">*</span></label><textarea id="d-desc" rows="3">${escapeHtml(editing?.description || '')}</textarea></div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Responsible Party</label><input id="d-resp" type="text" value="${escapeHtml(editing?.responsible_party || '')}" /></div>
+        <div><label class="form-label">Due Date</label><input id="d-due" type="date" value="${editing?.due_date || ''}" /></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Status</label><select id="d-status">${statusOpts}</select></div>
+        <div><label class="form-label">Linked Field Report</label>
+          <select id="d-fr">
+            <option value="">—</option>
+            ${frOpts}
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label class="form-label">Notes</label><textarea id="d-notes" rows="3">${escapeHtml(editing?.notes || '')}</textarea></div>
+    `,
+    footer: editing
+      ? `<button class="btn btn-danger" onclick="deleteDeficiency('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDeficiency('${editing.id}')">Save</button>`
+      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDeficiency()">Create</button>`
+  });
+}
+window.openDeficiencyModal = openDeficiencyModal;
+
+async function saveDeficiency(id) {
+  const desc = document.getElementById('d-desc').value.trim();
+  if (!desc) { toast('Description required'); return; }
+  const data = {
+    project_id: STATE.activeProjectId,
+    deficiency_no: document.getElementById('d-num').value.trim() || null,
+    location: document.getElementById('d-loc').value.trim() || null,
+    description: desc,
+    severity: document.getElementById('d-sev').value,
+    responsible_party: document.getElementById('d-resp').value.trim() || null,
+    due_date: document.getElementById('d-due').value || null,
+    status: document.getElementById('d-status').value,
+    field_report_id: document.getElementById('d-fr').value || null,
+    notes: document.getElementById('d-notes').value.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+  let res;
+  if (id) res = await sb.from('deficiencies').update(data).eq('id', id);
+  else    res = await sb.from('deficiencies').insert(data);
+  if (res.error) { handleSbError(res.error, 'Save deficiency'); return; }
+  await loadAllData();
+  toast(id ? 'Deficiency updated' : 'Deficiency logged');
+  closeModal();
+  render();
+}
+window.saveDeficiency = saveDeficiency;
+
+async function deleteDeficiency(id) {
+  if (!confirm('Delete this deficiency?')) return;
+  const { error } = await sb.from('deficiencies').delete().eq('id', id);
+  if (error) { handleSbError(error, 'Delete deficiency'); return; }
+  await loadAllData();
+  toast('Deficiency deleted');
+  closeModal();
+  render();
+}
+window.deleteDeficiency = deleteDeficiency;
+
+
+/* =========================================================================
+   DAILY REPORTS MODULE
+   ========================================================================= */
+const DAILY_STATUS_META = {
+  draft:     { label: 'Draft',     cls: 'badge-gray' },
+  submitted: { label: 'Submitted', cls: 'badge-blue' },
+};
+const WEATHER_OPTIONS = ['Clear','Partly Cloudy','Overcast','Rain','Heavy Rain','Wind','Extreme Heat'];
+
+function renderDailyReports() {
+  const proj = activeProject();
+  const ctxEl = document.getElementById('daily-context');
+  if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
+  const body = document.getElementById('dailyBody');
+  if (!body) return;
+  if (!proj) { body.innerHTML = ''; return; }
+
+  let list = DATA.daily_reports.filter(d => d.project_id === proj.id);
+  const search = (STATE.dailySearch || '').toLowerCase();
+  if (search) {
+    list = list.filter(d => ((d.inspector || '') + ' ' + (d.work_performed || '') + ' ' + (d.notes || '')).toLowerCase().includes(search));
+  }
+  list.sort((a, b) => (b.report_date || '').localeCompare(a.report_date || ''));
+
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📅</div><div class="empty-title">No daily log entries</div><div class="empty-sub">Start your daily field log.</div></div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = list.map(d => {
+    const statusMeta = DAILY_STATUS_META[d.status || 'draft'];
+    const workSummary = (d.work_performed || '').slice(0, 100);
+    return `
+      <tr>
+        <td style="font-weight:600;">${fmtDate(d.report_date)}</td>
+        <td>${escapeHtml(d.inspector || '—')}</td>
+        <td>${escapeHtml(d.weather || '—')}</td>
+        <td class="num">${d.crew_count || 0}</td>
+        <td>${escapeHtml(workSummary)}${(d.work_performed || '').length > 100 ? '…' : ''}</td>
+        <td><span class="badge ${statusMeta.cls} badge-dot">${escapeHtml(statusMeta.label)}</span></td>
+        <td><div class="row-actions"><button class="btn btn-ghost btn-sm" onclick="openDailyModal('${d.id}')">View</button></div></td>
+      </tr>`;
+  }).join('');
+}
+window.renderDailyReports = renderDailyReports;
+
+document.getElementById('dailySearch')?.addEventListener('input', e => {
+  STATE.dailySearch = e.target.value; renderDailyReports();
+});
+
+function openDailyModal(id) {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  const editing = id ? DATA.daily_reports.find(d => d.id === id) : null;
+
+  const weatherOpts = WEATHER_OPTIONS.map(w =>
+    `<option value="${w}" ${editing?.weather === w ? 'selected' : ''}>${w}</option>`
+  ).join('');
+  const statusOpts = Object.keys(DAILY_STATUS_META).map(k =>
+    `<option value="${k}" ${(editing?.status || 'draft') === k ? 'selected' : ''}>${DAILY_STATUS_META[k].label}</option>`
+  ).join('');
+
+  showModal({
+    title: editing ? `Daily Log — ${fmtDate(editing.report_date)}` : 'New Daily Log Entry',
+    body: `
+      <div class="form-row two-col">
+        <div><label class="form-label">Date</label><input id="dl-date" type="date" value="${editing?.report_date || todayStr()}" /></div>
+        <div><label class="form-label">Inspector</label><input id="dl-inspector" type="text" value="${escapeHtml(editing?.inspector || (AUTH?.name || ''))}" /></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Weather</label><select id="dl-weather"><option value="">—</option>${weatherOpts}</select></div>
+        <div><label class="form-label">Temperature</label><input id="dl-temp" type="text" value="${escapeHtml(editing?.temperature || '')}" placeholder="82°F / 28°C" /></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Crew Count on Site</label><input id="dl-crew" type="number" min="0" value="${editing?.crew_count || 0}" /></div>
+        <div><label class="form-label">Status</label><select id="dl-status">${statusOpts}</select></div>
+      </div>
+      <div class="form-row"><label class="form-label">Work Performed</label><textarea id="dl-work" rows="4">${escapeHtml(editing?.work_performed || '')}</textarea></div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Materials Delivered</label><textarea id="dl-materials" rows="2">${escapeHtml(editing?.materials_delivered || '')}</textarea></div>
+        <div><label class="form-label">Equipment on Site</label><textarea id="dl-equip" rows="2">${escapeHtml(editing?.equipment_on_site || '')}</textarea></div>
+      </div>
+      <div class="form-row"><label class="form-label">Visitors</label><input id="dl-visitors" type="text" value="${escapeHtml(editing?.visitors || '')}" /></div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Delays / Issues</label><textarea id="dl-delays" rows="2">${escapeHtml(editing?.delays || '')}</textarea></div>
+        <div><label class="form-label">Safety Incidents</label><textarea id="dl-safety" rows="2">${escapeHtml(editing?.safety_incidents || 'None')}</textarea></div>
+      </div>
+      <div class="form-row"><label class="form-label">Notes</label><textarea id="dl-notes" rows="2">${escapeHtml(editing?.notes || '')}</textarea></div>
+    `,
+    footer: editing
+      ? `<button class="btn btn-danger" onclick="deleteDailyReport('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDailyReport('${editing.id}')">Save</button>`
+      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDailyReport()">Create</button>`
+  });
+}
+window.openDailyModal = openDailyModal;
+
+async function saveDailyReport(id) {
+  const date = document.getElementById('dl-date').value;
+  if (!date) { toast('Date required'); return; }
+  const data = {
+    project_id: STATE.activeProjectId,
+    report_date: date,
+    inspector: document.getElementById('dl-inspector').value.trim() || null,
+    weather: document.getElementById('dl-weather').value || null,
+    temperature: document.getElementById('dl-temp').value.trim() || null,
+    crew_count: parseInt(document.getElementById('dl-crew').value, 10) || 0,
+    work_performed: document.getElementById('dl-work').value.trim() || null,
+    materials_delivered: document.getElementById('dl-materials').value.trim() || null,
+    equipment_on_site: document.getElementById('dl-equip').value.trim() || null,
+    visitors: document.getElementById('dl-visitors').value.trim() || null,
+    delays: document.getElementById('dl-delays').value.trim() || null,
+    safety_incidents: document.getElementById('dl-safety').value.trim() || null,
+    notes: document.getElementById('dl-notes').value.trim() || null,
+    status: document.getElementById('dl-status').value,
+  };
+  let res;
+  if (id) res = await sb.from('daily_reports').update(data).eq('id', id);
+  else    res = await sb.from('daily_reports').insert(data);
+  if (res.error) { handleSbError(res.error, 'Save daily report'); return; }
+  await loadAllData();
+  toast(id ? 'Daily log saved' : 'Daily log created');
+  closeModal();
+  render();
+}
+window.saveDailyReport = saveDailyReport;
+
+async function deleteDailyReport(id) {
+  if (!confirm('Delete this daily log entry?')) return;
+  const { error } = await sb.from('daily_reports').delete().eq('id', id);
+  if (error) { handleSbError(error, 'Delete daily report'); return; }
+  await loadAllData();
+  toast('Daily log deleted');
+  closeModal();
+  render();
+}
+window.deleteDailyReport = deleteDailyReport;
+
+
+/* =========================================================================
+   MILESTONES MODULE
+   ========================================================================= */
+const MS_STATUS_META = {
+  pending:     { label: 'Pending',     icon: '⏳', cls: 'badge-gray' },
+  in_progress: { label: 'In Progress', icon: '🔄', cls: 'badge-blue' },
+  completed:   { label: 'Completed',   icon: '✅', cls: 'badge-green' },
+  delayed:     { label: 'Delayed',     icon: '🔴', cls: 'badge-red' },
+  cancelled:   { label: 'Cancelled',   icon: '❌', cls: 'badge-gray' },
+};
+
+const MILESTONE_TEMPLATES = [
+  'NTP (Notice to Proceed)',
+  'Site Investigation / Field Work',
+  'Draft Report / CD Submittal',
+  'Client Review Period',
+  'Final Report / CDs Issued',
+  'Permit Submission',
+  'Permit Approval',
+  'Construction Start',
+  'Substantial Completion',
+  'Final Inspection',
+  'Project Closeout',
+];
+
+function renderMilestones() {
+  const proj = activeProject();
+  const ctxEl = document.getElementById('ms-context');
+  if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
+  const wrap = document.getElementById('msTimeline');
+  if (!wrap) return;
+  if (!proj) { wrap.innerHTML = ''; return; }
+
+  const list = DATA.milestones
+    .filter(m => m.project_id === proj.id)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+  // Progress bar
+  const total = list.length;
+  const done = list.filter(m => m.status === 'completed').length;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const fill = document.getElementById('ms-progress-fill');
+  const lbl  = document.getElementById('ms-progress-label');
+  if (fill) fill.style.width = pct + '%';
+  if (lbl)  lbl.textContent = `${done} of ${total} complete · ${pct}%`;
+
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty"><div class="empty-icon">🎯</div><div class="empty-title">No milestones</div><div class="empty-sub">Add milestones manually or load from a template.</div></div>`;
+    return;
+  }
+
+  const today = todayStr();
+  wrap.innerHTML = list.map((m, idx) => {
+    const statusMeta = MS_STATUS_META[m.status || 'pending'];
+    let dueText = '';
+    if (m.status === 'completed' && m.completed_date) {
+      dueText = `<span class="text-sm" style="color:var(--green); font-weight:600;">✓ Completed ${fmtDate(m.completed_date)}</span>`;
+    } else if (m.due_date) {
+      const days = Math.floor((new Date(m.due_date + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
+      if (days < 0) dueText = `<span class="text-sm" style="color:var(--red); font-weight:600;">${Math.abs(days)}d overdue · ${fmtDate(m.due_date)}</span>`;
+      else if (days === 0) dueText = `<span class="text-sm" style="color:var(--red); font-weight:600;">Due today</span>`;
+      else dueText = `<span class="text-sm text-muted">Due ${fmtDate(m.due_date)} · in ${days}d</span>`;
+    }
+
+    return `
+      <div class="card">
+        <div style="display:flex; align-items:flex-start; padding:14px 16px; gap:14px;">
+          <div style="font-size:24px; min-width:32px; text-align:center;">${statusMeta.icon}</div>
+          <div style="flex:1;">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+              <div style="font-weight:600; color:var(--black); font-size:14px;">${escapeHtml(m.name || '')}</div>
+              <span class="badge ${statusMeta.cls} badge-dot">${escapeHtml(statusMeta.label)}</span>
+            </div>
+            ${m.description ? `<div class="text-sm text-muted" style="margin-top:4px;">${escapeHtml(m.description)}</div>` : ''}
+            <div style="margin-top:6px;">${dueText}</div>
+          </div>
+          <div class="row-actions perm-edit-milestones">
+            <button class="btn btn-ghost btn-sm" ${idx === 0 ? 'disabled' : ''} onclick="moveMilestone('${m.id}','up')">▲</button>
+            <button class="btn btn-ghost btn-sm" ${idx === list.length - 1 ? 'disabled' : ''} onclick="moveMilestone('${m.id}','down')">▼</button>
+            <button class="btn btn-ghost btn-sm" onclick="openMilestoneModal('${m.id}')">Edit</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+window.renderMilestones = renderMilestones;
+
+function openMilestoneModal(id) {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  const editing = id ? DATA.milestones.find(m => m.id === id) : null;
+  const statusOpts = Object.keys(MS_STATUS_META).map(k =>
+    `<option value="${k}" ${(editing?.status || 'pending') === k ? 'selected' : ''}>${MS_STATUS_META[k].icon} ${MS_STATUS_META[k].label}</option>`
+  ).join('');
+  const nextOrder = editing ? (editing.sort_order || 0) :
+    (DATA.milestones.filter(m => m.project_id === STATE.activeProjectId).length);
+
+  showModal({
+    title: editing ? `Milestone — ${editing.name}` : 'New Milestone',
+    body: `
+      <div class="form-row"><label class="form-label">Name <span style="color:var(--red);">*</span></label><input id="ms-name" type="text" value="${escapeHtml(editing?.name || '')}" /></div>
+      <div class="form-row"><label class="form-label">Description</label><textarea id="ms-desc" rows="2">${escapeHtml(editing?.description || '')}</textarea></div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Due Date</label><input id="ms-due" type="date" value="${editing?.due_date || ''}" /></div>
+        <div><label class="form-label">Status</label><select id="ms-status">${statusOpts}</select></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Completed Date</label><input id="ms-done" type="date" value="${editing?.completed_date || ''}" /></div>
+        <div><label class="form-label">Sort Order</label><input id="ms-order" type="number" value="${nextOrder}" /></div>
+      </div>
+    `,
+    footer: editing
+      ? `<button class="btn btn-danger" onclick="deleteMilestone('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveMilestone('${editing.id}')">Save</button>`
+      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveMilestone()">Create</button>`
+  });
+}
+window.openMilestoneModal = openMilestoneModal;
+
+function openMilestoneTemplateModal() {
+  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
+  showModal({
+    title: 'Load Milestones from Template',
+    body: `
+      <div class="hint-banner">Check the milestones you want to add. They will be appended in this order.</div>
+      <div class="form-row" id="ms-tmpl-list">
+        ${MILESTONE_TEMPLATES.map((t, i) => `
+          <label class="access-module-chk" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <input type="checkbox" class="ms-tmpl-chk" data-name="${escapeHtml(t)}" checked />
+            <span>${escapeHtml(t)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `,
+    footer: `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="addMilestoneTemplate()">Add Selected</button>`
+  });
+}
+window.openMilestoneTemplateModal = openMilestoneTemplateModal;
+
+async function addMilestoneTemplate() {
+  const picks = Array.from(document.querySelectorAll('.ms-tmpl-chk'))
+    .filter(c => c.checked)
+    .map(c => c.dataset.name);
+  if (!picks.length) { toast('Nothing selected'); return; }
+  const startOrder = DATA.milestones.filter(m => m.project_id === STATE.activeProjectId).length;
+  const rows = picks.map((name, i) => ({
+    project_id: STATE.activeProjectId,
+    name,
+    status: 'pending',
+    sort_order: startOrder + i,
+  }));
+  const { error } = await sb.from('milestones').insert(rows);
+  if (error) { handleSbError(error, 'Add template milestones'); return; }
+  await loadAllData();
+  toast(`Added ${rows.length} milestone${rows.length === 1 ? '' : 's'}`);
+  closeModal();
+  render();
+}
+window.addMilestoneTemplate = addMilestoneTemplate;
+
+async function saveMilestone(id) {
+  const name = document.getElementById('ms-name').value.trim();
+  if (!name) { toast('Name required'); return; }
+  const status = document.getElementById('ms-status').value;
+  const data = {
+    project_id: STATE.activeProjectId,
+    name,
+    description: document.getElementById('ms-desc').value.trim() || null,
+    due_date: document.getElementById('ms-due').value || null,
+    completed_date: document.getElementById('ms-done').value || (status === 'completed' ? todayStr() : null),
+    status,
+    sort_order: parseInt(document.getElementById('ms-order').value, 10) || 0,
+  };
+  let res;
+  if (id) res = await sb.from('milestones').update(data).eq('id', id);
+  else    res = await sb.from('milestones').insert(data);
+  if (res.error) { handleSbError(res.error, 'Save milestone'); return; }
+  await loadAllData();
+  toast(id ? 'Milestone updated' : 'Milestone added');
+  closeModal();
+  render();
+}
+window.saveMilestone = saveMilestone;
+
+async function deleteMilestone(id) {
+  if (!confirm('Delete this milestone?')) return;
+  const { error } = await sb.from('milestones').delete().eq('id', id);
+  if (error) { handleSbError(error, 'Delete milestone'); return; }
+  await loadAllData();
+  toast('Milestone deleted');
+  closeModal();
+  render();
+}
+window.deleteMilestone = deleteMilestone;
+
+async function moveMilestone(id, direction) {
+  const list = DATA.milestones
+    .filter(m => m.project_id === STATE.activeProjectId)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const idx = list.findIndex(m => m.id === id);
+  if (idx < 0) return;
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= list.length) return;
+  const a = list[idx], b = list[swapIdx];
+  const aOrder = a.sort_order || 0, bOrder = b.sort_order || 0;
+  // Swap sort_orders
+  const e1 = await sb.from('milestones').update({ sort_order: bOrder }).eq('id', a.id);
+  if (e1.error) { handleSbError(e1.error, 'Reorder milestone'); return; }
+  const e2 = await sb.from('milestones').update({ sort_order: aOrder }).eq('id', b.id);
+  if (e2.error) { handleSbError(e2.error, 'Reorder milestone'); return; }
+  await loadAllData();
+  render();
+}
+window.moveMilestone = moveMilestone;
 
 </script>
 </body>
