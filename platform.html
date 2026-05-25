@@ -4452,14 +4452,28 @@ function renderFieldReports() {
         <td><span class="badge ${statusMeta.cls} badge-dot">${escapeHtml(statusMeta.label)}</span></td>
         <td>
           <div class="row-actions">
-            <button class="btn btn-ghost btn-sm" onclick="printFieldReport('${r.id}')">🖨 PDF</button>
-            <button class="btn btn-ghost btn-sm" onclick="openFieldReportModal('${r.id}')">View</button>
+            ${r.file_path
+              ? `<button class="btn btn-primary btn-sm" onclick="viewFieldReportPDF('${r.id}')">📄 View PDF</button>`
+              : `<button class="btn btn-ghost btn-sm" onclick="printFieldReport('${r.id}')">🖨 PDF</button>`
+            }
+            <button class="btn btn-ghost btn-sm" onclick="openFieldReportModal('${r.id}')">Details</button>
           </div>
         </td>
       </tr>`;
   }).join('');
 }
 window.renderFieldReports = renderFieldReports;
+
+async function viewFieldReportPDF(id) {
+  const r = DATA.field_reports.find(x => x.id === id);
+  if (!r || !r.file_path) { toast('No PDF on file for this report'); return; }
+  // Strip bucket prefix if present (stored as 'field-reports/26011/file.pdf', need '26011/file.pdf')
+  const storagePath = r.file_path.replace(/^field-reports\//, '');
+  const { data, error } = await sb.storage.from('field-reports').createSignedUrl(storagePath, 3600);
+  if (error || !data?.signedUrl) { toast('Could not load PDF — ' + (error?.message || 'unknown error')); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.viewFieldReportPDF = viewFieldReportPDF;
 
 document.getElementById('frTypeFilters')?.addEventListener('click', e => {
   const chip = e.target.closest('.chip'); if (!chip) return;
@@ -4542,7 +4556,7 @@ function openFieldReportModal(id) {
       ? `<button class="btn btn-danger" onclick="deleteFieldReport('${editing.id}')">Delete</button>
          <div style="flex:1"></div>
          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-         <button class="btn btn-secondary" onclick="printFieldReport('${editing.id}')">🖨 Print/PDF</button>
+         ${editing.file_path ? `<button class="btn btn-primary" onclick="viewFieldReportPDF('${editing.id}')">📄 View PDF</button>` : `<button class="btn btn-secondary" onclick="printFieldReport('${editing.id}')">🖨 Print/PDF</button>`}
          <button class="btn btn-primary" onclick="saveFieldReport('${editing.id}')">Save</button>`
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
          <button class="btn btn-primary" onclick="saveFieldReport()">Create</button>`
