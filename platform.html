@@ -846,43 +846,24 @@
     <section id="page-field_reports" class="tab-page">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Field Observation Reports</h1>
-          <div class="page-subtitle">FOR / Special Inspection / Daily Log reports for the record</div>
+          <h1 class="page-title">Field Reports</h1>
+          <div class="page-subtitle">Issued reports — view only. Files synced automatically from Dropbox.</div>
           <div class="page-context-pill" id="fr-context"></div>
         </div>
-        <button class="btn btn-primary perm-edit-fieldreports" onclick="openFieldReportModal()">＋ New Report</button>
       </div>
 
       <div class="toolbar">
-        <div class="filter-bar" id="frTypeFilters" style="margin:0;">
-          <span class="chip active" data-filter="all">All</span>
-          <span class="chip" data-filter="field_observation">Field Observation</span>
-          <span class="chip" data-filter="special_inspection">Special Inspection</span>
-          <span class="chip" data-filter="daily_report">Daily Log</span>
-        </div>
-        <div class="spacer"></div>
         <input type="text" class="search" id="frSearch" placeholder="Search reports…" />
-      </div>
-      <div class="toolbar" style="margin-top:-8px;">
-        <div class="filter-bar" id="frStatusFilters" style="margin:0;">
-          <span class="chip active" data-filter="all">Any Status</span>
-          <span class="chip" data-filter="draft">Draft</span>
-          <span class="chip" data-filter="submitted">Submitted</span>
-          <span class="chip" data-filter="approved">Approved</span>
-        </div>
       </div>
 
       <div class="table-wrap">
         <table class="data" id="frTable">
           <thead>
             <tr>
-              <th style="width:100px;">Report #</th>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Inspector</th>
-              <th>Compliance</th>
-              <th>Status</th>
-              <th style="width:180px;"></th>
+              <th>File Name</th>
+              <th style="width:110px;">Date</th>
+              <th style="width:160px;">Type</th>
+              <th style="width:100px;"></th>
             </tr>
           </thead>
           <tbody id="frBody"></tbody>
@@ -4380,35 +4361,6 @@ window.deletePhoto = deletePhoto;
 /* =========================================================================
    FIELD REPORTS MODULE
    ========================================================================= */
-const FR_TYPE_META = {
-  field_observation:  { label: 'Field Observation', prefix: 'FOR' },
-  special_inspection: { label: 'Special Inspection', prefix: 'SI' },
-  daily_report:       { label: 'Daily Log',          prefix: 'DLR' },
-};
-const FR_COMPLIANCE_META = {
-  compliant:      { label: 'Compliant',      cls: 'badge-green' },
-  non_compliant:  { label: 'Non-Compliant',  cls: 'badge-red' },
-  conditional:    { label: 'Conditional',    cls: 'badge-yellow' },
-  not_applicable: { label: 'N/A',            cls: 'badge-gray' },
-};
-const FR_STATUS_META = {
-  draft:     { label: 'Draft',     cls: 'badge-gray' },
-  submitted: { label: 'Submitted', cls: 'badge-blue' },
-  approved:  { label: 'Approved',  cls: 'badge-green' },
-};
-
-function nextFieldReportNumber(projectId, type) {
-  const prefix = (FR_TYPE_META[type] || FR_TYPE_META.field_observation).prefix;
-  const existing = DATA.field_reports
-    .filter(r => r.project_id === projectId && r.report_type === type)
-    .map(r => {
-      const m = (r.report_number || '').match(/(\d+)\s*$/);
-      return m ? parseInt(m[1], 10) : 0;
-    });
-  const max = existing.length ? Math.max(...existing) : 0;
-  return `${prefix}-${String(max + 1).padStart(3, '0')}`;
-}
-
 function renderFieldReports() {
   const proj = activeProject();
   const ctxEl = document.getElementById('fr-context');
@@ -4418,56 +4370,39 @@ function renderFieldReports() {
   if (!body) return;
   if (!proj) { body.innerHTML = ''; return; }
 
-  let list = DATA.field_reports.filter(r => r.project_id === proj.id);
-  if (STATE.frTypeFilter && STATE.frTypeFilter !== 'all') {
-    list = list.filter(r => r.report_type === STATE.frTypeFilter);
-  }
-  if (STATE.frStatusFilter && STATE.frStatusFilter !== 'all') {
-    list = list.filter(r => r.status === STATE.frStatusFilter);
-  }
   const search = (STATE.frSearch || '').toLowerCase();
-  if (search) {
-    list = list.filter(r =>
-      ((r.report_number || '') + ' ' + (r.inspector || '') + ' ' + (r.findings || '') + ' ' + (r.work_observed || ''))
-        .toLowerCase().includes(search));
-  }
+  let list = DATA.field_reports
+    .filter(r => r.project_id === proj.id && r.file_path)
+    .filter(r => !search || (r.file_name || '').toLowerCase().includes(search));
+
   list.sort((a, b) => (b.visit_date || '').localeCompare(a.visit_date || ''));
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No field reports</div><div class="empty-sub">Create your first observation report.</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No reports on file</div><div class="empty-sub">Reports sync automatically from Dropbox.</div></div></td></tr>`;
     return;
   }
 
-  body.innerHTML = list.map(r => {
-    const typeMeta = FR_TYPE_META[r.report_type] || FR_TYPE_META.field_observation;
-    const complMeta = FR_COMPLIANCE_META[r.compliance || 'compliant'];
-    const statusMeta = FR_STATUS_META[r.status || 'draft'];
-    return `
-      <tr>
-        <td style="font-weight:600;">${escapeHtml(r.report_number || '—')}</td>
-        <td>${fmtDate(r.visit_date)}</td>
-        <td>${escapeHtml(typeMeta.label)}</td>
-        <td>${escapeHtml(r.inspector || '—')}</td>
-        <td><span class="badge ${complMeta.cls}">${escapeHtml(complMeta.label)}</span></td>
-        <td><span class="badge ${statusMeta.cls} badge-dot">${escapeHtml(statusMeta.label)}</span></td>
-        <td>
-          <div class="row-actions">
-            ${r.file_path
-              ? `<button class="btn btn-primary btn-sm" onclick="viewFieldReportPDF('${r.id}')">📄 View PDF</button>`
-              : `<button class="btn btn-ghost btn-sm" onclick="printFieldReport('${r.id}')">🖨 PDF</button>`
-            }
-            <button class="btn btn-ghost btn-sm" onclick="openFieldReportModal('${r.id}')">Details</button>
-          </div>
-        </td>
-      </tr>`;
-  }).join('');
+  const typeLabels = {
+    field_observation: 'Field Observation',
+    special_inspection: 'Special Inspection',
+    daily_report: 'Daily Log',
+  };
+
+  body.innerHTML = list.map(r => `
+    <tr>
+      <td style="font-weight:500;">${escapeHtml(r.file_name || r.report_number || '—')}</td>
+      <td>${fmtDate(r.visit_date)}</td>
+      <td>${escapeHtml(typeLabels[r.report_type] || r.report_type || '—')}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewFieldReportPDF('${r.id}')">📄 View</button>
+      </td>
+    </tr>`).join('');
 }
 window.renderFieldReports = renderFieldReports;
 
 async function viewFieldReportPDF(id) {
   const r = DATA.field_reports.find(x => x.id === id);
   if (!r || !r.file_path) { toast('No PDF on file for this report'); return; }
-  // Strip bucket prefix if present (stored as 'field-reports/26011/file.pdf', need '26011/file.pdf')
   const storagePath = r.file_path.replace(/^field-reports\//, '');
   const { data, error } = await sb.storage.from('field-reports').createSignedUrl(storagePath, 3600);
   if (error || !data?.signedUrl) { toast('Could not load PDF — ' + (error?.message || 'unknown error')); return; }
@@ -4475,226 +4410,9 @@ async function viewFieldReportPDF(id) {
 }
 window.viewFieldReportPDF = viewFieldReportPDF;
 
-document.getElementById('frTypeFilters')?.addEventListener('click', e => {
-  const chip = e.target.closest('.chip'); if (!chip) return;
-  STATE.frTypeFilter = chip.dataset.filter;
-  document.querySelectorAll('#frTypeFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
-  renderFieldReports();
-});
-document.getElementById('frStatusFilters')?.addEventListener('click', e => {
-  const chip = e.target.closest('.chip'); if (!chip) return;
-  STATE.frStatusFilter = chip.dataset.filter;
-  document.querySelectorAll('#frStatusFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
-  renderFieldReports();
-});
 document.getElementById('frSearch')?.addEventListener('input', e => {
   STATE.frSearch = e.target.value; renderFieldReports();
 });
-
-function openFieldReportModal(id) {
-  if (!STATE.activeProjectId) { toast('Select a project first'); return; }
-  const editing = id ? DATA.field_reports.find(r => r.id === id) : null;
-  const type = editing?.report_type || 'field_observation';
-  const reportNum = editing?.report_number || nextFieldReportNumber(STATE.activeProjectId, type);
-
-  const typeOpts = Object.keys(FR_TYPE_META).map(k =>
-    `<option value="${k}" ${type === k ? 'selected' : ''}>${FR_TYPE_META[k].label}</option>`
-  ).join('');
-  const complOpts = Object.keys(FR_COMPLIANCE_META).map(k =>
-    `<option value="${k}" ${(editing?.compliance || 'compliant') === k ? 'selected' : ''}>${FR_COMPLIANCE_META[k].label}</option>`
-  ).join('');
-  const statusOpts = Object.keys(FR_STATUS_META).map(k =>
-    `<option value="${k}" ${(editing?.status || 'draft') === k ? 'selected' : ''}>${FR_STATUS_META[k].label}</option>`
-  ).join('');
-
-  showModal({
-    title: editing ? `Field Report — ${editing.report_number || ''}` : 'New Field Report',
-    size: 'wide',
-    body: `
-      <div class="sov-section-title" style="margin-bottom:8px;">1. Header</div>
-      <div class="form-row three-col">
-        <div><label class="form-label">Report #</label><input id="fr-num" type="text" value="${escapeHtml(reportNum)}" /></div>
-        <div><label class="form-label">Type</label><select id="fr-type" onchange="window.__frTypeChanged()">${typeOpts}</select></div>
-        <div><label class="form-label">Date of Visit</label><input id="fr-date" type="date" value="${editing?.visit_date || todayStr()}" /></div>
-      </div>
-      <div class="form-row"><label class="form-label">Inspector</label><input id="fr-inspector" type="text" value="${escapeHtml(editing?.inspector || (AUTH?.name || ''))}" /></div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">2. Site Conditions</div>
-      <div class="form-row two-col">
-        <div><label class="form-label">Weather</label><input id="fr-weather" type="text" value="${escapeHtml(editing?.weather || '')}" placeholder="Clear, partly cloudy, etc." /></div>
-        <div><label class="form-label">Temperature Range</label><input id="fr-temp" type="text" value="${escapeHtml(editing?.temp_range || '')}" placeholder="78°F – 85°F" /></div>
-      </div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">3. Work Observed</div>
-      <div class="form-row"><textarea id="fr-work" rows="3">${escapeHtml(editing?.work_observed || '')}</textarea></div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">4. Materials &amp; Equipment</div>
-      <div class="form-row"><textarea id="fr-materials" rows="2">${escapeHtml(editing?.materials_used || '')}</textarea></div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">5. Findings &amp; Observations</div>
-      <div class="form-row"><textarea id="fr-findings" rows="5">${escapeHtml(editing?.findings || '')}</textarea></div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">6. Deficiencies Noted</div>
-      <div class="form-row"><textarea id="fr-defs" rows="3">${escapeHtml(editing?.deficiencies_noted || '')}</textarea></div>
-      <div class="form-row" style="margin-top:-6px;">
-        <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px;">
-          <input type="checkbox" id="fr-log-defs" style="width:auto; margin:0;" />
-          Also log these as separate deficiency items
-        </label>
-      </div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">7. Recommendations</div>
-      <div class="form-row"><textarea id="fr-rec" rows="3">${escapeHtml(editing?.recommendations || '')}</textarea></div>
-
-      <div class="sov-section-title" style="margin:14px 0 8px;">8. Compliance &amp; Status</div>
-      <div class="form-row two-col">
-        <div><label class="form-label">Compliance</label><select id="fr-compl">${complOpts}</select></div>
-        <div><label class="form-label">Status</label><select id="fr-status">${statusOpts}</select></div>
-      </div>
-    `,
-    footer: editing
-      ? `<button class="btn btn-danger" onclick="deleteFieldReport('${editing.id}')">Delete</button>
-         <div style="flex:1"></div>
-         <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-         ${editing.file_path ? `<button class="btn btn-primary" onclick="viewFieldReportPDF('${editing.id}')">📄 View PDF</button>` : `<button class="btn btn-secondary" onclick="printFieldReport('${editing.id}')">🖨 Print/PDF</button>`}
-         <button class="btn btn-primary" onclick="saveFieldReport('${editing.id}')">Save</button>`
-      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-         <button class="btn btn-primary" onclick="saveFieldReport()">Create</button>`
-  });
-
-  window.__frTypeChanged = () => {
-    const t = document.getElementById('fr-type').value;
-    const numEl = document.getElementById('fr-num');
-    if (numEl && (!editing || !editing.report_number)) {
-      numEl.value = nextFieldReportNumber(STATE.activeProjectId, t);
-    }
-  };
-}
-window.openFieldReportModal = openFieldReportModal;
-
-async function saveFieldReport(id) {
-  const type = document.getElementById('fr-type').value;
-  const data = {
-    project_id: STATE.activeProjectId,
-    report_number: document.getElementById('fr-num').value.trim() || null,
-    report_type: type,
-    visit_date: document.getElementById('fr-date').value || todayStr(),
-    inspector: document.getElementById('fr-inspector').value.trim() || null,
-    weather: document.getElementById('fr-weather').value.trim() || null,
-    temp_range: document.getElementById('fr-temp').value.trim() || null,
-    work_observed: document.getElementById('fr-work').value.trim() || null,
-    materials_used: document.getElementById('fr-materials').value.trim() || null,
-    findings: document.getElementById('fr-findings').value.trim() || null,
-    deficiencies_noted: document.getElementById('fr-defs').value.trim() || null,
-    recommendations: document.getElementById('fr-rec').value.trim() || null,
-    compliance: document.getElementById('fr-compl').value,
-    status: document.getElementById('fr-status').value,
-    updated_at: new Date().toISOString(),
-  };
-  if (!data.visit_date) { toast('Visit date required'); return; }
-
-  let res, newId = id;
-  if (id) {
-    res = await sb.from('field_reports').update(data).eq('id', id);
-  } else {
-    res = await sb.from('field_reports').insert(data).select().single();
-    if (!res.error && res.data) newId = res.data.id;
-  }
-  if (res.error) { handleSbError(res.error, 'Save field report'); return; }
-
-  // Optional: also create deficiency items
-  const logDefs = document.getElementById('fr-log-defs')?.checked;
-  if (logDefs && data.deficiencies_noted) {
-    const lines = data.deficiencies_noted.split(/\n+/).map(s => s.trim()).filter(Boolean);
-    const rows = lines.map(line => ({
-      project_id: STATE.activeProjectId,
-      deficiency_no: nextDeficiencyNumber(STATE.activeProjectId, lines.indexOf(line)),
-      description: line,
-      severity: 'moderate',
-      status: 'open',
-      field_report_id: newId,
-    }));
-    if (rows.length) {
-      const { error } = await sb.from('deficiencies').insert(rows);
-      if (error) handleSbError(error, 'Auto-create deficiencies');
-    }
-  }
-
-  await loadAllData();
-  toast(id ? 'Field report saved' : 'Field report created');
-  closeModal();
-  render();
-}
-window.saveFieldReport = saveFieldReport;
-
-async function deleteFieldReport(id) {
-  if (!confirm('Delete this field report?')) return;
-  const { error } = await sb.from('field_reports').delete().eq('id', id);
-  if (error) { handleSbError(error, 'Delete field report'); return; }
-  await loadAllData();
-  toast('Field report deleted');
-  closeModal();
-  render();
-}
-window.deleteFieldReport = deleteFieldReport;
-
-function printFieldReport(id) {
-  const r = DATA.field_reports.find(x => x.id === id);
-  if (!r) { toast('Report not found'); return; }
-  const proj = DATA.projects.find(p => p.id === r.project_id);
-  const typeLabel = (FR_TYPE_META[r.report_type] || FR_TYPE_META.field_observation).label;
-  const complLabel = (FR_COMPLIANCE_META[r.compliance] || FR_COMPLIANCE_META.compliant).label;
-  const statusLabel = (FR_STATUS_META[r.status] || FR_STATUS_META.draft).label;
-
-  const w = window.open('', '_blank', 'width=850,height=1100');
-  if (!w) { toast('Popup blocked', 'error'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(r.report_number || 'Field Report')}</title>
-    <style>
-      body { font-family: 'Times New Roman', serif; color:#020000; padding:40px; max-width:800px; margin:0 auto; }
-      .hdr { border-bottom:2px solid #020000; padding-bottom:12px; margin-bottom:18px; }
-      .hdr h1 { margin:0; font-size:22px; letter-spacing:2px; text-transform:uppercase; }
-      .hdr .sub { font-size:11px; color:#666; letter-spacing:2px; text-transform:uppercase; margin-top:4px; }
-      h2 { font-size:13px; text-transform:uppercase; letter-spacing:1px; border-bottom:1px solid #ccc; padding-bottom:4px; margin-top:22px; }
-      .meta { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:18px; }
-      .meta td { padding:6px 8px; border-bottom:1px solid #e5e5e5; vertical-align:top; }
-      .meta td.label { width:30%; color:#666; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.5px; }
-      .section { font-size:13px; line-height:1.55; white-space:pre-wrap; padding:8px 0; }
-      .compliance-badge { display:inline-block; padding:4px 12px; border:1px solid #020000; font-size:11px; letter-spacing:1px; text-transform:uppercase; font-weight:600; }
-      .sigs { display:grid; grid-template-columns:1fr 1fr; gap:40px; margin-top:60px; }
-      .sig { border-top:1px solid #020000; padding-top:6px; font-size:10px; color:#666; text-transform:uppercase; letter-spacing:1px; }
-      @media print { body { padding:20px; } }
-    </style></head><body>
-    <div class="hdr">
-      <h1>PLAZA &amp; ASSOCIATES</h1>
-      <div class="sub">Consulting Engineering · Coral Gables, FL</div>
-    </div>
-    <h2>${escapeHtml(typeLabel)} — ${escapeHtml(r.report_number || '')}</h2>
-    <table class="meta">
-      <tr><td class="label">Project</td><td>${escapeHtml(proj?.name || '')} (${escapeHtml(proj?.code || '')})</td></tr>
-      ${proj?.address ? `<tr><td class="label">Address</td><td>${escapeHtml(proj.address)}</td></tr>` : ''}
-      <tr><td class="label">Date of Visit</td><td>${fmtDate(r.visit_date)}</td></tr>
-      <tr><td class="label">Inspector</td><td>${escapeHtml(r.inspector || '')}</td></tr>
-      <tr><td class="label">Weather</td><td>${escapeHtml(r.weather || '—')} · ${escapeHtml(r.temp_range || '')}</td></tr>
-      <tr><td class="label">Status</td><td>${escapeHtml(statusLabel)}</td></tr>
-      <tr><td class="label">Compliance</td><td><span class="compliance-badge">${escapeHtml(complLabel)}</span></td></tr>
-    </table>
-
-    ${r.work_observed ? `<h2>Work Observed</h2><div class="section">${escapeHtml(r.work_observed)}</div>` : ''}
-    ${r.materials_used ? `<h2>Materials &amp; Equipment</h2><div class="section">${escapeHtml(r.materials_used)}</div>` : ''}
-    ${r.findings ? `<h2>Findings &amp; Observations</h2><div class="section">${escapeHtml(r.findings)}</div>` : ''}
-    ${r.deficiencies_noted ? `<h2>Deficiencies Noted</h2><div class="section">${escapeHtml(r.deficiencies_noted)}</div>` : ''}
-    ${r.recommendations ? `<h2>Recommendations</h2><div class="section">${escapeHtml(r.recommendations)}</div>` : ''}
-
-    <div class="sigs">
-      <div class="sig">Inspector Signature / Date</div>
-      <div class="sig">Engineer of Record / Date</div>
-    </div>
-    <script>setTimeout(() => window.print(), 250);<\/script>
-  </body></html>`;
-  w.document.write(html);
-  w.document.close();
-}
-window.printFieldReport = printFieldReport;
 
 
 /* =========================================================================
