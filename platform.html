@@ -3783,9 +3783,8 @@ function taskAssigneeSuggestions() {
   DATA.tasks
     .filter(t => t.project_id === STATE.activeProjectId)
     .forEach(t => { if (t.assigned_to) set.add(t.assigned_to); });
-  // Sensible defaults
-  ['Plaza & Associates - Owner', 'JM&A - General Contractor', 'DeSimone - Structural Engineer', 'ABM - Waterproofing']
-    .forEach(s => set.add(s));
+  // Always include Plaza & Associates as the owner party
+  set.add('Plaza & Associates');
   return Array.from(set).sort();
 }
 
