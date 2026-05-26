@@ -3129,7 +3129,11 @@ function renderDocs() {
   let filtered = list;
   if (STATE.docFilter !== 'all') filtered = filtered.filter(d => d.category === STATE.docFilter);
   if (search) filtered = filtered.filter(d => ((d.name || '') + ' ' + (d.sheet_number || '') + ' ' + (d.category || '')).toLowerCase().includes(search));
-  filtered.sort((a,b) => (a.category || '').localeCompare(b.category || '') || (b.doc_date || '').localeCompare(a.doc_date || ''));
+  filtered.sort((a,b) => {
+    const dateDiff = (b.doc_date || '').localeCompare(a.doc_date || '');
+    if (dateDiff !== 0) return dateDiff;
+    return (a.name || '').localeCompare(b.name || '');
+  });
 
   const body = document.getElementById('docBody');
   if (!filtered.length) {
@@ -4405,7 +4409,11 @@ function renderFieldReports() {
     .filter(r => r.project_id === proj.id && r.file_path)
     .filter(r => !search || (r.file_name || '').toLowerCase().includes(search));
 
-  list.sort((a, b) => (b.visit_date || '').localeCompare(a.visit_date || ''));
+  list.sort((a, b) => {
+    const dateDiff = (b.visit_date || '').localeCompare(a.visit_date || '');
+    if (dateDiff !== 0) return dateDiff;
+    return (a.file_name || a.report_number || '').localeCompare(b.file_name || b.report_number || '');
+  });
 
   if (!list.length) {
     body.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No reports on file</div><div class="empty-sub">Reports sync automatically from Dropbox.</div></div></td></tr>`;
