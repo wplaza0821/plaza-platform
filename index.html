@@ -846,43 +846,24 @@
     <section id="page-field_reports" class="tab-page">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Field Observation Reports</h1>
-          <div class="page-subtitle">FOR / Special Inspection / Daily Log reports for the record</div>
+          <h1 class="page-title">Field Reports</h1>
+          <div class="page-subtitle">Issued reports — view only. Files synced automatically from Dropbox.</div>
           <div class="page-context-pill" id="fr-context"></div>
         </div>
-        <button class="btn btn-primary perm-edit-fieldreports" onclick="openFieldReportModal()">＋ New Report</button>
       </div>
 
       <div class="toolbar">
-        <div class="filter-bar" id="frTypeFilters" style="margin:0;">
-          <span class="chip active" data-filter="all">All</span>
-          <span class="chip" data-filter="field_observation">Field Observation</span>
-          <span class="chip" data-filter="special_inspection">Special Inspection</span>
-          <span class="chip" data-filter="daily_report">Daily Log</span>
-        </div>
-        <div class="spacer"></div>
         <input type="text" class="search" id="frSearch" placeholder="Search reports…" />
-      </div>
-      <div class="toolbar" style="margin-top:-8px;">
-        <div class="filter-bar" id="frStatusFilters" style="margin:0;">
-          <span class="chip active" data-filter="all">Any Status</span>
-          <span class="chip" data-filter="draft">Draft</span>
-          <span class="chip" data-filter="submitted">Submitted</span>
-          <span class="chip" data-filter="approved">Approved</span>
-        </div>
       </div>
 
       <div class="table-wrap">
         <table class="data" id="frTable">
           <thead>
             <tr>
-              <th style="width:100px;">Report #</th>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Inspector</th>
-              <th>Compliance</th>
-              <th>Status</th>
-              <th style="width:180px;"></th>
+              <th>File Name</th>
+              <th style="width:110px;">Date</th>
+              <th style="width:160px;">Type</th>
+              <th style="width:100px;"></th>
             </tr>
           </thead>
           <tbody id="frBody"></tbody>
@@ -4419,65 +4400,51 @@ function renderFieldReports() {
   if (!body) return;
   if (!proj) { body.innerHTML = ''; return; }
 
-  let list = DATA.field_reports.filter(r => r.project_id === proj.id);
-  if (STATE.frTypeFilter && STATE.frTypeFilter !== 'all') {
-    list = list.filter(r => r.report_type === STATE.frTypeFilter);
-  }
-  if (STATE.frStatusFilter && STATE.frStatusFilter !== 'all') {
-    list = list.filter(r => r.status === STATE.frStatusFilter);
-  }
   const search = (STATE.frSearch || '').toLowerCase();
-  if (search) {
-    list = list.filter(r =>
-      ((r.report_number || '') + ' ' + (r.inspector || '') + ' ' + (r.findings || '') + ' ' + (r.work_observed || ''))
-        .toLowerCase().includes(search));
-  }
+  let list = DATA.field_reports
+    .filter(r => r.project_id === proj.id && r.file_path)
+    .filter(r => !search || (r.file_name || '').toLowerCase().includes(search));
+
   list.sort((a, b) => (b.visit_date || '').localeCompare(a.visit_date || ''));
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No field reports</div><div class="empty-sub">Create your first observation report.</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No reports on file</div><div class="empty-sub">Reports sync automatically from Dropbox.</div></div></td></tr>`;
     return;
   }
 
-  body.innerHTML = list.map(r => {
-    const typeMeta = FR_TYPE_META[r.report_type] || FR_TYPE_META.field_observation;
-    const complMeta = FR_COMPLIANCE_META[r.compliance || 'compliant'];
-    const statusMeta = FR_STATUS_META[r.status || 'draft'];
-    return `
-      <tr>
-        <td style="font-weight:600;">${escapeHtml(r.report_number || '—')}</td>
-        <td>${fmtDate(r.visit_date)}</td>
-        <td>${escapeHtml(typeMeta.label)}</td>
-        <td>${escapeHtml(r.inspector || '—')}</td>
-        <td><span class="badge ${complMeta.cls}">${escapeHtml(complMeta.label)}</span></td>
-        <td><span class="badge ${statusMeta.cls} badge-dot">${escapeHtml(statusMeta.label)}</span></td>
-        <td>
-          <div class="row-actions">
-            <button class="btn btn-ghost btn-sm" onclick="printFieldReport('${r.id}')">🖨 PDF</button>
-            <button class="btn btn-ghost btn-sm" onclick="openFieldReportModal('${r.id}')">View</button>
-          </div>
-        </td>
-      </tr>`;
-  }).join('');
+  const typeLabels = {
+    field_observation: 'Field Observation',
+    special_inspection: 'Special Inspection',
+    daily_report: 'Daily Log',
+  };
+
+  body.innerHTML = list.map(r => `
+    <tr>
+      <td style="font-weight:500;">${escapeHtml(r.file_name || r.report_number || '—')}</td>
+      <td>${fmtDate(r.visit_date)}</td>
+      <td>${escapeHtml(typeLabels[r.report_type] || r.report_type || '—')}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" onclick="viewFieldReportPDF('${r.id}')">📄 View</button>
+      </td>
+    </tr>`).join('');
 }
 window.renderFieldReports = renderFieldReports;
 
-document.getElementById('frTypeFilters')?.addEventListener('click', e => {
-  const chip = e.target.closest('.chip'); if (!chip) return;
-  STATE.frTypeFilter = chip.dataset.filter;
-  document.querySelectorAll('#frTypeFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
-  renderFieldReports();
-});
-document.getElementById('frStatusFilters')?.addEventListener('click', e => {
-  const chip = e.target.closest('.chip'); if (!chip) return;
-  STATE.frStatusFilter = chip.dataset.filter;
-  document.querySelectorAll('#frStatusFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
-  renderFieldReports();
-});
+async function viewFieldReportPDF(id) {
+  const r = DATA.field_reports.find(x => x.id === id);
+  if (!r || !r.file_path) { toast('No PDF on file for this report'); return; }
+  const storagePath = r.file_path.replace(/^field-reports\//, '');
+  const { data, error } = await sb.storage.from('field-reports').createSignedUrl(storagePath, 3600);
+  if (error || !data?.signedUrl) { toast('Could not load PDF — ' + (error?.message || 'unknown error')); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.viewFieldReportPDF = viewFieldReportPDF;
+
 document.getElementById('frSearch')?.addEventListener('input', e => {
   STATE.frSearch = e.target.value; renderFieldReports();
 });
 
+// Field report forms removed — reports are view-only PDFs synced from Dropbox
 function openFieldReportModal(id) {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
   const editing = id ? DATA.field_reports.find(r => r.id === id) : null;
