@@ -1086,6 +1086,15 @@ const SUPABASE_URL = 'https://xpeppmurxgbqlsabswqn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_rLNpcKk37j6YR0R_jf8EEw_fvB5wHh4';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// signedUrl(bucket, filePath) — always strips bucket-name prefix if accidentally
+// included in filePath, so sync scripts and manual uploads can never break the viewer.
+async function signedUrl(bucket, filePath) {
+  const path = filePath.replace(new RegExp('^' + bucket + '\/'), '');
+  const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) throw new Error(error?.message || 'Could not generate URL');
+  return data.signedUrl;
+}
+
 const OWNER_PASSWORD    = 'PlazaOwner2026';
 const SESSION_AUTH_KEY  = 'plaza_session_auth_v3';
 
@@ -2458,7 +2467,8 @@ window.uploadWaiver = uploadWaiver;
 async function viewWaiver(waiverId) {
   const w = DATA.lienWaivers.find(x => x.id === waiverId);
   if (!w) return;
-  const { data, error } = await sb.storage.from('lien-waivers').createSignedUrl(w.file_path, 3600);
+  const { data: { signedUrl: su }, error } = await sb.storage.from('lien-waivers').createSignedUrl(w.file_path.replace(/^lien-waivers\//, ''), 3600);  // eslint-disable-line
+  const data = { signedUrl: su };  // compat
   if (error) { handleSbError(error, 'Get waiver URL'); return; }
   window.open(data.signedUrl, '_blank');
 }
@@ -3196,10 +3206,9 @@ document.getElementById('docSearch').addEventListener('input', e => {
 async function viewDoc(id) {
   const d = DATA.documents.find(x => x.id === id);
   if (!d || !d.file_path) return;
-  const storagePath = d.file_path.replace(/^plans-specs\//, '');
-  const { data, error } = await sb.storage.from('plans-specs').createSignedUrl(storagePath, 3600);
-  if (error) { handleSbError(error, 'Get document URL'); return; }
-  window.open(data.signedUrl, '_blank');
+  try {
+    window.open(await signedUrl('plans-specs', d.file_path), '_blank');
+  } catch(e) { handleSbError({message: e.message}, 'Get document URL'); }
 }
 window.viewDoc = viewDoc;
 
@@ -4451,10 +4460,9 @@ window.renderFieldReports = renderFieldReports;
 async function viewFieldReportPDF(id) {
   const r = DATA.field_reports.find(x => x.id === id);
   if (!r || !r.file_path) { toast('No PDF on file for this report'); return; }
-  const storagePath = r.file_path.replace(/^field-reports\//, '');
-  const { data, error } = await sb.storage.from('field-reports').createSignedUrl(storagePath, 3600);
-  if (error || !data?.signedUrl) { toast('Could not load PDF — ' + (error?.message || 'unknown error')); return; }
-  window.open(data.signedUrl, '_blank');
+  try {
+    window.open(await signedUrl('field-reports', r.file_path), '_blank');
+  } catch(e) { toast('Could not load PDF — ' + e.message); }
 }
 window.viewFieldReportPDF = viewFieldReportPDF;
 
