@@ -511,6 +511,49 @@
   body.perm-no-edit-deficiencies  .perm-edit-deficiencies  { display: none !important; }
   body.perm-no-edit-daily         .perm-edit-daily         { display: none !important; }
   body.perm-no-edit-milestones    .perm-edit-milestones    { display: none !important; }
+
+  /* ── Document thumbnail grid ─────────────────────────────────── */
+  .doc-grid-wrap { padding: 0 0 32px; }
+  .doc-group { margin-bottom: 28px; }
+  .doc-group-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--gray-500); padding: 0 0 10px; border-bottom: 1px solid var(--gray-200);
+    margin-bottom: 14px;
+  }
+  .doc-group-header span { color: var(--gray-400); font-weight: 400; }
+  .doc-thumb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 12px;
+  }
+  .doc-card {
+    border: 1px solid var(--gray-200); border-radius: 4px;
+    background: #fff; cursor: pointer; overflow: hidden;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    display: flex; flex-direction: column;
+  }
+  .doc-card:hover { border-color: var(--black); box-shadow: var(--shadow-md); }
+  .doc-card-thumb {
+    width: 100%; aspect-ratio: 8.5/11;
+    background: var(--gray-100); position: relative;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .doc-card-thumb canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .doc-card-thumb .thumb-spinner {
+    position: absolute; font-size: 20px; color: var(--gray-300);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .doc-card-thumb .thumb-spinner::after {
+    content: ''; width: 24px; height: 24px; border: 2px solid var(--gray-300);
+    border-top-color: var(--gray-500); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .doc-card-info { padding: 7px 8px 8px; }
+  .doc-card-sheet { font-size: 11px; font-weight: 700; color: var(--black); letter-spacing: 0.3px; }
+  .doc-card-name { font-size: 10px; color: var(--gray-500); margin-top: 2px; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc-card-meta { font-size: 10px; color: var(--gray-400); margin-top: 3px; }
 </style>
 </head>
 <body class="app-booting">
@@ -1015,23 +1058,7 @@
         <input type="text" class="search" id="docSearch" placeholder="Search documents…" />
       </div>
 
-      <div class="table-wrap">
-        <table class="data" id="docTable">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Sheet / §</th>
-              <th>Category</th>
-              <th>Rev</th>
-              <th>Date</th>
-              <th>Size</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="docBody"></tbody>
-        </table>
-      </div>
+      <div class="doc-grid-wrap" id="docGrid"></div>
     </section>
 
     <!-- ========== ACCESS ========== -->
@@ -3123,67 +3150,155 @@ const DOC_CAT_ICONS = {
   other: { icon: '📄', bg: '#f4f4f4', color: '#666666' },
 };
 
+// ── PDF.js lazy thumbnail loader ────────────────────────────────────────────
+let _pdfjs = null;
+async function getPdfJs() {
+  if (_pdfjs) return _pdfjs;
+  const mod = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.mjs');
+  mod.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.mjs';
+  _pdfjs = mod;
+  return _pdfjs;
+}
+
+const _thumbCache = {};  // docId → objectURL or 'error'
+
+async function renderDocThumb(docId, container) {
+  if (_thumbCache[docId]) {
+    if (_thumbCache[docId] === 'error') return;
+    const img = document.createElement('img');
+    img.src = _thumbCache[docId];
+    img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+    container.innerHTML = ''; container.appendChild(img);
+    return;
+  }
+  try {
+    const doc = DATA.documents.find(d => d.id === docId);
+    if (!doc?.file_path) return;
+    const url = await signedUrl('plans-specs', doc.file_path);
+    const pdfjsLib = await getPdfJs();
+    const pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1.2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    // Convert to blob URL so we can reuse without re-rendering
+    canvas.toBlob(blob => {
+      const burl = URL.createObjectURL(blob);
+      _thumbCache[docId] = burl;
+      if (container.isConnected) {
+        const img = document.createElement('img');
+        img.src = burl;
+        img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+        container.innerHTML = ''; container.appendChild(img);
+      }
+    }, 'image/jpeg', 0.85);
+  } catch(e) {
+    _thumbCache[docId] = 'error';
+    container.innerHTML = `<div style="font-size:28px;color:var(--gray-300);">📄</div>`;
+  }
+}
+
+const _thumbObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const el = entry.target;
+      const id = el.dataset.docId;
+      if (id && !_thumbCache[id]) renderDocThumb(id, el);
+      _thumbObserver.unobserve(el);
+    }
+  });
+}, { rootMargin: '200px' });
+
+// ── renderDocs ───────────────────────────────────────────────────────────────
 function renderDocs() {
   const proj = activeProject();
   document.getElementById('docs-context').innerHTML = proj
     ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
+
   const list = DATA.documents.filter(d => d.project_id === STATE.activeProjectId);
 
-  const cats = ['structural','architectural','mep','civil','specifications'];
+  // Update category pills
+  const cats = ['structural','architectural','mep','civil','specifications','permits','other'];
   document.getElementById('docCategories').innerHTML = cats.map(cat => {
     const c = list.filter(d => d.category === cat).length;
-    const info = DOC_CAT_ICONS[cat];
+    if (!c) return '';
+    const info = DOC_CAT_ICONS[cat] || DOC_CAT_ICONS.other;
     return `
       <div class="doc-cat-card" onclick="filterDocsByCat('${cat}')">
         <div class="doc-cat-icon" style="background:${info.bg}; color:${info.color};">${info.icon}</div>
         <div>
           <div class="doc-cat-name">${lbl(cat)}</div>
-          <div class="doc-cat-count">${c} document${c === 1 ? '' : 's'}</div>
+          <div class="doc-cat-count">${c} sheet${c === 1 ? '' : 's'}</div>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
 
   const search = (STATE.docSearch || '').toLowerCase();
   let filtered = list;
   if (STATE.docFilter !== 'all') filtered = filtered.filter(d => d.category === STATE.docFilter);
-  if (search) filtered = filtered.filter(d => ((d.name || '') + ' ' + (d.sheet_number || '') + ' ' + (d.category || '')).toLowerCase().includes(search));
+  if (search) filtered = filtered.filter(d =>
+    ((d.name||'') + ' ' + (d.sheet_number||'') + ' ' + (d.category||'')).toLowerCase().includes(search));
+
+  // Sort: sheet_number natural sort, then name
   filtered.sort((a,b) => {
-    const dateDiff = (b.doc_date || '').localeCompare(a.doc_date || '');
-    if (dateDiff !== 0) return dateDiff;
-    return (a.name || '').localeCompare(b.name || '');
+    const sa = a.sheet_number || '', sb = b.sheet_number || '';
+    if (sa && sb) return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: 'base' });
+    if (sa) return -1; if (sb) return 1;
+    return (a.name||'').localeCompare(b.name||'');
   });
 
-  const body = document.getElementById('docBody');
+  const grid = document.getElementById('docGrid');
   if (!filtered.length) {
-    body.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📁</div><div class="empty-title">No documents</div><div class="empty-sub">Upload plans, specs, or reference docs.</div></div></td></tr>`;
+    grid.innerHTML = `<div class="empty"><div class="empty-icon">📁</div><div class="empty-title">No documents</div><div class="empty-sub">Upload plans, specs, or reference docs.</div></div>`;
     return;
   }
-  body.innerHTML = filtered.map(d => {
-    const info = DOC_CAT_ICONS[d.category] || DOC_CAT_ICONS.other;
+
+  // Group by category
+  const CAT_LABELS = { structural:'Structural', architectural:'Architectural', mep:'MEP',
+    civil:'Civil', specifications:'Specifications & Contracts', permits:'Permits & Approvals', other:'Other' };
+  const groups = {};
+  filtered.forEach(d => {
+    const g = d.category || 'other';
+    (groups[g] = groups[g] || []).push(d);
+  });
+
+  const orderedGroups = ['structural','architectural','mep','civil','permits','specifications','other']
+    .filter(g => groups[g]?.length);
+
+  grid.innerHTML = orderedGroups.map(cat => {
+    const docs = groups[cat];
+    const label = CAT_LABELS[cat] || cat;
+    const cards = docs.map(d => `
+      <div class="doc-card" onclick="viewDoc('${d.id}')" title="${escapeHtml(d.name)}">
+        <div class="doc-card-thumb" data-doc-id="${d.id}">
+          <div class="thumb-spinner"></div>
+        </div>
+        <div class="doc-card-info">
+          <div class="doc-card-sheet">${escapeHtml(d.sheet_number || d.name.slice(0,8))}</div>
+          <div class="doc-card-name">${escapeHtml(d.name)}</div>
+          ${d.doc_date ? `<div class="doc-card-meta">${fmtDate(d.doc_date)}</div>` : ''}
+        </div>
+      </div>`).join('');
+
     return `
-      <tr style="${d.status === 'superseded' ? 'opacity:0.6;' : ''}">
-        <td>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <div class="doc-cat-icon" style="background:${info.bg}; color:${info.color}; width:30px; height:30px; font-size:14px; border-radius:6px;">${info.icon}</div>
-            <div style="font-weight:600;">${escapeHtml(d.name)}</div>
-          </div>
-        </td>
-        <td class="text-sm text-muted nowrap">${escapeHtml(d.sheet_number || '—')}</td>
-        <td class="text-sm">${escapeHtml(lbl(d.category))}</td>
-        <td><span class="badge badge-gray">Rev ${escapeHtml(d.revision || 'A')}</span></td>
-        <td class="text-sm">${fmtDate(d.doc_date)}</td>
-        <td class="text-sm text-muted">${d.file_size ? (d.file_size / 1024 / 1024).toFixed(1) + ' MB' : '—'}</td>
-        <td>${statusBadge(d.status)}</td>
-        <td>
-          <div class="row-actions">
-            ${d.file_path ? `<button class="btn btn-ghost btn-sm" onclick="viewDoc('${d.id}')">📄 View</button>` : ''}
-            <button class="btn btn-ghost btn-sm perm-edit-docs" onclick="openDocModal('${d.id}')">✏️</button>
-          </div>
-        </td>
-      </tr>
-    `;
+      <div class="doc-group">
+        <div class="doc-group-header">
+          ${(DOC_CAT_ICONS[cat]||DOC_CAT_ICONS.other).icon} ${escapeHtml(label)}
+          <span>${docs.length} sheet${docs.length === 1 ? '' : 's'}</span>
+        </div>
+        <div class="doc-thumb-grid">${cards}</div>
+      </div>`;
   }).join('');
+
+  // Wire up IntersectionObserver for lazy thumbnail loading
+  grid.querySelectorAll('.doc-card-thumb[data-doc-id]').forEach(el => {
+    if (_thumbCache[el.dataset.docId]) {
+      renderDocThumb(el.dataset.docId, el); // instant from cache
+    } else {
+      _thumbObserver.observe(el);
+    }
+  });
 }
 function filterDocsByCat(cat) {
   STATE.docFilter = cat;
