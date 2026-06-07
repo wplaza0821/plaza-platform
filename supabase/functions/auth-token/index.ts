@@ -23,7 +23,7 @@ const TOKEN_TTL_SECONDS = 60 * 60 * 8; // 8h sessions
 
 const cors = {
   "Access-Control-Allow-Origin": "https://plazacore.plazaandassociates.com",
-  "Access-Control-Allow-Headers": "content-type",
+  "Access-Control-Allow-Headers": "content-type, apikey, authorization",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
