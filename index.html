@@ -1111,7 +1111,31 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
    ========================================================================= */
 const SUPABASE_URL = 'https://xpeppmurxgbqlsabswqn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_rLNpcKk37j6YR0R_jf8EEw_fvB5wHh4';
+const AUTH_FN_URL  = SUPABASE_URL + '/functions/v1/auth-token';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Phase 2: attach a minted, project-scoped JWT to the shared client so RLS
+// sees user_role/project_id on every one of the call sites below.
+function setSbAuth(jwt) {
+  try { sb.rest.headers['Authorization'] = 'Bearer ' + jwt; } catch (e) {}
+  try { sb.realtime.setAuth(jwt); } catch (e) {}
+  try { if (sb.storage && sb.storage.headers) sb.storage.headers['Authorization'] = 'Bearer ' + jwt; } catch (e) {}
+}
+function clearSbAuth() {
+  try { sb.rest.headers['Authorization'] = 'Bearer ' + SUPABASE_KEY; } catch (e) {}
+  try { if (sb.storage && sb.storage.headers) sb.storage.headers['Authorization'] = 'Bearer ' + SUPABASE_KEY; } catch (e) {}
+}
+async function mintToken(body) {
+  try {
+    const res = await fetch(AUTH_FN_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'apikey': SUPABASE_KEY },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) { return null; }
+}
 
 // signedUrl(bucket, filePath) — always strips bucket-name prefix if accidentally
 // included in filePath, so sync scripts and manual uploads can never break the viewer.
@@ -1122,7 +1146,6 @@ async function signedUrl(bucket, filePath) {
   return data.signedUrl;
 }
 
-const OWNER_PASSWORD    = 'PlazaOwner2026';
 const SESSION_AUTH_KEY  = 'plaza_session_auth_v3';
 
 /* ---------- Plaza logo (inline SVG) ---------- */
@@ -1215,6 +1238,9 @@ async function tryBootAuth() {
       .maybeSingle();
     if (error) { handleSbError(error, 'Token lookup failed'); return false; }
     if (contractor) {
+      const out = await mintToken({ mode: 'contractor', token: key });
+      if (!out || !out.jwt) { handleSbError({ message: 'Auth failed' }, 'Token rejected'); return false; }
+      setSbAuth(out.jwt);
       AUTH = {
         role: 'contractor',
         name: contractor.name,
@@ -1222,6 +1248,7 @@ async function tryBootAuth() {
         projectId: contractor.project_id,
         permissions: contractor.permissions || defaultContractorModules(),
         token: key,
+        jwt: out.jwt,
       };
       sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(AUTH));
       return true;
@@ -1231,16 +1258,22 @@ async function tryBootAuth() {
     const raw = sessionStorage.getItem(SESSION_AUTH_KEY);
     if (raw) {
       const saved = JSON.parse(raw);
+      if (saved.jwt) setSbAuth(saved.jwt);
       if (saved.role === 'contractor' && saved.token) {
-        const { data: contractor } = await sb
-          .from('contractors')
-          .select('id, active')
-          .eq('access_token', saved.token)
-          .maybeSingle();
-        if (!contractor || !contractor.active) {
+        // Re-mint to refresh a possibly-expired JWT using the still-valid token.
+        const out = await mintToken({ mode: 'contractor', token: saved.token });
+        if (!out || !out.jwt) {
           sessionStorage.removeItem(SESSION_AUTH_KEY);
+          clearSbAuth();
           return false;
         }
+        setSbAuth(out.jwt);
+        saved.jwt = out.jwt;
+        sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(saved));
+      } else if (saved.role === 'owner' && !saved.jwt) {
+        sessionStorage.removeItem(SESSION_AUTH_KEY);
+        clearSbAuth();
+        return false;
       }
       AUTH = saved;
       return true;
@@ -1249,13 +1282,13 @@ async function tryBootAuth() {
   return false;
 }
 
-function handleLogin(password) {
-  if (password === OWNER_PASSWORD) {
-    AUTH = { role: 'owner', name: 'William Plaza' };
-    sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(AUTH));
-    return true;
-  }
-  return false;
+async function handleLogin(password) {
+  const out = await mintToken({ mode: 'owner', password });
+  if (!out || !out.jwt) return false;
+  setSbAuth(out.jwt);
+  AUTH = { role: 'owner', name: out.name || 'William Plaza', jwt: out.jwt };
+  sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(AUTH));
+  return true;
 }
 
 function logout() {
@@ -3791,7 +3824,7 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
   if (errEl) errEl.textContent = '';
   const pw = (input?.value || '').trim();
   if (!pw) { if (errEl) errEl.textContent = 'Enter access code'; return; }
-  if (handleLogin(pw)) {
+  if (await handleLogin(pw)) {
     hideLogin();
     document.body.classList.remove('app-booting');
     await loadAllData();
