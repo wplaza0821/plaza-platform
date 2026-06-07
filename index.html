@@ -1112,18 +1112,32 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const SUPABASE_URL = 'https://xpeppmurxgbqlsabswqn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_rLNpcKk37j6YR0R_jf8EEw_fvB5wHh4';
 const AUTH_FN_URL  = SUPABASE_URL + '/functions/v1/auth-token';
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Phase 2: attach a minted, project-scoped JWT to the shared client so RLS
-// sees user_role/project_id on every one of the call sites below.
+// Phase 2 (fix): version-proof JWT attach. Mutating sb.rest.headers after
+// createClient is unreliable in supabase-js v2 (PostgREST captures headers at
+// build time), which caused owner/contractor queries to silently go out as the
+// anon key -> RLS returned 0 rows ("projects gone"). Instead we inject the live
+// JWT via a custom fetch wrapper that runs on EVERY request.
+let _sbJwt = null;
+function _authFetch(input, init) {
+  init = init || {};
+  const h = new Headers(init.headers || {});
+  // Always present the active JWT (owner/contractor) when we have one; the
+  // publishable key still rides along as apikey via the client config.
+  if (_sbJwt) h.set('Authorization', 'Bearer ' + _sbJwt);
+  init.headers = h;
+  return fetch(input, init);
+}
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  global: { fetch: _authFetch },
+});
+
 function setSbAuth(jwt) {
-  try { sb.rest.headers['Authorization'] = 'Bearer ' + jwt; } catch (e) {}
+  _sbJwt = jwt;
   try { sb.realtime.setAuth(jwt); } catch (e) {}
-  try { if (sb.storage && sb.storage.headers) sb.storage.headers['Authorization'] = 'Bearer ' + jwt; } catch (e) {}
 }
 function clearSbAuth() {
-  try { sb.rest.headers['Authorization'] = 'Bearer ' + SUPABASE_KEY; } catch (e) {}
-  try { if (sb.storage && sb.storage.headers) sb.storage.headers['Authorization'] = 'Bearer ' + SUPABASE_KEY; } catch (e) {}
+  _sbJwt = null;
 }
 async function mintToken(body) {
   try {
