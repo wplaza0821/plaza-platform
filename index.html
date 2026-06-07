@@ -554,6 +554,56 @@
   .doc-card-name { font-size: 10px; color: var(--gray-500); margin-top: 2px; line-height: 1.3;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .doc-card-meta { font-size: 10px; color: var(--gray-400); margin-top: 3px; }
+  .doc-card-badge {
+    position: absolute; top: 5px; right: 5px; z-index: 2;
+    background: var(--black); color: #fff; font-size: 8px; font-weight: 700;
+    padding: 2px 5px; border-radius: 3px; letter-spacing: 0.4px;
+  }
+
+  /* ── Plan Viewer + Markup ────────────────────────────── */
+  .pv-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(20,20,20,0.92); display: flex; flex-direction: column;
+    animation: fadeIn 0.15s ease;
+  }
+  .pv-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; background: #1c1c1c; color: #eee;
+    border-bottom: 1px solid #333;
+  }
+  .pv-title { font-size: 12px; font-weight: 600; letter-spacing: 0.5px; color: #fff;
+    max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pv-spacer { flex: 1; }
+  .pv-tool, .pv-btn {
+    background: #2a2a2a; color: #ddd; border: 1px solid #3a3a3a;
+    border-radius: 4px; padding: 6px 9px; font-size: 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px; font-family: inherit;
+  }
+  .pv-tool:hover, .pv-btn:hover { background: #383838; color: #fff; }
+  .pv-tool.active { background: #fff; color: #1c1c1c; border-color: #fff; font-weight: 600; }
+  .pv-btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .pv-btn.primary:hover { background: #1d4ed8; }
+  .pv-btn.danger:hover { background: #b91c1c; color:#fff; border-color:#b91c1c; }
+  .pv-sep { width: 1px; height: 22px; background: #3a3a3a; }
+  .pv-color { width: 26px; height: 26px; border-radius: 4px; border: 2px solid #555;
+    cursor: pointer; padding: 0; }
+  .pv-color.active { border-color: #fff; transform: scale(1.1); }
+  .pv-pagelabel { font-size: 12px; color: #bbb; min-width: 78px; text-align: center; }
+  .pv-stage {
+    flex: 1; overflow: auto; display: flex; align-items: flex-start;
+    justify-content: center; padding: 24px;
+  }
+  .pv-canvas-wrap { position: relative; box-shadow: 0 4px 30px rgba(0,0,0,0.5); background:#fff; }
+  .pv-canvas-wrap canvas { display: block; }
+  #pvAnno { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+  #pvAnno.pan { cursor: grab; }
+  .pv-status { font-size: 11px; color: #999; }
+  .pv-status.saved { color: #4ade80; }
+  .pv-status.dirty { color: #fbbf24; }
+  @media (max-width: 640px) {
+    .pv-title { max-width: 120px; }
+    .pv-tool, .pv-btn { padding: 5px 7px; font-size: 11px; }
+  }
 </style>
 </head>
 <body class="app-booting">
@@ -3201,8 +3251,8 @@ const DOC_CAT_ICONS = {
 let _pdfjs = null;
 async function getPdfJs() {
   if (_pdfjs) return _pdfjs;
-  const mod = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.mjs');
-  mod.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.mjs';
+  const mod = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.mjs');
+  mod.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs';
   _pdfjs = mod;
   return _pdfjs;
 }
@@ -3368,11 +3418,259 @@ document.getElementById('docSearch').addEventListener('input', e => {
 async function viewDoc(id) {
   const d = DATA.documents.find(x => x.id === id);
   if (!d || !d.file_path) return;
+  if ((d.file_path || '').toLowerCase().endsWith('.pdf')) {
+    return openPlanViewer(d);
+  }
   try {
     window.open(await signedUrl('plans-specs', d.file_path), '_blank');
   } catch(e) { handleSbError({message: e.message}, 'Get document URL'); }
 }
 window.viewDoc = viewDoc;
+
+/* =========================================================================
+   PLAN VIEWER + MARKUP
+   ========================================================================= */
+const PV = {
+  doc: null, pdf: null, page: 1, numPages: 1,
+  scale: 1.4, baseViewport: null,
+  tool: 'pan', color: '#e11d48', width: 3,
+  shapes: {}, dirty: {}, markupRowId: {},
+  drawing: false, cur: null, ctx2d: null, canEdit: false,
+};
+const PV_COLORS = ['#e11d48','#2563eb','#16a34a','#f59e0b','#000000','#ffffff'];
+
+async function openPlanViewer(doc) {
+  PV.doc = doc; PV.page = 1; PV.scale = 1.4;
+  PV.shapes = {}; PV.dirty = {}; PV.markupRowId = {};
+  PV.tool = 'pan'; PV.color = '#e11d48'; PV.width = 3;
+  const root = document.getElementById('modalRoot');
+  const canEdit = AUTH.role === 'owner' || (AUTH.permissions && AUTH.permissions.plans);
+  PV.canEdit = canEdit;
+  const colorBtns = PV_COLORS.map((c,i)=>'<button class="pv-color'+(i===0?' active':'')+'" style="background:'+c+'" data-c="'+c+'" onclick="pvSetColor(\''+c+'\')"></button>').join('');
+  const tools = canEdit ? (
+    '<button class="pv-tool active" data-tool="pan" onclick="pvSetTool(\'pan\')" title="Pan">\u270B</button>'+
+    '<button class="pv-tool" data-tool="pen" onclick="pvSetTool(\'pen\')" title="Freehand">\u270F\uFE0F</button>'+
+    '<button class="pv-tool" data-tool="arrow" onclick="pvSetTool(\'arrow\')" title="Arrow">\u2197\uFE0F</button>'+
+    '<button class="pv-tool" data-tool="rect" onclick="pvSetTool(\'rect\')" title="Rectangle">\u25AD</button>'+
+    '<button class="pv-tool" data-tool="cloud" onclick="pvSetTool(\'cloud\')" title="Revision cloud">\u2601\uFE0F</button>'+
+    '<button class="pv-tool" data-tool="text" onclick="pvSetTool(\'text\')" title="Text note">T</button>'+
+    '<div class="pv-sep"></div>'+colorBtns+
+    '<button class="pv-btn" onclick="pvUndo()" title="Undo">\u21B6</button>'
+  ) : '';
+  const saveBtn = canEdit ? '<button class="pv-btn primary" onclick="pvSave()" id="pvSaveBtn">\uD83D\uDCBE Save markups</button>' : '';
+  const titleTxt = (doc.sheet_number ? doc.sheet_number+' \u00B7 ' : '') + doc.name;
+  root.innerHTML =
+    '<div class="pv-overlay" id="pvOverlay">'+
+      '<div class="pv-bar">'+
+        '<span class="pv-title">\uD83D\uDCD0 '+escapeHtml(titleTxt)+'</span>'+
+        '<div class="pv-sep"></div>'+
+        '<button class="pv-btn" onclick="pvZoom(-1)" title="Zoom out">\u2212</button>'+
+        '<button class="pv-btn" onclick="pvZoom(1)" title="Zoom in">+</button>'+
+        '<button class="pv-btn" onclick="pvPage(-1)" title="Prev">\u25C0</button>'+
+        '<span class="pv-pagelabel" id="pvPageLabel">\u2013 / \u2013</span>'+
+        '<button class="pv-btn" onclick="pvPage(1)" title="Next">\u25B6</button>'+
+        '<div class="pv-sep"></div>'+tools+
+        '<div class="pv-spacer"></div>'+
+        '<span class="pv-status" id="pvStatus"></span>'+saveBtn+
+        '<button class="pv-btn" onclick="pvDownload()" title="Open original">\u2B07\uFE0F</button>'+
+        '<button class="pv-btn danger" onclick="pvClose()">\u2715 Close</button>'+
+      '</div>'+
+      '<div class="pv-stage" id="pvStage">'+
+        '<div class="pv-canvas-wrap" id="pvWrap">'+
+          '<canvas id="pvPdf"></canvas><canvas id="pvAnno"></canvas>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.style.overflow = 'hidden';
+  try {
+    const url = await signedUrl('plans-specs', doc.file_path);
+    const pdfjsLib = await getPdfJs();
+    PV.pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
+    PV.numPages = PV.pdf.numPages;
+    await pvLoadMarkups();
+    await pvRenderPage();
+    pvWireCanvas();
+  } catch(e) { toast('Could not open plan: ' + e.message, 'error'); pvClose(); }
+}
+window.openPlanViewer = openPlanViewer;
+
+async function pvLoadMarkups() {
+  const { data, error } = await sb.from('plan_markups').select('*').eq('document_id', PV.doc.id);
+  if (error) { console.warn('markups load', error.message); return; }
+  (data||[]).forEach(r => {
+    PV.shapes[r.page_number] = Array.isArray(r.shapes) ? r.shapes : [];
+    PV.markupRowId[r.page_number] = r.id;
+  });
+}
+
+async function pvRenderPage() {
+  const page = await PV.pdf.getPage(PV.page);
+  PV.baseViewport = page.getViewport({ scale: PV.scale });
+  const vp = PV.baseViewport;
+  const pdfC = document.getElementById('pvPdf');
+  const annoC = document.getElementById('pvAnno');
+  [pdfC, annoC].forEach(c => { c.width = vp.width; c.height = vp.height;
+    c.style.width = vp.width+'px'; c.style.height = vp.height+'px'; });
+  await page.render({ canvasContext: pdfC.getContext('2d'), viewport: vp }).promise;
+  PV.ctx2d = annoC.getContext('2d');
+  pvRedraw();
+  document.getElementById('pvPageLabel').textContent = PV.page + ' / ' + PV.numPages;
+  pvSetStatus();
+}
+
+function pvN(x,y){ return [x/PV.baseViewport.width, y/PV.baseViewport.height]; }
+function pvDc(nx,ny){ return [nx*PV.baseViewport.width, ny*PV.baseViewport.height]; }
+
+function pvRedraw() {
+  const ctx = PV.ctx2d; if (!ctx) return;
+  ctx.clearRect(0,0,PV.baseViewport.width, PV.baseViewport.height);
+  (PV.shapes[PV.page] || []).forEach(s => pvDrawShape(ctx, s));
+  if (PV.cur) pvDrawShape(ctx, PV.cur);
+}
+
+function pvDrawShape(ctx, s) {
+  ctx.save();
+  ctx.strokeStyle = s.color || '#e11d48';
+  ctx.fillStyle = s.color || '#e11d48';
+  ctx.lineWidth = s.width || 3;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const pts = (s.points||[]).map(p => pvDc(p[0],p[1]));
+  if (s.type === 'pen') {
+    ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.stroke();
+  } else if (s.type === 'rect' && pts.length>=2) {
+    const a=pts[0], b=pts[1]; ctx.strokeRect(a[0],a[1], b[0]-a[0], b[1]-a[1]);
+  } else if (s.type === 'arrow' && pts.length>=2) {
+    const a=pts[0], b=pts[1]; ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+    const ang=Math.atan2(b[1]-a[1], b[0]-a[0]), h=12+(s.width||3)*2;
+    ctx.beginPath(); ctx.moveTo(b[0],b[1]);
+    ctx.lineTo(b[0]-h*Math.cos(ang-0.4), b[1]-h*Math.sin(ang-0.4));
+    ctx.lineTo(b[0]-h*Math.cos(ang+0.4), b[1]-h*Math.sin(ang+0.4));
+    ctx.closePath(); ctx.fill();
+  } else if (s.type === 'cloud' && pts.length>=2) {
+    const a=pts[0], b=pts[1]; const x=Math.min(a[0],b[0]), y=Math.min(a[1],b[1]);
+    const w=Math.abs(b[0]-a[0]), hh=Math.abs(b[1]-a[1]); const r=10;
+    ctx.beginPath();
+    for(let xx=x; xx<x+w; xx+=r*1.6){ ctx.arc(xx, y, r, Math.PI, 0); }
+    for(let yy=y; yy<y+hh; yy+=r*1.6){ ctx.arc(x+w, yy, r, -Math.PI/2, Math.PI/2); }
+    for(let xx=x+w; xx>x; xx-=r*1.6){ ctx.arc(xx, y+hh, r, 0, Math.PI); }
+    for(let yy=y+hh; yy>y; yy-=r*1.6){ ctx.arc(x, yy, r, Math.PI/2, -Math.PI/2); }
+    ctx.stroke();
+  } else if (s.type === 'text' && pts.length>=1) {
+    const a=pts[0]; const fs=14+(s.width||3)*2;
+    ctx.font = '600 ' + fs + 'px -apple-system,Segoe UI,sans-serif';
+    ctx.textBaseline='top';
+    const tw=ctx.measureText(s.text||'').width;
+    ctx.globalAlpha=0.85; ctx.fillStyle = s.color==='#ffffff' ? '#000':'#fff';
+    ctx.fillRect(a[0]-3,a[1]-2, tw+8, fs+6); ctx.globalAlpha=1;
+    ctx.fillStyle = s.color || '#e11d48';
+    ctx.fillText(s.text||'', a[0], a[1]);
+  }
+  ctx.restore();
+}
+
+function pvEvtPos(e) {
+  const c = document.getElementById('pvAnno'); const r = c.getBoundingClientRect();
+  const cx = (e.touches? e.touches[0].clientX : e.clientX) - r.left;
+  const cy = (e.touches? e.touches[0].clientY : e.clientY) - r.top;
+  return [cx * (c.width/r.width), cy * (c.height/r.height)];
+}
+
+function pvWireCanvas() {
+  const c = document.getElementById('pvAnno');
+  const down = (e) => {
+    if (!PV.canEdit || PV.tool === 'pan') return;
+    e.preventDefault();
+    const p = pvEvtPos(e);
+    if (PV.tool === 'text') {
+      const txt = prompt('Note text:'); if (!txt) return;
+      pvPush({ type:'text', points:[pvN(p[0],p[1])], text:txt, color:PV.color, width:PV.width });
+      pvRedraw(); return;
+    }
+    PV.drawing = true;
+    PV.cur = { type:PV.tool, points:[pvN(p[0],p[1])], color:PV.color, width:PV.width };
+  };
+  const move = (e) => {
+    if (!PV.drawing) return; e.preventDefault();
+    const p = pvEvtPos(e);
+    if (PV.tool === 'pen') PV.cur.points.push(pvN(p[0],p[1]));
+    else PV.cur.points[1] = pvN(p[0],p[1]);
+    pvRedraw();
+  };
+  const up = () => {
+    if (!PV.drawing) return; PV.drawing = false;
+    if (PV.cur && (PV.cur.type==='pen' ? PV.cur.points.length>1 : PV.cur.points.length>=2))
+      pvPush(PV.cur);
+    PV.cur = null; pvRedraw();
+  };
+  c.addEventListener('mousedown', down); c.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  c.addEventListener('touchstart', down, {passive:false});
+  c.addEventListener('touchmove', move, {passive:false});
+  c.addEventListener('touchend', up);
+}
+
+function pvPush(shape) {
+  (PV.shapes[PV.page] = PV.shapes[PV.page] || []).push(shape);
+  PV.dirty[PV.page] = true; pvSetStatus();
+}
+function pvUndo() {
+  const list = PV.shapes[PV.page]; if (!list || !list.length) return;
+  list.pop(); PV.dirty[PV.page] = true; pvRedraw(); pvSetStatus();
+}
+window.pvUndo = pvUndo;
+function pvSetTool(t){ PV.tool=t;
+  document.querySelectorAll('.pv-tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
+  const a=document.getElementById('pvAnno'); if(a) a.classList.toggle('pan', t==='pan');
+}
+window.pvSetTool = pvSetTool;
+function pvSetColor(c){ PV.color=c;
+  document.querySelectorAll('.pv-color').forEach(b=>b.classList.toggle('active', b.dataset.c===c)); }
+window.pvSetColor = pvSetColor;
+async function pvZoom(dir){ PV.scale = Math.max(0.5, Math.min(4, PV.scale + dir*0.25)); await pvRenderPage(); }
+window.pvZoom = pvZoom;
+async function pvPage(dir){ const n = PV.page + dir; if (n<1 || n>PV.numPages) return; PV.page = n; await pvRenderPage(); }
+window.pvPage = pvPage;
+function pvSetStatus(){
+  const el=document.getElementById('pvStatus'); if(!el) return;
+  const anyDirty = Object.values(PV.dirty).some(Boolean);
+  el.className = 'pv-status' + (anyDirty?' dirty':'');
+  el.textContent = anyDirty ? '\u25CF Unsaved markups' : (PV.canEdit?'All changes saved':'');
+}
+async function pvSave(){
+  if (!PV.canEdit) return;
+  const btn=document.getElementById('pvSaveBtn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Saving\u2026'; }
+  try {
+    const pages = Object.keys(PV.dirty).filter(p=>PV.dirty[p]);
+    for (const p of pages) {
+      const payload = { document_id: PV.doc.id, project_id: PV.doc.project_id,
+        page_number: Number(p), shapes: PV.shapes[p] || [], created_by: AUTH.name };
+      const { data, error } = await sb.from('plan_markups')
+        .upsert(payload, { onConflict: 'document_id,page_number' }).select('id').single();
+      if (error) throw error;
+      if (data && data.id) PV.markupRowId[p] = data.id;
+      PV.dirty[p] = false;
+    }
+    toast('Markups saved');
+    const el=document.getElementById('pvStatus'); if(el){ el.className='pv-status saved'; el.textContent='\u2713 Saved'; }
+  } catch(e){ handleSbError({message:e.message}, 'Save markups'); }
+  finally { if(btn){ btn.disabled=false; btn.innerHTML='\uD83D\uDCBE Save markups'; } }
+}
+window.pvSave = pvSave;
+async function pvDownload(){
+  try { window.open(await signedUrl('plans-specs', PV.doc.file_path), '_blank'); }
+  catch(e){ toast('Could not open file','error'); }
+}
+window.pvDownload = pvDownload;
+function pvClose(){
+  const anyDirty = Object.values(PV.dirty).some(Boolean);
+  if (anyDirty && !confirm('You have unsaved markups. Close anyway?')) return;
+  const root=document.getElementById('modalRoot'); if(root) root.innerHTML='';
+  document.body.style.overflow='';
+  PV.pdf=null; PV.shapes={}; PV.dirty={};
+}
+window.pvClose = pvClose;
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && document.getElementById('pvOverlay')) pvClose(); });
 
 function openDocModal(id) {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
