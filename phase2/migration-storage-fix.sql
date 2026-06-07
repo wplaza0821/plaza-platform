@@ -1,0 +1,11 @@
+-- =====================================================================
+-- PLAZACORE PHASE 2 — STORAGE FIX (2026-06-07)
+-- migration-storage.sql created scoped plz_ policies but a PRE-EXISTING
+-- permissive policy survived and overrode them (RLS policies are OR'd):
+--
+--   "anon can view field reports"  SELECT {public}  (bucket_id='field-reports')
+--
+-- This let ANYONE read every field-reports file across all projects.
+-- Drop it so only the scoped plz_ policies apply.
+-- =====================================================================
+drop policy if exists "anon can view field reports" on storage.objects;
