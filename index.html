@@ -184,6 +184,17 @@
   .badge-green { background: var(--green-bg); color: var(--green); }
   .badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
   .badge-red { background: var(--red-bg); color: var(--red); }
+  /* SOV % Used progress cell */
+  .sov-pct { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
+  .sov-pct-bar { position:relative; flex:0 0 56px; height:7px; border-radius:4px; background:#e5e7eb; overflow:hidden; }
+  .sov-pct-bar span { position:absolute; left:0; top:0; bottom:0; border-radius:4px; }
+  .sov-pct-lbl { min-width:54px; text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }
+  .sov-pct-green  .sov-pct-bar span { background:#16a34a; }
+  .sov-pct-green  .sov-pct-lbl { color:#15803d; }
+  .sov-pct-amber  .sov-pct-bar span { background:#f59e0b; }
+  .sov-pct-amber  .sov-pct-lbl { color:#b45309; }
+  .sov-pct-red    .sov-pct-bar span { background:#dc2626; }
+  .sov-pct-red    .sov-pct-lbl { color:#b91c1c; }
   .badge-blue { background: var(--blue-bg); color: var(--blue); }
   .badge-purple { background: var(--purple-bg); color: var(--purple); }
   .badge-gray { background: var(--gray-100); color: var(--gray-500); }
@@ -704,6 +715,9 @@
                   <th style="width:60px;">Item #</th>
                   <th>Description</th>
                   <th class="num">Scheduled Value</th>
+                  <th class="num">Completed to Date</th>
+                  <th class="num" style="width:120px;">% Used</th>
+                  <th class="num">Balance to Finish</th>
                 </tr>
               </thead>
               <tbody id="currentSovBody"></tbody>
@@ -1796,6 +1810,18 @@ function approvedCoTotal(projectId) {
     .reduce((s, c) => s + Number(c.amount || 0), 0);
 }
 
+// % Used cell: bar + label, color-coded to flag quantity burn / CO triggers.
+// green <85%, amber 85–99.99%, red >=100% (allocated quantity reached/exceeded).
+function sovPctCell(pct) {
+  const p = Number(pct) || 0;
+  const cls = p >= 100 ? 'red' : (p >= 85 ? 'amber' : 'green');
+  const w = Math.max(0, Math.min(100, p));
+  const flag = p >= 100 ? ' ⚠️' : '';
+  return `<div class="sov-pct sov-pct-${cls}" title="${p.toFixed(1)}% of scheduled value used to date">`
+    + `<div class="sov-pct-bar"><span style="width:${w}%"></span></div>`
+    + `<div class="sov-pct-lbl">${p.toFixed(1)}%${flag}</div></div>`;
+}
+
 function renderSov() {
   const proj = activeProject();
   document.getElementById('sov-context').innerHTML = proj
@@ -1839,21 +1865,42 @@ function renderSov() {
     <div class="tile"><div class="tile-label">Balance to Finish</div><div class="tile-value">${fmt$(balance)}</div></div>
   `;
 
-  // SOV table
+  // SOV table — now mirrors the pay-app G703: completed-to-date, % used, balance.
+  // "Completed to date" = cumulative max(total_completed_stored) across APPROVED pay apps
+  // (same source the next pay app pre-fills from), so SOV and pay apps always reconcile.
   const body = document.getElementById('currentSovBody');
   if (!sovItems.length) {
-    body.innerHTML = `<tr><td colspan="3"><div class="empty"><div class="empty-icon">📝</div><div class="empty-title">No Schedule of Values yet</div><div class="empty-sub">${isOwner() ? 'Click "Manage SOV" to create one.' : 'Waiting for owner to publish the SOV.'}</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📝</div><div class="empty-title">No Schedule of Values yet</div><div class="empty-sub">${isOwner() ? 'Click "Manage SOV" to create one.' : 'Waiting for owner to publish the SOV.'}</div></div></td></tr>`;
     document.getElementById('currentSovFoot').innerHTML = '';
   } else {
-    body.innerHTML = sovItems.map(i => `
+    const completedMap = previousCompletedBySov(proj.id); // {sov_item_id: $ completed to date}
+    let totCompleted = 0;
+    body.innerHTML = sovItems.map(i => {
+      const sched = Number(i.scheduled_value || 0);
+      const done  = Number(completedMap[i.id] || 0);
+      const bal   = sched - done;
+      const pct   = sched > 0 ? (done / sched) * 100 : 0;
+      totCompleted += done;
+      return `
       <tr>
         <td style="font-weight:600;">${escapeHtml(i.item_no)}</td>
         <td>${escapeHtml(i.description)}</td>
-        <td class="num">${fmt$2(i.scheduled_value)}</td>
-      </tr>
-    `).join('');
+        <td class="num">${fmt$2(sched)}</td>
+        <td class="num">${fmt$2(done)}</td>
+        <td class="num">${sovPctCell(pct)}</td>
+        <td class="num ${bal < 0 ? 'neg' : ''}">${fmt$2(bal)}</td>
+      </tr>`;
+    }).join('');
+    const totBal = sovSum - totCompleted;
+    const totPct = sovSum > 0 ? (totCompleted / sovSum) * 100 : 0;
     document.getElementById('currentSovFoot').innerHTML = `
-      <tr><td colspan="2">TOTAL CONTRACT VALUE (SOV v${sovVer})</td><td class="num">${fmt$2(sovSum)}</td></tr>
+      <tr>
+        <td colspan="2">TOTAL CONTRACT VALUE (SOV v${sovVer})</td>
+        <td class="num">${fmt$2(sovSum)}</td>
+        <td class="num">${fmt$2(totCompleted)}</td>
+        <td class="num">${sovPctCell(totPct)}</td>
+        <td class="num ${totBal < 0 ? 'neg' : ''}">${fmt$2(totBal)}</td>
+      </tr>
     `;
   }
 
