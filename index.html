@@ -1563,7 +1563,8 @@ function applyRoleBodyClasses() {
     body.classList.add('perm-no-edit-cos');
     body.classList.add('perm-no-edit-docs');
     body.classList.add('perm-no-edit-projects');
-    body.classList.add('perm-no-edit-tasks');
+    // Layer 2: contractors MAY create/advance tasks on their project (RLS allows insert),
+    // so leave the ＋ New Task button visible (do NOT add perm-no-edit-tasks).
     body.classList.add('perm-no-edit-photos');
     body.classList.add('perm-no-edit-fieldreports');
     body.classList.add('perm-no-edit-deficiencies');
@@ -1575,8 +1576,9 @@ function applyRoleBodyClasses() {
     body.classList.add('perm-no-view-cos');
     if (!canView('plans'))      body.classList.add('perm-no-view-docs');
   } else if (isMember()) {
-    // members: read everything, edit nothing (own-task interaction handled in task UI).
-    ['payapps','cos','rfis','subs','docs','projects','tasks','photos',
+    // members: read everything, edit nothing EXCEPT tasks (Layer 2: members may
+    // create tasks + advance their own/created tasks; RLS is the real gate).
+    ['payapps','cos','rfis','subs','docs','projects','photos',
      'fieldreports','deficiencies','daily','milestones'].forEach(s =>
        body.classList.add('perm-no-edit-' + s));
   }
@@ -4737,6 +4739,84 @@ function taskStatusBadge(s) {
   return `<span class="badge ${m.cls} badge-dot">${escapeHtml(m.label)}</span>`;
 }
 
+/* -------------------------------------------------------------------------
+   Layer 2: profile-aware assignees + role-gated task permissions.
+   assigned_to now stores the assignee PROFILE id (uuid as text). We keep a
+   graceful fallback for legacy free-text values (display them, don't crash).
+   ------------------------------------------------------------------------- */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(v) { return typeof v === 'string' && UUID_RE.test(v.trim()); }
+
+// uuid -> profile lookup map, rebuilt from DATA.profiles on demand.
+function profileMap() {
+  const m = new Map();
+  (DATA.profiles || []).forEach(p => { if (p && p.id) m.set(p.id, p); });
+  return m;
+}
+function profileDisplayName(p) {
+  if (!p) return '';
+  return (p.full_name && p.full_name.trim()) ? p.full_name.trim() : (p.email || p.id);
+}
+function profileLabel(p) {
+  if (!p) return '';
+  const name = profileDisplayName(p);
+  return (p.email && p.email !== name) ? `${name} (${p.email})` : name;
+}
+
+// Resolve a stored assigned_to value to a human display string.
+// uuid -> profile name/email; otherwise echo the raw (legacy free-text) value.
+function resolveAssignee(assignedTo) {
+  if (!assignedTo) return '';
+  if (isUuid(assignedTo)) {
+    const p = profileMap().get(assignedTo);
+    if (p) return profileLabel(p);
+    return assignedTo; // uuid we can't resolve (RLS-hidden profile) — show raw
+  }
+  return assignedTo; // legacy free-text
+}
+
+// Profiles relevant to a given project for the assignee picker:
+//   project_id matches OR project_id is null (all-projects owner/staff) OR
+//   app_role in (owner, staff). De-duped by id.
+function assigneeProfilesForProject(projectId) {
+  const seen = new Set();
+  return (DATA.profiles || []).filter(p => {
+    if (!p || !p.id || seen.has(p.id)) return false;
+    const relevant = (p.project_id === projectId)
+      || (p.project_id == null)
+      || (p.app_role === 'owner' || p.app_role === 'staff');
+    if (relevant) { seen.add(p.id); return true; }
+    return false;
+  });
+}
+
+/* ---- Layer 2 permission helpers (read the AUTH role) -------------------- */
+// Who may create tasks. DB RLS is the real gate; this only governs UI affordance.
+function canCreateTask() {
+  return isOwner() || isStaff() || isMember() || isContractor();
+}
+// Full edit / reassign / delete / arbitrary status.
+function canEditTask(task) {
+  return isOwner() || isStaff();
+}
+// May advance status on a task (members/contractors on their project; DB enforces
+// the finer member own/created scope — we attempt and surface RLS errors).
+function canAdvanceTask(task) {
+  if (isOwner() || isStaff()) return true;
+  if (!task) return false;
+  if (task.status === 'completed' || task.status === 'cancelled') return false;
+  if (isMember() || isContractor()) {
+    // project scope hint (RLS makes the final call)
+    if (AUTH && AUTH.projectId) return task.project_id === AUTH.projectId;
+    return true;
+  }
+  return false;
+}
+
+// Linear status advance chain for non-admin self-service.
+const TASK_ADVANCE_NEXT = { open: 'in_progress', in_progress: 'review', review: 'completed' };
+const TASK_ADVANCE_LABEL = { in_progress: 'Start', review: 'Submit for Review', completed: '✓ Mark Complete' };
+
 function taskAssigneeSuggestions() {
   const set = new Set();
   // From this project's contractors
@@ -4753,14 +4833,17 @@ function taskAssigneeSuggestions() {
   return Array.from(set).sort();
 }
 
+// Layer 2 task visibility. DB RLS is authoritative; this just shapes the UI list
+// so each role sees what RLS would return (avoids showing rows that'd 403 on write).
+//   owner/staff -> all tasks
+//   member      -> all tasks on their project (project-wide read)
+//   contractor  -> all tasks on their project
 function taskVisibleForViewer(t) {
-  if (isOwner()) return true;
-  if (isContractor()) {
-    const me = (AUTH.name || '').toLowerCase();
-    const to = (t.assigned_to || '').toLowerCase();
-    if (!me) return false;
-    // Contractor only sees tasks where their name matches assigned_to (substring either way)
-    return to.includes(me) || me.includes(to);
+  if (isOwner() || isStaff()) return true;
+  if (isMember() || isContractor()) {
+    if (AUTH && AUTH.projectId) return t.project_id === AUTH.projectId;
+    // No project claim — fall back to the active project scope.
+    return t.project_id === STATE.activeProjectId;
   }
   return false;
 }
@@ -4797,7 +4880,7 @@ function renderTasks() {
   const search = (STATE.taskSearch || '').toLowerCase();
   if (search) {
     list = list.filter(t =>
-      ((t.title || '') + ' ' + (t.assigned_to || '') + ' ' + (t.description || '')).toLowerCase().includes(search)
+      ((t.title || '') + ' ' + (resolveAssignee(t.assigned_to) || '') + ' ' + (t.description || '')).toLowerCase().includes(search)
     );
   }
 
@@ -4818,7 +4901,7 @@ function renderTasks() {
   const body = document.getElementById('taskBody');
   if (!body) return;
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No tasks</div><div class="empty-sub">${isOwner() ? 'Create a task to assign work to a project party.' : 'No tasks assigned to you yet.'}</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No tasks</div><div class="empty-sub">${canCreateTask() ? 'Create a task to assign work to a project party.' : 'No tasks on this project yet.'}</div></div></td></tr>`;
     return;
   }
 
@@ -4837,26 +4920,30 @@ function renderTasks() {
       dueCell = `${fmtDate(t.due_date)}${suffix}`;
     }
     const titleHtml = `<div style="font-weight:600;">${escapeHtml(t.title || '')}</div>${t.description ? `<div class="text-sm text-muted" style="margin-top:2px;">${escapeHtml((t.description || '').slice(0, 120))}${(t.description || '').length > 120 ? '…' : ''}</div>` : ''}`;
-    const assignedHtml = `<div>${escapeHtml(t.assigned_to || '—')}</div>${t.assigned_role ? `<div class="text-sm text-muted">${escapeHtml(TASK_ROLE_OPTIONS.find(r => r.value === t.assigned_role)?.label || t.assigned_role)}</div>` : ''}`;
+    const assigneeName = resolveAssignee(t.assigned_to);
+    const assignedHtml = `<div>${escapeHtml(assigneeName || '—')}</div>${t.assigned_role ? `<div class="text-sm text-muted">${escapeHtml(TASK_ROLE_OPTIONS.find(r => r.value === t.assigned_role)?.label || t.assigned_role)}</div>` : ''}`;
 
+    // Role-gated controls. DB RLS is the real gate; UI just shows likely-allowed actions.
     let actions = '';
-    if (isOwner()) {
-      const canComplete = t.status !== 'completed' && t.status !== 'cancelled';
-      actions = `
-        <div class="row-actions">
-          ${canComplete ? `<button class="btn btn-ghost btn-sm" onclick="markTaskComplete('${t.id}')">✓ Done</button>` : ''}
-          <button class="btn btn-ghost btn-sm" onclick="openTaskModal('${t.id}')">Edit</button>
-        </div>`;
-    } else if (isContractor()) {
-      // Contractor: cycle status open → in_progress → review
-      const next = t.status === 'open' ? 'in_progress' : (t.status === 'in_progress' ? 'review' : null);
-      const nextLabel = next === 'in_progress' ? 'Start' : (next === 'review' ? 'Submit for Review' : null);
-      actions = `
-        <div class="row-actions">
-          ${next ? `<button class="btn btn-ghost btn-sm" onclick="contractorAdvanceTask('${t.id}','${next}')">${nextLabel}</button>` : ''}
-          <button class="btn btn-ghost btn-sm" onclick="openTaskModal('${t.id}')">View</button>
-        </div>`;
+    const btns = [];
+    if (canEditTask(t)) {
+      // owner/staff: mark complete + full edit (+ delete lives in the modal)
+      if (t.status !== 'completed' && t.status !== 'cancelled') {
+        btns.push(`<button class="btn btn-ghost btn-sm" onclick="markTaskComplete('${t.id}')">✓ Done</button>`);
+      }
+      btns.push(`<button class="btn btn-ghost btn-sm" onclick="openTaskModal('${t.id}')">Edit</button>`);
+    } else {
+      // member/contractor: self-service status advance + view
+      if (canAdvanceTask(t)) {
+        const next = TASK_ADVANCE_NEXT[t.status];
+        if (next) {
+          const label = TASK_ADVANCE_LABEL[next] || ('→ ' + (TASK_STATUS_META[next]?.label || next));
+          btns.push(`<button class="btn btn-ghost btn-sm" onclick="advanceTask('${t.id}','${next}')">${label}</button>`);
+        }
+      }
+      btns.push(`<button class="btn btn-ghost btn-sm" onclick="openTaskModal('${t.id}')">View</button>`);
     }
+    actions = `<div class="row-actions">${btns.join('')}</div>`;
 
     return `
       <tr style="${rowStyle}">
@@ -4893,10 +4980,36 @@ document.getElementById('taskSearch')?.addEventListener('input', e => {
 function openTaskModal(id) {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
   const editing = id ? DATA.tasks.find(t => t.id === id) : null;
-  const readOnly = isContractor();
-  const ro = readOnly ? 'disabled' : '';
-  const suggestions = taskAssigneeSuggestions();
-  const datalistId = 'task-assignee-suggestions';
+
+  // Layer 2 modal modes:
+  //   creating  -> any role allowed to create (RLS gates the write)
+  //   fullEdit  -> owner/staff editing an existing task (all fields)
+  //   advance   -> member/contractor on an existing task (status only)
+  const creating = !editing;
+  const fullEdit = canEditTask(editing) && !creating;     // owner/staff edit existing
+  const createMode = creating && canCreateTask();          // owner/staff/member/contractor create
+  const advanceMode = !creating && !fullEdit && canAdvanceTask(editing);
+  const fieldsEditable = fullEdit || createMode;           // text/select fields editable?
+  const ro = fieldsEditable ? '' : 'disabled';
+
+  // Assignee <select> — profiles relevant to this task's project (or active project on create).
+  const projForPicker = editing ? editing.project_id : STATE.activeProjectId;
+  const assignChoices = assigneeProfilesForProject(projForPicker)
+    .slice()
+    .sort((a, b) => profileLabel(a).localeCompare(profileLabel(b)));
+  const current = editing?.assigned_to || '';
+  const currentIsUuid = isUuid(current);
+  const currentResolved = assignChoices.some(p => p.id === current);
+  let assigneeOptions = `<option value="">— Unassigned —</option>`;
+  assigneeOptions += assignChoices.map(p =>
+    `<option value="${escapeHtml(p.id)}" ${p.id === current ? 'selected' : ''}>${escapeHtml(profileLabel(p))}</option>`
+  ).join('');
+  // Graceful fallback: a stored value not in the relevant list (RLS-hidden uuid,
+  // or a legacy free-text assignee) still shows as a selected, preserved option.
+  if (current && !currentResolved) {
+    const lbl = currentIsUuid ? `${resolveAssignee(current)} (unlisted)` : `${current} (legacy)`;
+    assigneeOptions += `<option value="${escapeHtml(current)}" selected>${escapeHtml(lbl)}</option>`;
+  }
 
   const priorityOpts = ['low','normal','high','urgent'].map(p =>
     `<option value="${p}" ${ (editing?.priority || 'normal') === p ? 'selected' : ''}>${TASK_PRIORITY_META[p].label}</option>`
@@ -4908,8 +5021,15 @@ function openTaskModal(id) {
     `<option value="${r.value}" ${editing?.assigned_role === r.value ? 'selected' : ''}>${r.label}</option>`
   ).join('');
 
+  // Status select: editable by owner/staff (any status), or in advance mode
+  // (member/contractor) limited to the linear chain. Disabled otherwise.
+  const statusEditable = fullEdit || createMode || advanceMode;
+  const statusHint = advanceMode
+    ? '<div class="text-sm text-muted" style="margin-top:4px;">You can advance status forward only.</div>'
+    : '';
+
   const body = `
-    <div class="form-row"><label class="form-label">Title ${readOnly ? '' : '<span style="color:var(--red);">*</span>'}</label>
+    <div class="form-row"><label class="form-label">Title ${fieldsEditable ? '<span style="color:var(--red);">*</span>' : ''}</label>
       <input id="task-title" type="text" value="${escapeHtml(editing?.title || '')}" ${ro} />
     </div>
     <div class="form-row"><label class="form-label">Description</label>
@@ -4918,12 +5038,7 @@ function openTaskModal(id) {
     <div class="form-row two-col">
       <div>
         <label class="form-label">Assigned To</label>
-        <input id="task-assigned" type="text" list="${datalistId}"
-               placeholder="e.g. JM&amp;A - General Contractor"
-               value="${escapeHtml(editing?.assigned_to || '')}" ${ro} />
-        <datalist id="${datalistId}">
-          ${suggestions.map(s => `<option value="${escapeHtml(s)}"></option>`).join('')}
-        </datalist>
+        <select id="task-assigned" ${ro}>${assigneeOptions}</select>
       </div>
       <div>
         <label class="form-label">Role Category</label>
@@ -4940,8 +5055,8 @@ function openTaskModal(id) {
       </div>
       <div>
         <label class="form-label">Status</label>
-        <select id="task-status" ${isOwner() ? '' : (isContractor() ? '' : 'disabled')}>${statusOpts}</select>
-        ${isContractor() ? '<div class="text-sm text-muted" style="margin-top:4px;">You can advance status: Open → In Progress → Review</div>' : ''}
+        <select id="task-status" ${statusEditable ? '' : 'disabled'}>${statusOpts}</select>
+        ${statusHint}
       </div>
     </div>
     <div class="form-row two-col">
@@ -4960,11 +5075,11 @@ function openTaskModal(id) {
   `;
 
   let footer;
-  if (isOwner()) {
-    footer = editing
-      ? `<button class="btn btn-danger" onclick="deleteTask('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveTask('${editing.id}')">Save</button>`
-      : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveTask()">Create Task</button>`;
-  } else if (isContractor() && editing) {
+  if (createMode) {
+    footer = `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveTask()">Create Task</button>`;
+  } else if (fullEdit) {
+    footer = `<button class="btn btn-danger" onclick="deleteTask('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveTask('${editing.id}')">Save</button>`;
+  } else if (advanceMode) {
     footer = `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="saveTask('${editing.id}', true)">Update Status</button>`;
   } else {
     footer = `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button>`;
@@ -4978,19 +5093,41 @@ function openTaskModal(id) {
 }
 window.openTaskModal = openTaskModal;
 
-async function saveTask(id, contractorMode) {
-  if (!isOwner() && !contractorMode) { toast('Not allowed'); return; }
+// Friendly surfacing of RLS / PostgREST denials. PostgREST returns 403 / 42501
+// for policy violations, or an empty result set (no error) when an UPDATE matched
+// no RLS-visible row. Callers detect both.
+function isRlsDenied(error) {
+  if (!error) return false;
+  const code = error.code || '';
+  const status = error.status || error.statusCode;
+  const msg = (error.message || '').toLowerCase();
+  return code === '42501' || status === 403
+    || msg.includes('row-level security') || msg.includes('violates row-level')
+    || msg.includes('permission denied');
+}
+function surfaceTaskError(error, context) {
+  if (isRlsDenied(error)) {
+    toast("You don't have permission to do that.", 'error');
+    return;
+  }
+  handleSbError(error, context);
+}
 
-  if (contractorMode && id) {
-    // Contractor can only change status (restricted to allowed transitions)
+async function saveTask(id, statusOnly) {
+  // statusOnly: member/contractor advancing an existing task (status field only).
+  if (statusOnly && id) {
+    const t = DATA.tasks.find(x => x.id === id);
+    if (!canAdvanceTask(t)) { toast('Not allowed'); return; }
     const newStatus = document.getElementById('task-status').value;
-    if (!['open','in_progress','review'].includes(newStatus)) {
-      toast('Contractors can only set status to Open, In Progress, or Review');
-      return;
+    if (!['open','in_progress','review','completed'].includes(newStatus)) {
+      toast('Invalid status'); return;
     }
     const patch = { status: newStatus, updated_at: new Date().toISOString() };
-    const { error } = await sb.from('tasks').update(patch).eq('id', id);
-    if (error) { handleSbError(error, 'Update task'); return; }
+    if (newStatus === 'completed') patch.completed_at = new Date().toISOString();
+    // PostgREST: ask for the updated row back so we can detect an RLS no-match.
+    const { data, error } = await sb.from('tasks').update(patch).eq('id', id).select();
+    if (error) { surfaceTaskError(error, 'Update task'); return; }
+    if (!data || !data.length) { toast("You don't have permission to update this task.", 'error'); return; }
     await loadAllData();
     toast('Task status updated');
     closeModal();
@@ -4998,14 +5135,22 @@ async function saveTask(id, contractorMode) {
     return;
   }
 
+  // Full create/edit path. Owner/staff may edit existing; any allowed role may create.
+  const editingExisting = !!id;
+  if (editingExisting && !canEditTask(DATA.tasks.find(x => x.id === id))) { toast('Not allowed'); return; }
+  if (!editingExisting && !canCreateTask()) { toast('Not allowed'); return; }
+
   const title = document.getElementById('task-title').value.trim();
   if (!title) { toast('Title required'); return; }
   const status = document.getElementById('task-status').value;
+  // assigned_to now stores a profile uuid (the <select> value) OR a preserved
+  // legacy/unlisted value; empty => null (unassigned).
+  const assignedVal = document.getElementById('task-assigned').value || '';
   const data = {
     project_id: STATE.activeProjectId,
     title,
     description: document.getElementById('task-desc').value.trim() || null,
-    assigned_to: document.getElementById('task-assigned').value.trim() || null,
+    assigned_to: assignedVal.trim() || null,
     assigned_role: document.getElementById('task-role').value || null,
     priority: document.getElementById('task-priority').value || 'normal',
     status: status || 'open',
@@ -5016,11 +5161,12 @@ async function saveTask(id, contractorMode) {
   };
   let res;
   if (id) {
-    res = await sb.from('tasks').update(data).eq('id', id);
+    res = await sb.from('tasks').update(data).eq('id', id).select();
   } else {
-    res = await sb.from('tasks').insert(data);
+    res = await sb.from('tasks').insert(data).select();
   }
-  if (res.error) { handleSbError(res.error, 'Save task'); return; }
+  if (res.error) { surfaceTaskError(res.error, 'Save task'); return; }
+  if ((!res.data || !res.data.length)) { toast("You don't have permission to save this task.", 'error'); return; }
   await loadAllData();
   toast(id ? 'Task updated' : 'Task created');
   closeModal();
@@ -5028,36 +5174,46 @@ async function saveTask(id, contractorMode) {
 }
 window.saveTask = saveTask;
 
+// Mark complete. owner/staff anytime; member/contractor via their advance scope
+// (RLS enforces own/created for members). Surfaces denials gracefully.
 async function markTaskComplete(id) {
-  if (!isOwner()) { toast('Not allowed'); return; }
+  const t = DATA.tasks.find(x => x.id === id);
+  if (!canEditTask(t) && !canAdvanceTask(t)) { toast('Not allowed'); return; }
   const patch = { status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-  const { error } = await sb.from('tasks').update(patch).eq('id', id);
-  if (error) { handleSbError(error, 'Complete task'); return; }
+  const { data, error } = await sb.from('tasks').update(patch).eq('id', id).select();
+  if (error) { surfaceTaskError(error, 'Complete task'); return; }
+  if (!data || !data.length) { toast("You don't have permission to update this task.", 'error'); return; }
   await loadAllData();
   toast('Task marked complete');
   render();
 }
 window.markTaskComplete = markTaskComplete;
 
-async function contractorAdvanceTask(id, next) {
-  if (!isContractor()) { toast('Not allowed'); return; }
-  if (!['in_progress','review'].includes(next)) { toast('Invalid status'); return; }
+// Generalized status advance for member/contractor (and owner/staff if used).
+// next is the target status from TASK_ADVANCE_NEXT. RLS is the real gate.
+async function advanceTask(id, next) {
   const t = DATA.tasks.find(x => x.id === id);
-  if (!t || !taskVisibleForViewer(t)) { toast('Not allowed'); return; }
+  if (!t || !canAdvanceTask(t)) { toast('Not allowed'); return; }
+  if (!['in_progress','review','completed'].includes(next)) { toast('Invalid status'); return; }
   const patch = { status: next, updated_at: new Date().toISOString() };
-  const { error } = await sb.from('tasks').update(patch).eq('id', id);
-  if (error) { handleSbError(error, 'Advance task'); return; }
+  if (next === 'completed') patch.completed_at = new Date().toISOString();
+  const { data, error } = await sb.from('tasks').update(patch).eq('id', id).select();
+  if (error) { surfaceTaskError(error, 'Advance task'); return; }
+  if (!data || !data.length) { toast("You don't have permission to update this task.", 'error'); return; }
   await loadAllData();
   toast('Task status updated');
   render();
 }
-window.contractorAdvanceTask = contractorAdvanceTask;
+window.advanceTask = advanceTask;
+// Back-compat alias (legacy callers / cached pages).
+window.contractorAdvanceTask = advanceTask;
 
 async function deleteTask(id) {
-  if (!isOwner()) { toast('Not allowed'); return; }
+  // Delete stays owner/staff-only (no member/contractor delete in RLS).
+  if (!isOwner() && !isStaff()) { toast('Not allowed'); return; }
   if (!confirm('Delete this task?')) return;
   const { error } = await sb.from('tasks').delete().eq('id', id);
-  if (error) { handleSbError(error, 'Delete task'); return; }
+  if (error) { surfaceTaskError(error, 'Delete task'); return; }
   await loadAllData();
   toast('Task deleted');
   closeModal();
