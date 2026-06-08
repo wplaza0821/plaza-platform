@@ -500,9 +500,15 @@
   body.role-owner      [data-role-hide="owner"]      { display: none !important; }
   body.role-staff      [data-role-hide="contractor"] { display: none !important; }
   body.role-member     [data-role-hide="contractor"] { display: none !important; }
-  /* data-role-show="owner": visible ONLY to owner. */
+  /* data-role-show="owner": visible ONLY to owner.
+     Split: the TAB BUTTON gets inline-flex; the full-page SECTION must follow the
+     normal .tab-page/.active show-hide mechanics (NOT inline-flex on every page). */
   [data-role-show="owner"] { display: none !important; }
-  body.role-owner [data-role-show="owner"] { display: inline-flex !important; }
+  /* tab button: show inline-flex only for owner */
+  body.role-owner .tab[data-role-show="owner"] { display: inline-flex !important; }
+  /* page section: for non-owners stay hidden; for owner, defer to .tab-page rules */
+  body.role-owner .tab-page[data-role-show="owner"] { display: none !important; }
+  body.role-owner .tab-page[data-role-show="owner"].active { display: block !important; }
   /* Profile tab only for native (email/password) accounts. */
   body.auth-legacy [data-tab="profile"] { display: none !important; }
   /* Access (contractor-token admin) is owner-only too. */
