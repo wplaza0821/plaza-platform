@@ -81,6 +81,54 @@
     border-radius: 2px; cursor: pointer; font-family: inherit; transition: all 0.15s;
   }
   .btn-logout:hover { background: var(--black); color: #FFFFFF; border-color: var(--black); }
+  /* ---------- Notifications bell (Layer 3) ---------- */
+  .bell-wrap { position: relative; display: inline-flex; align-items: center; }
+  .btn-bell {
+    background: transparent; border: 1px solid var(--gray-200); color: var(--gray-500);
+    width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 15px; line-height: 1; border-radius: 2px; cursor: pointer; font-family: inherit;
+    transition: all 0.15s; position: relative;
+  }
+  .btn-bell:hover { background: var(--gray-100); color: var(--black); border-color: var(--black); }
+  .bell-badge {
+    position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px;
+    background: var(--red); color: #fff; font-size: 9px; font-weight: 700; line-height: 16px;
+    text-align: center; border-radius: 999px; letter-spacing: 0; display: none;
+  }
+  .bell-badge.show { display: inline-block; }
+  .bell-panel {
+    display: none; position: absolute; top: calc(100% + 8px); right: 0; width: 340px;
+    max-width: calc(100vw - 24px); max-height: 70vh; overflow-y: auto;
+    background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.16); z-index: 60;
+  }
+  .bell-panel.open { display: block; }
+  .bell-panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--gray-200);
+    position: sticky; top: 0; background: #fff;
+  }
+  .bell-panel-head .ttl { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--black); }
+  .bell-mark-all {
+    background: transparent; border: none; color: var(--accent); font-size: 11px;
+    cursor: pointer; font-family: inherit; padding: 2px 4px; letter-spacing: 0.4px;
+  }
+  .bell-mark-all:hover { text-decoration: underline; }
+  .bell-mark-all[disabled] { color: var(--gray-300); cursor: default; text-decoration: none; }
+  .bell-item {
+    display: flex; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--gray-100);
+    cursor: pointer; align-items: flex-start; transition: background 0.12s;
+  }
+  .bell-item:hover { background: var(--gray-100); }
+  .bell-item:last-child { border-bottom: none; }
+  .bell-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); margin-top: 5px; }
+  .bell-item.read .bell-dot { background: transparent; border: 1px solid var(--gray-300); }
+  .bell-item-body { flex: 1 1 auto; min-width: 0; }
+  .bell-item-title { font-size: 13px; font-weight: 600; color: var(--black); line-height: 1.3; }
+  .bell-item.read .bell-item-title { font-weight: 500; color: var(--gray-500); }
+  .bell-item-sub { font-size: 11.5px; color: var(--gray-500); margin-top: 2px; line-height: 1.35; word-break: break-word; }
+  .bell-item-time { font-size: 10px; color: var(--gray-400); margin-top: 3px; letter-spacing: 0.3px; }
+  .bell-empty { padding: 26px 14px; text-align: center; color: var(--gray-400); font-size: 12px; }
   .project-select {
     background: #FFFFFF; color: var(--black);
     border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
@@ -674,6 +722,16 @@
     <div class="top-actions">
       <select id="projectSelect" class="project-select" aria-label="Active project" data-role-hide="contractor"></select>
       <span id="contractorProjectLabel" class="role-pill contractor" data-role-hide="owner" style="display:none;"></span>
+      <span class="bell-wrap" id="bellWrap" style="display:none;">
+        <button type="button" class="btn-bell" id="bellBtn" aria-label="Notifications" onclick="toggleNotifPanel(event)">🔔<span class="bell-badge" id="bellBadge">0</span></button>
+        <div class="bell-panel" id="bellPanel" role="menu" aria-label="Notifications">
+          <div class="bell-panel-head">
+            <span class="ttl">Notifications</span>
+            <button type="button" class="bell-mark-all" id="bellMarkAll" onclick="markAllNotificationsRead(event)">Mark all read</button>
+          </div>
+          <div id="bellList"></div>
+        </div>
+      </span>
       <span id="roleIndicator" class="role-pill"></span>
       <button type="button" class="btn-logout" id="logoutBtn" onclick="logout()">Logout</button>
     </div>
@@ -1543,6 +1601,8 @@ async function handleNativeLogin(email, password) {
 }
 
 async function logout() {
+  stopNotifPolling();
+  DATA.notifications = [];
   sessionStorage.removeItem(SESSION_AUTH_KEY);
   try { await sb.auth.signOut(); } catch (e) {}
   clearSbAuth();
@@ -1636,6 +1696,7 @@ const DATA = {
   daily_reports: [],
   milestones: [],
   profiles: [],         // Phase B: native auth user profiles (RLS-scoped)
+  notifications: [],    // Phase B Layer 3: in-app notifications (RLS-scoped to user)
 };
 
 async function loadAllData() {
@@ -1699,6 +1760,10 @@ async function loadAllData() {
   DATA.milestones    = ms.data || [];
   softErr(prf, 'Loading profiles');
   DATA.profiles      = prf.data || [];
+
+  // Phase B Layer 3: load in-app notifications for native users (RLS-scoped).
+  // Cheap, isolated select; failures are swallowed inside loadNotifications.
+  await loadNotifications();
 }
 
 /* =========================================================================
@@ -4254,6 +4319,7 @@ window.copyAccessLink = copyAccessLink;
    ========================================================================= */
 const ROLE_LABELS = { owner: 'Owner', staff: 'Staff', member: 'Member', contractor: 'Contractor' };
 const INVITE_FN_URL = SUPABASE_URL + '/functions/v1/invite-user';
+const NOTIFY_FN_URL = SUPABASE_URL + '/functions/v1/notify-task';
 
 function myProfile() {
   if (!isNative() || !AUTH?.userId) return null;
@@ -4552,6 +4618,7 @@ function render() {
   renderRoleIndicator();
   renderProjectSelect();
   refreshCounts();
+  renderBell();
 
   const tab = STATE.activeTab;
   try {
@@ -4604,6 +4671,7 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     document.body.classList.remove('app-booting');
     await loadAllData();
     render();
+    startNotifPolling();
   } else {
     if (errEl) errEl.textContent = 'Invalid access code';
     if (input) { input.value = ''; input.focus(); }
@@ -4629,6 +4697,7 @@ document.getElementById('nativeLoginForm')?.addEventListener('submit', async (e)
     document.body.classList.remove('app-booting');
     await loadAllData();
     render();
+    startNotifPolling();
   } else {
     if (errEl) errEl.textContent = res.error || 'Sign-in failed';
     if (pwEl) { pwEl.value = ''; pwEl.focus(); }
@@ -4654,6 +4723,167 @@ document.getElementById('toggleLoginMode')?.addEventListener('click', (e) => {
     document.getElementById('loginInput')?.focus();
   }
 });
+
+/* =========================================================================
+   NOTIFICATIONS BELL (Phase B · Layer 3)
+   ========================================================================= */
+// The bell is for NATIVE auth users only (owner/staff/member/contractor signed
+// in via email+password, where auth.uid() exists so RLS scopes notifications to
+// them). Legacy owner-pw / contractor-token sessions have no auth.uid(), so the
+// bell is hidden gracefully.
+let _notifPollTimer = null;
+
+function canUseBell() { return isNative() && !!(AUTH && AUTH.userId); }
+
+function relTime(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return '';
+  const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24); if (d < 7) return d + 'd ago';
+  return fmtDate(iso);
+}
+
+async function loadNotifications() {
+  if (!canUseBell()) { DATA.notifications = []; return; }
+  // RLS already scopes SELECT to user_id = auth.uid() (or owner). Limit 30.
+  const { data, error } = await sb
+    .from('notifications')
+    .select('id, kind, title, body, link, ref_table, ref_id, read_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(30);
+  if (error) {
+    // Table may not exist yet, or RLS denies (legacy session) — fail quiet.
+    if (error.code !== 'PGRST205' && error.code !== '42P01') {
+      console.warn('loadNotifications:', error.message || error);
+    }
+    DATA.notifications = [];
+    return;
+  }
+  DATA.notifications = data || [];
+}
+
+function unreadNotifCount() {
+  return (DATA.notifications || []).filter(n => !n.read_at).length;
+}
+
+function renderBell() {
+  const wrap = document.getElementById('bellWrap');
+  if (!wrap) return;
+  if (!canUseBell()) {
+    wrap.style.display = 'none';
+    closeNotifPanel();
+    return;
+  }
+  wrap.style.display = '';
+  const badge = document.getElementById('bellBadge');
+  const n = unreadNotifCount();
+  if (badge) {
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.classList.toggle('show', n > 0);
+  }
+  renderNotifList();
+}
+
+function renderNotifList() {
+  const list = document.getElementById('bellList');
+  if (!list) return;
+  const items = DATA.notifications || [];
+  if (!items.length) {
+    list.innerHTML = '<div class="bell-empty">No notifications yet.</div>';
+    const mk = document.getElementById('bellMarkAll'); if (mk) mk.disabled = true;
+    return;
+  }
+  const mk = document.getElementById('bellMarkAll');
+  if (mk) mk.disabled = unreadNotifCount() === 0;
+  list.innerHTML = items.map(nf => {
+    const read = !!nf.read_at;
+    return `<div class="bell-item ${read ? 'read' : ''}" onclick="openNotification('${nf.id}')">
+      <span class="bell-dot"></span>
+      <div class="bell-item-body">
+        <div class="bell-item-title">${escapeHtml(nf.title || '')}</div>
+        ${nf.body ? `<div class="bell-item-sub">${escapeHtml(nf.body)}</div>` : ''}
+        <div class="bell-item-time">${escapeHtml(relTime(nf.created_at))}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleNotifPanel(ev) {
+  if (ev) ev.stopPropagation();
+  const panel = document.getElementById('bellPanel');
+  if (!panel) return;
+  if (panel.classList.contains('open')) { closeNotifPanel(); return; }
+  panel.classList.add('open');
+  renderNotifList();
+  // Close when clicking outside.
+  setTimeout(() => document.addEventListener('click', _notifOutsideClick), 0);
+}
+function closeNotifPanel() {
+  const panel = document.getElementById('bellPanel');
+  if (panel) panel.classList.remove('open');
+  document.removeEventListener('click', _notifOutsideClick);
+}
+function _notifOutsideClick(e) {
+  const wrap = document.getElementById('bellWrap');
+  if (wrap && !wrap.contains(e.target)) closeNotifPanel();
+}
+window.toggleNotifPanel = toggleNotifPanel;
+
+async function markNotificationRead(id) {
+  if (!id) return;
+  const nf = (DATA.notifications || []).find(x => x.id === id);
+  if (nf && nf.read_at) return; // already read
+  const now = new Date().toISOString();
+  // RLS notif_self_update allows updating own rows.
+  const { error } = await sb.from('notifications').update({ read_at: now }).eq('id', id);
+  if (error) { console.warn('markNotificationRead:', error.message || error); return; }
+  if (nf) nf.read_at = now;
+  renderBell();
+}
+window.markNotificationRead = markNotificationRead;
+
+async function openNotification(id) {
+  const nf = (DATA.notifications || []).find(x => x.id === id);
+  await markNotificationRead(id);
+  closeNotifPanel();
+  if (nf && nf.link === '#tasks') {
+    switchTab('tasks');
+  }
+}
+window.openNotification = openNotification;
+
+async function markAllNotificationsRead(ev) {
+  if (ev) ev.stopPropagation();
+  if (!canUseBell()) return;
+  const unread = (DATA.notifications || []).filter(n => !n.read_at);
+  if (!unread.length) return;
+  const now = new Date().toISOString();
+  const { error } = await sb.from('notifications')
+    .update({ read_at: now })
+    .is('read_at', null);
+  if (error) { console.warn('markAllNotificationsRead:', error.message || error); return; }
+  unread.forEach(n => { n.read_at = now; });
+  renderBell();
+}
+window.markAllNotificationsRead = markAllNotificationsRead;
+
+function startNotifPolling() {
+  stopNotifPolling();
+  if (!canUseBell()) return;
+  // Light 60s poll: cheap RLS-scoped select limited to 30 rows.
+  _notifPollTimer = setInterval(async () => {
+    if (!canUseBell()) { stopNotifPolling(); return; }
+    await loadNotifications();
+    renderBell();
+  }, 60000);
+}
+function stopNotifPolling() {
+  if (_notifPollTimer) { clearInterval(_notifPollTimer); _notifPollTimer = null; }
+}
 
 /* =========================================================================
    INIT
@@ -4704,6 +4934,9 @@ async function init() {
   } else {
     switchTab('projects');
   }
+
+  // Phase B Layer 3: begin light notification polling for native users.
+  startNotifPolling();
 }
 
 if (document.readyState === 'loading') {
@@ -5173,12 +5406,38 @@ async function saveTask(id, statusOnly) {
   }
   if (res.error) { surfaceTaskError(res.error, 'Save task'); return; }
   if ((!res.data || !res.data.length)) { toast("You don't have permission to save this task.", 'error'); return; }
+  // Layer 3 notifications: fire ONLY on a brand-new task (INSERT, not edit) that
+  // has an assignee. Fire-and-forget — must NOT block the UI or fail the save.
+  if (!id && data.assigned_to) {
+    const newTaskId = res.data[0] && res.data[0].id;
+    if (newTaskId) notifyTaskAssigned(newTaskId);
+  }
   await loadAllData();
   toast(id ? 'Task updated' : 'Task created');
   closeModal();
   render();
 }
 window.saveTask = saveTask;
+
+// Fire-and-forget call to the notify-task edge function. Sends the user's JWT so
+// the function can authenticate the caller; the function re-loads the task with
+// the service role. Failures are logged only (never surfaced / never blocking).
+function notifyTaskAssigned(taskId) {
+  try {
+    if (!_sbJwt || !taskId) return;
+    fetch(NOTIFY_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + _sbJwt,
+      },
+      body: JSON.stringify({ task_id: taskId }),
+    }).catch(e => console.warn('notify-task failed (non-blocking):', e));
+  } catch (e) {
+    console.warn('notify-task dispatch error (non-blocking):', e);
+  }
+}
 
 // Mark complete. owner/staff anytime; member/contractor via their advance scope
 // (RLS enforces own/created for members). Surfaces denials gracefully.
