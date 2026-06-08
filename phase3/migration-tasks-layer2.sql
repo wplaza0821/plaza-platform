@@ -12,6 +12,22 @@
 -- make sure RLS is on (it already is from Phase 2, but idempotent-safe)
 alter table tasks enable row level security;
 
+-- ---- AUTO-STAMP created_by on insert ----
+-- The member-update policy below keys off created_by = auth.uid()::text, but the
+-- app never sets created_by. Stamp it server-side so a member can update tasks
+-- they create. Only fills when null (owner/staff inserts via service paths keep theirs).
+create or replace function plz_tasks_stamp_created_by() returns trigger as $$
+begin
+  if new.created_by is null and auth.uid() is not null then
+    new.created_by := (auth.uid())::text;
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+drop trigger if exists trg_tasks_created_by on tasks;
+create trigger trg_tasks_created_by before insert on tasks
+  for each row execute function plz_tasks_stamp_created_by();
+
 -- drop the policies we are (re)defining
 drop policy if exists tasks_owner_all          on tasks;
 drop policy if exists tasks_contractor_read     on tasks;
