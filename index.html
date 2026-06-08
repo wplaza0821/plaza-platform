@@ -498,6 +498,16 @@
 
   body.role-contractor [data-role-hide="contractor"] { display: none !important; }
   body.role-owner      [data-role-hide="owner"]      { display: none !important; }
+  body.role-staff      [data-role-hide="contractor"] { display: none !important; }
+  body.role-member     [data-role-hide="contractor"] { display: none !important; }
+  /* data-role-show="owner": visible ONLY to owner. */
+  [data-role-show="owner"] { display: none !important; }
+  body.role-owner [data-role-show="owner"] { display: inline-flex !important; }
+  /* Profile tab only for native (email/password) accounts. */
+  body.auth-legacy [data-tab="profile"] { display: none !important; }
+  /* Access (contractor-token admin) is owner-only too. */
+  body.role-staff  [data-role-hide="contractor"].tab,
+  body.role-member [data-role-hide="contractor"].tab { display: none !important; }
   body.perm-no-edit-payapps  .perm-edit-payapps  { display: none !important; }
   body.perm-no-edit-cos      .perm-edit-cos      { display: none !important; }
   body.perm-no-edit-rfis     .perm-edit-rfis     { display: none !important; }
@@ -624,11 +634,26 @@
   <div class="login-card">
     <div class="login-logo" id="loginLogo"></div>
     <div class="login-title">Construction Platform</div>
-    <form id="loginForm" autocomplete="off">
+
+    <!-- Native email + password (Phase B default) -->
+    <form id="nativeLoginForm" autocomplete="on">
+      <input id="nativeEmail" class="login-input" type="email" placeholder="Email" autocomplete="username" />
+      <input id="nativePassword" class="login-input" type="password" placeholder="Password" autocomplete="current-password" style="margin-top:8px;" />
+      <button type="submit" class="login-btn" style="margin-top:10px;">Sign in</button>
+      <div class="login-error" id="nativeLoginError"></div>
+    </form>
+
+    <!-- Legacy access-code (owner password / contractor token) — kept intact -->
+    <form id="loginForm" autocomplete="off" style="display:none; margin-top:4px;">
       <input id="loginInput" class="login-input" type="password" placeholder="Access code" autocomplete="off" />
       <button type="submit" class="login-btn">Enter</button>
       <div class="login-error" id="loginError"></div>
     </form>
+
+    <div class="login-altmode" style="margin-top:14px; font-size:13px;">
+      <a href="#" id="toggleLoginMode" style="color:var(--gray-500,#888); text-decoration:underline; cursor:pointer;">Use access code instead</a>
+    </div>
+
     <div class="login-footer">Plaza &amp; Associates, LLC · Coral Gables, FL</div>
   </div>
 </div>
@@ -662,6 +687,8 @@
     <button class="tab" data-tab="milestones"><span>🎯</span> Schedule <span class="count" id="cnt-milestones">0</span></button>
     <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
     <button class="tab" data-tab="access" data-role-hide="contractor"><span>🔑</span> Access</button>
+    <button class="tab" data-tab="users" data-role-show="owner"><span>👥</span> Users</button>
+    <button class="tab" data-tab="profile"><span>👤</span> Profile</button>
   </nav>
 
   <main id="main">
@@ -1155,6 +1182,49 @@
         </table>
       </div>
     </section>
+
+    <!-- ========== USERS (owner-only invite admin) ========== -->
+    <section id="page-users" class="tab-page" data-role-show="owner">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Users &amp; Invites</h1>
+          <div class="page-subtitle">Invite-only. Each user signs in with their own email &amp; password and gets a scoped role.</div>
+        </div>
+        <button class="btn btn-primary" onclick="openInviteModal()">＋ Invite User</button>
+      </div>
+
+      <div class="hint-banner" style="background:var(--gray-100); border-color:var(--gray-200); color:var(--ink);">
+        📨 Invited users receive an email to set their password. Roles: <strong>owner</strong> (full),
+        <strong>staff</strong> (edit all), <strong>member</strong> (read + own tasks), <strong>contractor</strong> (scoped).
+      </div>
+
+      <div class="table-wrap">
+        <table class="data" id="usersTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Project</th>
+              <th>Phone</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== PROFILE (self, all logged-in users) ========== -->
+    <section id="page-profile" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">My Profile</h1>
+          <div class="page-subtitle">Update your contact details. Role &amp; project access are managed by the owner.</div>
+        </div>
+      </div>
+      <div id="profileBody"></div>
+    </section>
   </main>
 
   <footer class="app-footer">
@@ -1194,6 +1264,16 @@ function _authFetch(input, init) {
 }
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
   global: { fetch: _authFetch },
+  auth: {
+    // Phase B (native auth): persist + auto-refresh the GoTrue session so
+    // email/password logins survive reloads. The custom-JWT (owner-pw /
+    // contractor-token) paths do NOT use GoTrue and are unaffected — they keep
+    // riding the same _authFetch wrapper via setSbAuth().
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storageKey: 'plaza_native_auth_v1',
+  },
 });
 
 function setSbAuth(jwt) {
@@ -1202,6 +1282,21 @@ function setSbAuth(jwt) {
 }
 function clearSbAuth() {
   _sbJwt = null;
+}
+
+// Phase B: decode a JWT payload (no verification — server RLS verifies). Used to
+// read the app claims (user_role / project_id / perms) the Access Token Hook
+// injects into the NATIVE Supabase session, the SAME claims the custom JWT
+// carries. isOwner()/canEdit/canView all derive from these.
+function decodeJwt(token) {
+  try {
+    const part = token.split('.')[1];
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 ? b64 + '='.repeat(4 - (b64.length % 4)) : b64;
+    const json = decodeURIComponent(atob(pad).split('').map(c =>
+      '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(json);
+  } catch (e) { return {}; }
 }
 async function mintToken(body) {
   try {
@@ -1276,8 +1371,18 @@ const STATE = {
   rfiSearch: '', subSearch: '', docSearch: '', taskSearch: '',
 };
 
+// Roles (Phase B): owner | staff | member | contractor.
+//  - owner      : full control + invite-only admin.
+//  - staff      : Plaza internal staff — edit across all projects (no admin).
+//  - member     : authenticated client/team member — read everything in their
+//                 project scope + interact with their own tasks.
+//  - contractor : existing scoped, permission-object behavior (token OR native).
 function isOwner()      { return AUTH && AUTH.role === 'owner'; }
+function isStaff()      { return AUTH && AUTH.role === 'staff'; }
+function isMember()     { return AUTH && AUTH.role === 'member'; }
 function isContractor() { return AUTH && AUTH.role === 'contractor'; }
+// Native (email/password) login vs legacy custom-JWT (owner-pw / contractor-token).
+function isNative()     { return AUTH && AUTH.native === true; }
 
 function defaultContractorModules() {
   return { rfis: true, submittals: true, payapps: true, plans: true };
@@ -1285,6 +1390,8 @@ function defaultContractorModules() {
 
 function canEdit(scope) {
   if (isOwner()) return true;
+  if (isStaff())  return true;            // staff edit across all modules/projects
+  if (isMember()) return false;           // members are read-only (own-task interaction handled separately)
   if (!isContractor()) return false;
   const p = AUTH.permissions || {};
   if (scope === 'rfis')       return !!p.rfis;
@@ -1294,6 +1401,8 @@ function canEdit(scope) {
 }
 function canView(scope) {
   if (isOwner()) return true;
+  if (isStaff())  return true;            // staff see everything
+  if (isMember()) return true;            // members read everything in their scope
   if (!isContractor()) return false;
   const p = AUTH.permissions || {};
   if (scope === 'projects') return true;
@@ -1302,6 +1411,27 @@ function canView(scope) {
   if (scope === 'photos' || scope === 'field_reports' || scope === 'deficiencies' ||
       scope === 'daily'  || scope === 'milestones') return true;
   return !!p[scope];
+}
+
+// Build the in-memory AUTH object from a NATIVE Supabase session. Reads the app
+// claims the Access Token Hook injected (user_role/project_id/perms) — the same
+// claim names the custom JWT uses, so all downstream RLS + UI gating is identical.
+function authFromNativeSession(session) {
+  const token = session?.access_token;
+  if (!token) return null;
+  const claims = decodeJwt(token);
+  const role = claims.user_role || 'member';
+  const meta = session.user?.user_metadata || {};
+  return {
+    role,
+    native: true,
+    name: meta.full_name || session.user?.email || 'User',
+    email: session.user?.email || claims.email || null,
+    userId: session.user?.id || claims.sub || null,
+    projectId: claims.project_id || null,
+    permissions: claims.perms || (role === 'contractor' ? defaultContractorModules() : {}),
+    jwt: token,
+  };
 }
 
 async function tryBootAuth() {
@@ -1332,6 +1462,22 @@ async function tryBootAuth() {
       return true;
     }
   }
+  // Phase B: native (email/password) session takes priority on boot/restore.
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session && session.access_token) {
+      setSbAuth(session.access_token);
+      const a = authFromNativeSession(session);
+      if (a && a.role && a.role !== 'none') {
+        AUTH = a;
+        return true;
+      }
+      // inactive/unknown native user -> drop the session, fall through to login.
+      try { await sb.auth.signOut(); } catch (e) {}
+      clearSbAuth();
+    }
+  } catch (e) {}
+
   try {
     const raw = sessionStorage.getItem(SESSION_AUTH_KEY);
     if (raw) {
@@ -1369,8 +1515,31 @@ async function handleLogin(password) {
   return true;
 }
 
-function logout() {
+// Phase B: native email + password login via Supabase Auth (GoTrue). On success
+// the session's access_token (with hook-injected app claims) is routed through
+// the SAME setSbAuth()/_authFetch path the custom JWT uses. Returns
+// { ok:true } | { ok:false, error }.
+async function handleNativeLogin(email, password) {
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error || !data?.session) {
+    return { ok: false, error: error?.message || 'Invalid email or password' };
+  }
+  const session = data.session;
+  setSbAuth(session.access_token);
+  const a = authFromNativeSession(session);
+  if (!a || !a.role || a.role === 'none') {
+    try { await sb.auth.signOut(); } catch (e) {}
+    clearSbAuth();
+    return { ok: false, error: 'Account is inactive or not provisioned. Contact the administrator.' };
+  }
+  AUTH = a;
+  return { ok: true };
+}
+
+async function logout() {
   sessionStorage.removeItem(SESSION_AUTH_KEY);
+  try { await sb.auth.signOut(); } catch (e) {}
+  clearSbAuth();
   if (window.location.search) window.location.href = window.location.pathname;
   else window.location.reload();
 }
@@ -1378,8 +1547,9 @@ window.logout = logout;
 
 function applyRoleBodyClasses() {
   const body = document.body;
-  body.classList.remove('role-owner', 'role-contractor', 'app-booting');
-  body.classList.add(isOwner() ? 'role-owner' : 'role-contractor');
+  body.classList.remove('role-owner', 'role-contractor', 'role-staff', 'role-member', 'app-booting', 'auth-legacy', 'auth-native');
+  body.classList.add('role-' + (AUTH ? AUTH.role : 'member'));
+  body.classList.add(isNative() ? 'auth-native' : 'auth-legacy');
   const shell = document.getElementById('appShell');
   if (shell) shell.style.display = '';
   ['payapps','cos','rfis','subs','docs','projects','tasks','photos','fieldreports','deficiencies','daily','milestones'].forEach(s => {
@@ -1404,7 +1574,13 @@ function applyRoleBodyClasses() {
     if (!canView('submittals')) body.classList.add('perm-no-view-subs');
     body.classList.add('perm-no-view-cos');
     if (!canView('plans'))      body.classList.add('perm-no-view-docs');
+  } else if (isMember()) {
+    // members: read everything, edit nothing (own-task interaction handled in task UI).
+    ['payapps','cos','rfis','subs','docs','projects','tasks','photos',
+     'fieldreports','deficiencies','daily','milestones'].forEach(s =>
+       body.classList.add('perm-no-edit-' + s));
   }
+  // staff & owner: full edit, no perm-block classes.
 }
 
 function renderRoleIndicator() {
@@ -1413,12 +1589,18 @@ function renderRoleIndicator() {
   if (isOwner()) {
     el.className = 'role-pill';
     el.textContent = 'Owner Mode — ' + (AUTH.name || 'William');
+  } else if (isStaff()) {
+    el.className = 'role-pill';
+    el.textContent = 'Staff — ' + (AUTH.name || 'Plaza Staff');
+  } else if (isMember()) {
+    el.className = 'role-pill contractor';
+    el.textContent = 'Member — ' + (AUTH.name || 'User');
   } else if (isContractor()) {
     el.className = 'role-pill contractor';
     el.textContent = 'Contractor — ' + AUTH.name;
   }
   const proj = document.getElementById('contractorProjectLabel');
-  if (proj && isContractor()) {
+  if (proj && (isContractor() || (isMember() && AUTH.projectId))) {
     const p = DATA.projects.find(x => x.id === AUTH.projectId);
     proj.textContent = p ? p.name : '';
     proj.style.display = p ? '' : 'none';
@@ -1445,6 +1627,7 @@ const DATA = {
   deficiencies: [],
   daily_reports: [],
   milestones: [],
+  profiles: [],         // Phase B: native auth user profiles (RLS-scoped)
 };
 
 async function loadAllData() {
@@ -1464,9 +1647,12 @@ async function loadAllData() {
   const dfP   = sb.from('deficiencies').select('*').order('created_at', { ascending: false });
   const dlP   = sb.from('daily_reports').select('*').order('report_date', { ascending: false });
   const msP   = sb.from('milestones').select('*').order('sort_order', { ascending: true });
+  // Phase B: profiles. RLS returns own row to anyone; owner/staff get the full
+  // list (for the invite admin + assignee pickers). Table may not exist yet.
+  const prfP  = sb.from('profiles').select('*').order('created_at', { ascending: false });
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms, prf] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP, prfP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1503,6 +1689,8 @@ async function loadAllData() {
   DATA.deficiencies  = df.data || [];
   DATA.daily_reports = dl.data || [];
   DATA.milestones    = ms.data || [];
+  softErr(prf, 'Loading profiles');
+  DATA.profiles      = prf.data || [];
 }
 
 /* =========================================================================
@@ -1582,6 +1770,10 @@ document.querySelectorAll('.tab').forEach(t => {
 });
 function switchTab(tab) {
   if (tab === 'access' && !isOwner()) tab = 'projects';
+  if (tab === 'users'  && !isOwner()) tab = 'projects';
+  // Profile only meaningful for native (email/password) users — legacy
+  // owner-pw / contractor-token sessions have no profiles row.
+  if (tab === 'profile' && !isNative()) { toast('Profile is available to email/password accounts'); tab = STATE.activeTab; }
   if (isContractor()) {
     const scopeMap = { sov: 'payapps', rfis: 'rfis', submittals: 'submittals',
                        cos: 'cos', docs: 'plans', tasks: 'tasks',
@@ -4050,6 +4242,220 @@ async function copyAccessLink(token) {
 window.copyAccessLink = copyAccessLink;
 
 /* =========================================================================
+   PHASE B — PROFILE (self, native users) + USERS (owner invite admin)
+   ========================================================================= */
+const ROLE_LABELS = { owner: 'Owner', staff: 'Staff', member: 'Member', contractor: 'Contractor' };
+const INVITE_FN_URL = SUPABASE_URL + '/functions/v1/invite-user';
+
+function myProfile() {
+  if (!isNative() || !AUTH?.userId) return null;
+  return DATA.profiles.find(p => p.id === AUTH.userId) || null;
+}
+
+function renderProfile() {
+  const root = document.getElementById('profileBody');
+  if (!root) return;
+  if (!isNative()) {
+    root.innerHTML = `<div class="empty"><div class="empty-icon">👤</div><div class="empty-title">No profile</div><div class="empty-sub">Profiles are available to email &amp; password accounts.</div></div>`;
+    return;
+  }
+  const p = myProfile() || { email: AUTH.email, full_name: AUTH.name };
+  root.innerHTML = `
+    <div class="table-wrap" style="max-width:640px;">
+      <div style="padding:20px;">
+        <div class="form-row two-col">
+          <div><label class="form-label">Email (read-only)</label>
+            <input id="pf-email" type="email" value="${escapeHtml(p.email || AUTH.email || '')}" disabled />
+          </div>
+          <div><label class="form-label">Role (managed by owner)</label>
+            <input id="pf-role" type="text" value="${escapeHtml(ROLE_LABELS[AUTH.role] || AUTH.role)}" disabled />
+          </div>
+        </div>
+        <div class="form-row"><label class="form-label">Full Name</label>
+          <input id="pf-name" type="text" value="${escapeHtml(p.full_name || '')}" placeholder="Jane Doe" />
+        </div>
+        <div class="form-row two-col">
+          <div><label class="form-label">Phone</label>
+            <input id="pf-phone" type="tel" value="${escapeHtml(p.phone || '')}" placeholder="+13055551234" />
+            <div class="text-sm text-muted" style="margin-top:4px;">E.164 format (e.g. +13055551234) for SMS notifications.</div>
+          </div>
+          <div><label class="form-label">Company</label>
+            <input id="pf-company" type="text" value="${escapeHtml(p.company || '')}" placeholder="Acme Construction" />
+          </div>
+        </div>
+        <div class="form-row"><label class="form-label">Avatar URL</label>
+          <input id="pf-avatar" type="url" value="${escapeHtml(p.avatar_url || '')}" placeholder="https://…" />
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveProfile() {
+  if (!isNative() || !AUTH?.userId) { toast('Not available', 'error'); return; }
+  const phone = (document.getElementById('pf-phone')?.value || '').trim();
+  if (phone && !/^\+[1-9]\d{6,14}$/.test(phone)) {
+    toast('Phone must be E.164, e.g. +13055551234', 'error'); return;
+  }
+  // Only self-editable fields. role/project/perms/active are trigger-guarded
+  // server-side, so we never send them here.
+  const patch = {
+    full_name:  (document.getElementById('pf-name')?.value || '').trim() || null,
+    phone:      phone || null,
+    company:    (document.getElementById('pf-company')?.value || '').trim() || null,
+    avatar_url: (document.getElementById('pf-avatar')?.value || '').trim() || null,
+  };
+  const { error } = await sb.from('profiles').update(patch).eq('id', AUTH.userId);
+  if (error) { handleSbError(error, 'Saving profile'); return; }
+  toast('Profile saved');
+  if (patch.full_name) { AUTH.name = patch.full_name; renderRoleIndicator(); }
+  await loadAllData();
+  renderProfile();
+}
+window.saveProfile = saveProfile;
+
+function renderUsers() {
+  const body = document.getElementById('usersBody');
+  if (!body) return;
+  if (!isOwner()) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-title">Owner only</div></div></td></tr>`;
+    return;
+  }
+  const list = DATA.profiles || [];
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">👥</div><div class="empty-title">No users yet</div><div class="empty-sub">Click "Invite User" to send the first invitation.</div></div></td></tr>`;
+    return;
+  }
+  body.innerHTML = list.map(u => {
+    const proj = u.project_id ? getProject(u.project_id) : null;
+    const projLabel = proj ? (escapeHtml(proj.code) + ' — ' + escapeHtml(proj.name))
+                           : '<span class="text-muted">All projects</span>';
+    const status = u.active === false ? '<span class="role-pill contractor">Inactive</span>'
+                 : (u.accepted_at ? '<span class="role-pill" style="background:var(--green-bg,#e6f4ea);color:var(--green,#137333);">Active</span>'
+                                  : '<span class="role-pill contractor">Pending</span>');
+    return `
+      <tr>
+        <td><strong>${escapeHtml(u.full_name || '—')}</strong></td>
+        <td class="text-sm">${escapeHtml(u.email || '')}</td>
+        <td class="text-sm">${escapeHtml(ROLE_LABELS[u.app_role] || u.app_role || '')}</td>
+        <td class="text-sm">${projLabel}</td>
+        <td class="text-sm">${escapeHtml(u.phone || '—')}</td>
+        <td class="text-sm">${status}</td>
+      </tr>`;
+  }).join('');
+}
+
+function openInviteModal() {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const projects = DATA.projects || [];
+  const projectOptions = '<option value="">All projects (owner/staff)</option>' +
+    projects.map(p => `<option value="${p.id}">${escapeHtml(p.code)} — ${escapeHtml(p.name)}</option>`).join('');
+  showModal({
+    title: 'Invite User',
+    body: `
+      <div class="form-row two-col">
+        <div><label class="form-label">Email</label>
+          <input id="iv-email" type="email" placeholder="person@company.com" /></div>
+        <div><label class="form-label">Full Name</label>
+          <input id="iv-name" type="text" placeholder="Jane Doe" /></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Role</label>
+          <select id="iv-role">
+            <option value="member">Member — read + own tasks</option>
+            <option value="staff">Staff — edit all projects</option>
+            <option value="contractor">Contractor — scoped</option>
+            <option value="owner">Owner — full control</option>
+          </select></div>
+        <div><label class="form-label">Project</label>
+          <select id="iv-project">${projectOptions}</select></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Phone (optional, E.164)</label>
+          <input id="iv-phone" type="tel" placeholder="+13055551234" /></div>
+        <div><label class="form-label">Company (optional)</label>
+          <input id="iv-company" type="text" placeholder="Acme Construction" /></div>
+      </div>
+      <div id="iv-contractor-perms" class="form-row" style="display:none;">
+        <label class="form-label">Contractor module access</label>
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+          <label><input type="checkbox" id="iv-perm-rfis" checked> RFIs</label>
+          <label><input type="checkbox" id="iv-perm-submittals" checked> Submittals</label>
+          <label><input type="checkbox" id="iv-perm-payapps" checked> Pay Apps</label>
+          <label><input type="checkbox" id="iv-perm-plans" checked> Plans</label>
+        </div>
+      </div>
+      <div class="login-error" id="iv-error"></div>`,
+    footer: `<div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="iv-submit" onclick="submitInvite()">Send Invite</button>`,
+  });
+  const roleSel = document.getElementById('iv-role');
+  const permBox = document.getElementById('iv-contractor-perms');
+  const sync = () => { permBox.style.display = roleSel.value === 'contractor' ? '' : 'none'; };
+  roleSel?.addEventListener('change', sync); sync();
+}
+window.openInviteModal = openInviteModal;
+
+async function submitInvite() {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const errEl = document.getElementById('iv-error');
+  const btn   = document.getElementById('iv-submit');
+  if (errEl) errEl.textContent = '';
+  const email   = (document.getElementById('iv-email')?.value || '').trim().toLowerCase();
+  const name    = (document.getElementById('iv-name')?.value || '').trim();
+  const role    = document.getElementById('iv-role')?.value || 'member';
+  const project = document.getElementById('iv-project')?.value || '';
+  const phone   = (document.getElementById('iv-phone')?.value || '').trim();
+  const company = (document.getElementById('iv-company')?.value || '').trim();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { if (errEl) errEl.textContent = 'Valid email required'; return; }
+  if (phone && !/^\+[1-9]\d{6,14}$/.test(phone)) { if (errEl) errEl.textContent = 'Phone must be E.164 (e.g. +13055551234)'; return; }
+  let perms = {};
+  if (role === 'contractor') {
+    perms = {
+      rfis:       !!document.getElementById('iv-perm-rfis')?.checked,
+      submittals: !!document.getElementById('iv-perm-submittals')?.checked,
+      payapps:    !!document.getElementById('iv-perm-payapps')?.checked,
+      plans:      !!document.getElementById('iv-perm-plans')?.checked,
+    };
+  }
+  const payload = {
+    email, full_name: name, app_role: role,
+    project_id: project || null,
+    phone: phone || null, company: company || null, perms,
+  };
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const res = await fetch(INVITE_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        // Owner's JWT — the edge fn verifies user_role=owner from it.
+        'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+      },
+      body: JSON.stringify(payload),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out.error) {
+      if (errEl) errEl.textContent = out.error || ('Invite failed (' + res.status + ')');
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Invite'; }
+      return;
+    }
+    toast('Invitation sent to ' + email);
+    closeModal();
+    await loadAllData();
+    renderUsers();
+  } catch (e) {
+    if (errEl) errEl.textContent = 'Network error: ' + (e.message || e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Invite'; }
+  }
+}
+window.submitInvite = submitInvite;
+
+/* =========================================================================
    MODAL HELPERS
    ========================================================================= */
 function showModal({ title, body, footer, size }) {
@@ -4154,6 +4560,8 @@ function render() {
     else if (tab === 'milestones')    renderMilestones();
     else if (tab === 'docs')       renderDocs();
     else if (tab === 'access')     renderAccess();
+    else if (tab === 'users')      renderUsers();
+    else if (tab === 'profile')    renderProfile();
   } catch (e) {
     console.error('Render error on tab "' + tab + '":', e);
     errorBanner('Render error: ' + (e.message || e));
@@ -4167,8 +4575,8 @@ window.render = render;
 function showLogin() {
   const overlay = document.getElementById('loginOverlay');
   if (overlay) overlay.style.display = 'flex';
-  const input = document.getElementById('loginInput');
-  if (input) { input.value = ''; setTimeout(() => input.focus(), 50); }
+  const email = document.getElementById('nativeEmail');
+  if (email) { setTimeout(() => email.focus(), 50); }
 }
 
 function hideLogin() {
@@ -4191,6 +4599,51 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
   } else {
     if (errEl) errEl.textContent = 'Invalid access code';
     if (input) { input.value = ''; input.focus(); }
+  }
+});
+
+// Phase B: native email/password sign-in.
+document.getElementById('nativeLoginForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const emailEl = document.getElementById('nativeEmail');
+  const pwEl    = document.getElementById('nativePassword');
+  const errEl   = document.getElementById('nativeLoginError');
+  const btn     = e.currentTarget.querySelector('button[type="submit"]');
+  if (errEl) errEl.textContent = '';
+  const email = (emailEl?.value || '').trim().toLowerCase();
+  const pw    = pwEl?.value || '';
+  if (!email || !pw) { if (errEl) errEl.textContent = 'Enter email and password'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+  const res = await handleNativeLogin(email, pw);
+  if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
+  if (res.ok) {
+    hideLogin();
+    document.body.classList.remove('app-booting');
+    await loadAllData();
+    render();
+  } else {
+    if (errEl) errEl.textContent = res.error || 'Sign-in failed';
+    if (pwEl) { pwEl.value = ''; pwEl.focus(); }
+  }
+});
+
+// Toggle between native email/password and legacy access-code login.
+document.getElementById('toggleLoginMode')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const nativeF = document.getElementById('nativeLoginForm');
+  const codeF   = document.getElementById('loginForm');
+  const link    = document.getElementById('toggleLoginMode');
+  const showingCode = codeF.style.display !== 'none';
+  if (showingCode) {
+    codeF.style.display = 'none';
+    nativeF.style.display = '';
+    link.textContent = 'Use access code instead';
+    document.getElementById('nativeEmail')?.focus();
+  } else {
+    nativeF.style.display = 'none';
+    codeF.style.display = '';
+    link.textContent = 'Use email & password instead';
+    document.getElementById('loginInput')?.focus();
   }
 });
 
@@ -4224,8 +4677,8 @@ async function init() {
   document.body.classList.remove('app-booting');
   await loadAllData();
 
-  // For contractor, pin the active project
-  if (isContractor() && AUTH.projectId) {
+  // For contractor or scoped member, pin the active project
+  if ((isContractor() || isMember()) && AUTH.projectId) {
     STATE.activeProjectId = AUTH.projectId;
   }
 
