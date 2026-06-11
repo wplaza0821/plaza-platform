@@ -61,8 +61,21 @@
     font-size: 14px;
     line-height: 1.6;
   }
-  .app { min-height: 100vh; display: flex; flex-direction: column; }
+  /* Fieldwire-style shell: top bar spans full width, vertical nav rail on the
+     left, content to the right. Implemented as a grid so the existing
+     header/nav/main siblings map straight to grid areas (no DOM change). */
+  .app {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 232px 1fr;
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas:
+      "topbar topbar"
+      "sidebar main"
+      "sidebar footer";
+  }
   .topbar {
+    grid-area: topbar;
     background: #FFFFFF; color: var(--black);
     padding: 18px 26px; display: flex; align-items: center; justify-content: space-between;
     gap: 16px; position: sticky; top: 0; z-index: 50;
@@ -146,27 +159,38 @@
     background-repeat: no-repeat; background-position: right 10px center;
     max-width: 280px; text-overflow: ellipsis;
   }
+  /* Left vertical navigation rail (Fieldwire-style). */
   .tabs {
-    background: #fff; border-bottom: 1px solid var(--gray-200);
-    display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch;
-    padding: 0 12px; position: sticky; top: 62px; z-index: 40; scrollbar-width: none;
+    grid-area: sidebar;
+    background: #fff; border-right: 1px solid var(--gray-200);
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 12px 10px; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    position: sticky; top: 62px; align-self: start;
+    height: calc(100vh - 62px); scrollbar-width: thin;
   }
-  .tabs::-webkit-scrollbar { display: none; }
+  .tabs::-webkit-scrollbar { width: 6px; }
+  .tabs::-webkit-scrollbar-thumb { background: var(--gray-200); border-radius: 3px; }
   .tab {
-    flex: 0 0 auto; padding: 13px 16px; border: none; background: transparent;
+    flex: 0 0 auto; width: 100%; padding: 10px 12px; border: none; background: transparent;
     color: var(--gray-500); font-family: inherit; font-size: 13px; font-weight: 500;
-    cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
-    display: flex; align-items: center; gap: 8px; transition: color 0.15s, border-color 0.15s;
+    cursor: pointer; border-left: 3px solid transparent; border-radius: 4px;
+    text-align: left; white-space: nowrap;
+    display: flex; align-items: center; gap: 10px; transition: color 0.15s, background 0.15s, border-color 0.15s;
   }
-  .tab:hover { color: var(--black); }
-  .tab.active { color: var(--black); border-bottom-color: var(--black); font-weight: 600; }
+  .tab > span:first-child { width: 18px; text-align: center; flex: 0 0 auto; }
+  .tab:hover { color: var(--black); background: var(--gray-100); }
+  .tab.active {
+    color: var(--black); background: var(--gray-100);
+    border-left-color: var(--black); font-weight: 600; border-radius: 0 4px 4px 0;
+  }
   .tab .count {
+    margin-left: auto;
     background: var(--gray-100); color: var(--gray-500);
     font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
     min-width: 18px; text-align: center;
   }
   .tab.active .count { background: var(--black); color: #fff; }
-  main { flex: 1; padding: 22px; max-width: 1400px; width: 100%; margin: 0 auto; }
+  main { grid-area: main; flex: 1; padding: 22px 26px; width: 100%; min-width: 0; }
   .page-header {
     display: flex; justify-content: space-between; align-items: flex-end;
     gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
@@ -474,6 +498,16 @@
   }
 
   @media (max-width: 768px) {
+    /* Collapse the rail back to a horizontal scroll strip on phones. */
+    .app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr auto; grid-template-areas: "topbar" "sidebar" "main" "footer"; }
+    .tabs {
+      flex-direction: row; gap: 2px; height: auto; overflow-x: auto; overflow-y: hidden;
+      border-right: none; border-bottom: 1px solid var(--gray-200);
+      position: sticky; top: 62px; padding: 6px 10px;
+    }
+    .tab { width: auto; flex: 0 0 auto; border-left: none; border-bottom: 3px solid transparent; border-radius: 4px 4px 0 0; padding: 12px 12px; font-size: 12px; }
+    .tab.active { border-left-color: transparent; border-bottom-color: var(--black); border-radius: 4px 4px 0 0; }
+    .tab .count { margin-left: 6px; }
     main { padding: 14px; }
     .topbar { padding: 12px 14px; flex-wrap: wrap; }
     .brand-logo { width: 90px; }
@@ -482,7 +516,6 @@
     .project-select { max-width: 160px; font-size: 11px; }
     .role-pill { font-size: 9px; padding: 5px 9px; letter-spacing: 1px; }
     .btn-logout { padding: 5px 9px; font-size: 10px; }
-    .tab { padding: 12px 12px; font-size: 12px; }
     .page-title { font-size: 19px; }
     .project-grid { grid-template-columns: 1fr; }
     .form-row.two-col, .form-row.three-col { grid-template-columns: 1fr; }
@@ -546,7 +579,8 @@
   .login-footer { margin-top: 40px; font-size: 10px; color: var(--gray-400); letter-spacing: 1.5px; text-transform: uppercase; }
 
   .app-footer {
-    padding: 30px 22px 36px; text-align: center;
+    grid-area: footer;
+    padding: 30px 26px 36px; text-align: center;
     font-size: 11px; color: var(--gray-400); letter-spacing: 1px;
     border-top: 1px solid var(--gray-200); margin-top: 40px;
   }
