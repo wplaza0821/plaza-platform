@@ -247,6 +247,14 @@
   .badge-purple { background: var(--purple-bg); color: var(--purple); }
   .badge-gray { background: var(--gray-100); color: var(--gray-500); }
   .badge-dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  /* Phase 4: inspection checklist + rollup badges */
+  table.checklist { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+  table.checklist td, table.checklist th { border:1px solid var(--border,#ddd); padding:4px 6px; text-align:left; }
+  table.checklist th { background:var(--gray-100); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  table.checklist label { display:inline-flex; align-items:center; gap:3px; margin-right:6px; font-size:12px; }
+  .project-rollup { margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .badge-overdue { background:#c0392b; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px; }
+  .badge-crit { background:#922; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px; }
 
   .table-wrap {
     overflow-x: auto; -webkit-overflow-scrolling: touch;
@@ -1719,9 +1727,12 @@ async function loadAllData() {
   // Phase B: profiles. RLS returns own row to anyone; owner/staff get the full
   // list (for the invite admin + assignee pickers). Table may not exist yet.
   const prfP  = sb.from('profiles').select('*').order('created_at', { ascending: false });
+  // Phase 4: dashboard rollup RPC + inspection templates (may not exist yet -> soft).
+  const dashP = sb.rpc('plz_dashboard');
+  const tplP  = sb.from('inspection_templates').select('*').eq('active', true).order('standard');
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms, prf] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP, prfP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms, prf, dash, tpl] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP, prfP, dashP, tplP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1760,6 +1771,9 @@ async function loadAllData() {
   DATA.milestones    = ms.data || [];
   softErr(prf, 'Loading profiles');
   DATA.profiles      = prf.data || [];
+  // Phase 4 caches (silent if not yet deployed)
+  DATA.dashboard     = (dash && !dash.error && dash.data) ? dash.data : [];
+  DATA.templates     = (tpl  && !tpl.error  && tpl.data)  ? tpl.data  : [];
 
   // Phase B Layer 3: load in-app notifications for native users (RLS-scoped).
   // Cheap, isolated select; failures are swallowed inside loadNotifications.
@@ -1915,8 +1929,18 @@ function renderProjects() {
   }
   grid.innerHTML = list.map(p => {
     const isActive = p.id === STATE.activeProjectId;
-    const rfiCount = DATA.rfis.filter(r => r.project_id === p.id && r.status === 'open').length;
-    const subCount = DATA.submittals.filter(s => s.project_id === p.id && s.status === 'pending').length;
+    // Phase 4: prefer authoritative rollup from plz_dashboard(); fall back to local counts.
+    const d = (DATA.dashboard || []).find(x => x.project_id === p.id) || null;
+    const rfiCount = d ? (d.open_rfis || 0) : DATA.rfis.filter(r => r.project_id === p.id && r.status === 'open').length;
+    const subCount = d ? (d.pending_submittals || 0) : DATA.submittals.filter(s => s.project_id === p.id && s.status === 'pending').length;
+    const openItems = d ? ((d.open_rfis||0) + (d.pending_submittals||0) + (d.open_deficiencies||0)) : (rfiCount + subCount);
+    const overdue = d ? (d.overdue_rfis || 0) : 0;
+    const crit    = d ? (d.critical_defs || 0) : 0;
+    const reportsMtd = d ? (d.reports_this_month || 0) : 0;
+    const rollupBadges = d ? `<div class="project-rollup">` +
+        (overdue > 0 ? `<span class="badge-overdue">Overdue ${overdue}</span> ` : '') +
+        (crit > 0 ? `<span class="badge-crit">Critical ${crit}</span> ` : '') +
+        `<span class="text-sm text-muted">Reports MTD ${reportsMtd}</span></div>` : '';
     const pct = projectProgress(p);
     return `
       <div class="project-card ${isActive ? 'active' : ''}" onclick="selectProject('${p.id}')">
@@ -1942,9 +1966,10 @@ function renderProjects() {
           </div>
           <div>
             <div class="stat-label">Open Items</div>
-            <div class="stat-value">${rfiCount + subCount}</div>
+            <div class="stat-value">${openItems}</div>
           </div>
         </div>
+        ${rollupBadges}
         <div class="row-actions perm-edit-projects" style="position:absolute; top:10px; right:10px;">
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openProjectModal('${p.id}')">✏️</button>
         </div>
@@ -3243,11 +3268,14 @@ async function saveRfi(id) {
     answered_at: document.getElementById('rf-answerdate').value || null,
   };
   if (!data.subject) { toast('Subject required'); return; }
-  let res;
+  let res, newId = id;
   if (id) {
+    const prev = DATA.rfis.find(r => r.id === id) || {};
     res = await sb.from('rfis').update(data).eq('id', id);
+    if (!res.error && prev.to_party !== data.to_party) notifyRoute('rfis', id, 'ball_in_court_change');
   } else {
-    res = await sb.from('rfis').insert(data);
+    res = await sb.from('rfis').insert(data).select('id').single();
+    if (!res.error && res.data) { newId = res.data.id; notifyRoute('rfis', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save RFI'); return; }
   await loadAllData();
@@ -3388,13 +3416,16 @@ async function saveSubmittal(id) {
     notes: document.getElementById('sb-notes').value.trim() || null,
   };
   if (!data.description) { toast('Description required'); return; }
-  let res;
+  let res, newId = id;
   if (id) {
     if (data.status === undefined) delete data.status;
+    const prev = DATA.submittals.find(s => s.id === id) || {};
     res = await sb.from('submittals').update(data).eq('id', id);
+    if (!res.error && prev.ball_in_court !== data.ball_in_court) notifyRoute('submittals', id, 'ball_in_court_change');
   } else {
     if (data.status === undefined) data.status = 'pending';
-    res = await sb.from('submittals').insert(data);
+    res = await sb.from('submittals').insert(data).select('id').single();
+    if (!res.error && res.data) { newId = res.data.id; notifyRoute('submittals', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save submittal'); return; }
   await loadAllData();
@@ -4320,6 +4351,10 @@ window.copyAccessLink = copyAccessLink;
 const ROLE_LABELS = { owner: 'Owner', staff: 'Staff', member: 'Member', contractor: 'Contractor' };
 const INVITE_FN_URL = SUPABASE_URL + '/functions/v1/invite-user';
 const NOTIFY_FN_URL = SUPABASE_URL + '/functions/v1/notify-task';
+// Phase 4 edge functions
+const ROUTE_FN_URL    = SUPABASE_URL + '/functions/v1/notify-route';
+const FINALIZE_FN_URL = SUPABASE_URL + '/functions/v1/finalize-report';
+const QB_FN_URL       = SUPABASE_URL + '/functions/v1/qb-billing';
 
 function myProfile() {
   if (!isNative() || !AUTH?.userId) return null;
@@ -5439,6 +5474,21 @@ function notifyTaskAssigned(taskId) {
   }
 }
 
+// Phase 4: generic fire-and-forget routing notification (in-app + SMS). Never blocks UI.
+// Reused by RFIs / submittals / deficiencies.
+function notifyRoute(refTable, refId, event) {
+  try {
+    if (!_sbJwt || !refId) return;
+    fetch(ROUTE_FN_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'apikey': SUPABASE_KEY,
+                 'Authorization': 'Bearer ' + _sbJwt },
+      body: JSON.stringify({ ref_table: refTable, ref_id: refId, event: event || 'created' }),
+    }).catch(e => console.warn('notify-route failed (non-blocking):', e));
+  } catch (e) { console.warn('notify-route dispatch error:', e); }
+}
+window.notifyRoute = notifyRoute;
+
 // Mark complete. owner/staff anytime; member/contractor via their advance scope
 // (RLS enforces own/created for members). Surfaces denials gracefully.
 async function markTaskComplete(id) {
@@ -5912,13 +5962,23 @@ function openFieldReportModal(id) {
         <div><label class="form-label">Compliance</label><select id="fr-compl">${complOpts}</select></div>
         <div><label class="form-label">Status</label><select id="fr-status">${statusOpts}</select></div>
       </div>
+
+      <div class="sov-section-title" style="margin:14px 0 8px;">9. Inspection Checklist</div>
+      <div class="form-row">
+        <label class="form-label">Inspection Template</label>
+        <select id="fr-template" onchange="renderFrChecklist()">
+          <option value="">— none (free text) —</option>
+        </select>
+      </div>
+      <div id="fr-checklist"></div>
     `,
     footer: editing
       ? `<button class="btn btn-danger" onclick="deleteFieldReport('${editing.id}')">Delete</button>
          <div style="flex:1"></div>
          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
          <button class="btn btn-secondary" onclick="printFieldReport('${editing.id}')">🖨 Print/PDF</button>
-         <button class="btn btn-primary" onclick="saveFieldReport('${editing.id}')">Save</button>`
+         ${isOwner() ? `<button class="btn btn-secondary" onclick="finalizeReport('${editing.id}')" ${editing.finalized?'disabled':''}>${editing.finalized ? '🔒 Sealed' : '✅ Finalize & Seal'}</button>` : ''}
+         <button class="btn btn-primary" onclick="saveFieldReport('${editing.id}')" ${editing.finalized?'disabled':''}>Save</button>`
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
          <button class="btn btn-primary" onclick="saveFieldReport()">Create</button>`
   });
@@ -5930,8 +5990,53 @@ function openFieldReportModal(id) {
       numEl.value = nextFieldReportNumber(STATE.activeProjectId, t);
     }
   };
+
+  // Phase 4: populate inspection-template picker + restore any saved checklist.
+  fillFrTemplateOptions(editing?.template_id || '');
+  renderFrChecklist(Array.isArray(editing?.checklist) ? editing.checklist : []);
 }
 window.openFieldReportModal = openFieldReportModal;
+
+// ── Phase 4: inspection-checklist helpers ───────────────────────────────────
+function fillFrTemplateOptions(selectedId) {
+  const sel = document.getElementById('fr-template'); if (!sel) return;
+  sel.innerHTML = '<option value="">— none (free text) —</option>' +
+    (DATA.templates||[]).map(t =>
+      `<option value="${t.id}" ${t.id===selectedId?'selected':''}>${escapeHtml(t.standard||'')} — ${escapeHtml(t.name)}</option>`).join('');
+}
+function renderFrChecklist(existing) {
+  const wrap = document.getElementById('fr-checklist'); if (!wrap) return;
+  const tid = document.getElementById('fr-template').value;
+  const tpl = (DATA.templates||[]).find(t => t.id === tid);
+  if (!tpl) { wrap.innerHTML = ''; return; }
+  const filled = existing || [];
+  const items = Array.isArray(tpl.schema) ? tpl.schema : (tpl.schema?.items || []);
+  wrap.innerHTML = '<table class="checklist"><tr><th>Item</th><th>Code</th><th>Result</th><th>Note</th></tr>' +
+    items.map((it,i) => {
+      const cur = filled.find(f => f.key === it.key) || {};
+      const opts = it.type === 'numeric'
+        ? `<input type="number" step="any" data-k="${it.key}" class="cl-val" value="${cur.value??''}">`
+        : it.type === 'text'
+        ? `<input type="text" data-k="${it.key}" class="cl-val" value="${escapeHtml(cur.value??'')}">`
+        : ['pass','fail','na'].map(o =>
+            `<label><input type="radio" name="cl_${i}" data-k="${it.key}" class="cl-res" value="${o}" ${cur.result===o?'checked':''}>${o.toUpperCase()}</label>`).join(' ');
+      return `<tr><td>${escapeHtml(it.label)}${it.required?' *':''}</td><td>${escapeHtml(it.code_ref||'')}</td><td>${opts}</td>`+
+             `<td><input type="text" data-k="${it.key}" class="cl-note" value="${escapeHtml(cur.note||'')}"></td></tr>`;
+    }).join('') + '</table>';
+}
+function collectFrChecklist() {
+  const rows = {};
+  document.querySelectorAll('#fr-checklist .cl-res:checked, #fr-checklist .cl-val').forEach(el => {
+    const k = el.dataset.k; rows[k] = rows[k]||{key:k};
+    if (el.classList.contains('cl-res')) rows[k].result = el.value; else rows[k].value = el.value;
+  });
+  document.querySelectorAll('#fr-checklist .cl-note').forEach(el => {
+    const k = el.dataset.k; if (el.value) { rows[k]=rows[k]||{key:k}; rows[k].note = el.value; }
+  });
+  return Object.values(rows);
+}
+window.renderFrChecklist = renderFrChecklist;
+window.fillFrTemplateOptions = fillFrTemplateOptions;
 
 async function saveFieldReport(id) {
   const type = document.getElementById('fr-type').value;
@@ -5950,9 +6055,16 @@ async function saveFieldReport(id) {
     recommendations: document.getElementById('fr-rec').value.trim() || null,
     compliance: document.getElementById('fr-compl').value,
     status: document.getElementById('fr-status').value,
+    template_id: document.getElementById('fr-template')?.value || null,
+    checklist: collectFrChecklist(),
     updated_at: new Date().toISOString(),
   };
   if (!data.visit_date) { toast('Visit date required'); return; }
+  // Sealed reports are immutable — block edit attempts client-side (DB trigger also enforces).
+  if (id) {
+    const existingFr = DATA.field_reports.find(r => r.id === id);
+    if (existingFr && existingFr.finalized) { toast('Report is sealed — cannot edit'); return; }
+  }
 
   let res, newId = id;
   if (id) {
@@ -5987,6 +6099,36 @@ async function saveFieldReport(id) {
   render();
 }
 window.saveFieldReport = saveFieldReport;
+
+// Phase 4: owner-only finalize/seal. Locks content after sealing (DB trigger enforces).
+async function finalizeReport(id) {
+  if (!isOwner()) { toast('Owner only'); return; }
+  if (!confirm('Finalize & seal this report? Content locks after sealing.')) return;
+  let out = {};
+  try {
+    const res = await fetch(FINALIZE_FN_URL, {
+      method: 'POST',
+      headers: { 'content-type':'application/json', 'apikey': SUPABASE_KEY, 'Authorization':'Bearer '+_sbJwt },
+      body: JSON.stringify({ field_report_id: id }),
+    });
+    out = await res.json().catch(()=>({}));
+    if (!res.ok || !out.ok) { toast('Finalize failed: ' + (out.error||res.status)); return; }
+  } catch (e) { toast('Finalize failed: ' + e.message); return; }
+  toast('Report sealed ✓  hash ' + (out.sha256||'').slice(0,10));
+  await loadAllData(); render();
+}
+window.finalizeReport = finalizeReport;
+
+// Phase 4 (P1): QuickBooks billing bridge helper. Owner-only enforced server-side.
+// Usage: qbAction({action:'queue', project_id, period:'2026-06', amount:3000, description:'...'})
+//        qbAction({action:'mark_sent', id, qb_invoice_id})  |  qbAction({action:'mark_paid', id, ar_balance:0})
+async function qbAction(body) {
+  const res = await fetch(QB_FN_URL, { method:'POST',
+    headers:{'content-type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+_sbJwt},
+    body: JSON.stringify(body) });
+  return res.json().catch(()=>({ ok:false, error:'bad response' }));
+}
+window.qbAction = qbAction;
 
 async function deleteFieldReport(id) {
   if (!confirm('Delete this field report?')) return;
@@ -6250,9 +6392,12 @@ async function saveDeficiency(id) {
     notes: document.getElementById('d-notes').value.trim() || null,
     updated_at: new Date().toISOString(),
   };
-  let res;
+  let res, newId = id;
   if (id) res = await sb.from('deficiencies').update(data).eq('id', id);
-  else    res = await sb.from('deficiencies').insert(data);
+  else {
+    res = await sb.from('deficiencies').insert(data).select('id').single();
+    if (!res.error && res.data) { newId = res.data.id; notifyRoute('deficiencies', newId, 'created'); }
+  }
   if (res.error) { handleSbError(res.error, 'Save deficiency'); return; }
   await loadAllData();
   toast(id ? 'Deficiency updated' : 'Deficiency logged');
