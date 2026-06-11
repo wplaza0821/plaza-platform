@@ -5368,6 +5368,30 @@ async function outboxDel(localId) {
 }
 async function outboxCount() { try { return (await outboxAll()).length; } catch { return 0; } }
 
+// Queue a binary upload (photo / file). Stores the actual File/Blob in
+// IndexedDB so it survives reload, then on reconnect uploads to storage AND
+// inserts the DB row. row.file_path must already equal `path`.
+async function queueableUpload(bucket, path, file, table, row) {
+  const online = navigator.onLine;
+  if (online) {
+    try {
+      const up = await sb.storage.from(bucket).upload(path, file);
+      if (!up.error) {
+        const ins = await sb.from(table).insert(row);
+        if (!ins.error) return { error: null, queued: false };
+        return { error: ins.error, queued: false };
+      }
+      return { error: up.error, queued: false };
+    } catch (e) { /* fall through to queue */ }
+  }
+  const localId = 'localup_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  await outboxAdd({ localId, type: 'upload', bucket, path, blob: file, table, row, queuedAt: new Date().toISOString() });
+  updateConnBanner();
+  toast('📴 Photo saved offline — will upload when back online', 'warn');
+  return { error: null, queued: true };
+}
+window.queueableUpload = queueableUpload;
+
 // Insert that survives offline: tries the network first; if offline (or the
 // request throws), the row is queued and replayed later. Returns
 // { data, error, queued }. Use for create operations on OFFLINE_TABLES.
@@ -5407,6 +5431,14 @@ async function flushOutbox() {
   let ok = 0, fail = 0;
   for (const it of items) {
     try {
+      if (it.type === 'upload') {
+        const up = await sb.storage.from(it.bucket).upload(it.path, it.blob, { upsert: true });
+        if (up.error) { console.warn('outbox upload drop:', it.path, up.error.message); await outboxDel(it.localId); fail++; continue; }
+        const ins = await sb.from(it.table).insert(it.row);
+        if (ins.error) { console.warn('outbox upload-insert drop:', it.table, ins.error.message); await outboxDel(it.localId); fail++; continue; }
+        await outboxDel(it.localId); ok++;
+        continue;
+      }
       const res = await sb.from(it.table).insert(it.row).select('id').single();
       if (res.error) {
         // Permanent error (RLS/validation) -> drop it so it can't wedge the queue; log.
@@ -6237,14 +6269,12 @@ async function uploadPhotos() {
   const linkedIdRaw  = document.getElementById('pu-linkid').value.trim();
   const linkedId = /^[0-9a-f-]{36}$/i.test(linkedIdRaw) ? linkedIdRaw : null;
 
-  let okCount = 0;
+  let okCount = 0, queuedCount = 0;
   for (const file of files) {
     if (file.size > 25 * 1024 * 1024) { toast(`${file.name} > 25MB, skipped`, 'error'); continue; }
     const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const path = `${STATE.activeProjectId}/${crypto.randomUUID()}-${safe}`;
-    const { error: upErr } = await sb.storage.from('project-photos').upload(path, file);
-    if (upErr) { handleSbError(upErr, 'Upload ' + file.name); continue; }
-    const { error: insErr } = await sb.from('photos').insert({
+    const row = {
       project_id: STATE.activeProjectId,
       file_path: path,
       file_name: file.name,
@@ -6254,13 +6284,16 @@ async function uploadPhotos() {
       linked_module: linkedModule,
       linked_id: linkedId,
       uploaded_by: (AUTH && AUTH.name) || 'owner',
-    });
-    if (insErr) { handleSbError(insErr, 'Save photo record'); continue; }
-    okCount++;
+    };
+    const res = await queueableUpload('project-photos', path, file, 'photos', row);
+    if (res.error) { handleSbError(res.error, 'Upload ' + file.name); continue; }
+    if (res.queued) queuedCount++; else okCount++;
   }
 
-  await loadAllData();
-  toast(`Uploaded ${okCount} photo${okCount === 1 ? '' : 's'}`);
+  if (okCount) await loadAllData();
+  if (okCount && queuedCount) toast(`Uploaded ${okCount}, ${queuedCount} queued offline`);
+  else if (queuedCount) toast(`${queuedCount} photo${queuedCount===1?'':'s'} queued — will upload when online`, 'warn');
+  else toast(`Uploaded ${okCount} photo${okCount === 1 ? '' : 's'}`);
   closeModal();
   render();
 }
