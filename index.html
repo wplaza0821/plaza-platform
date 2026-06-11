@@ -189,6 +189,8 @@
   .btn-danger { background: #fff; color: var(--red); border-color: var(--gray-200); }
   .btn-danger:hover { background: var(--red-bg); border-color: var(--red); }
   .btn-sm { padding: 6px 11px; font-size: 12px; }
+  .btn-xs { padding: 3px 8px; font-size: 11px; line-height: 1.4; }
+  table.data .row-actions { flex-wrap: wrap; }
 
   .card { background: #fff; border-radius: var(--radius); border: 1px solid var(--gray-200); box-shadow: var(--shadow-sm); overflow: hidden; }
   .card-head { padding: 14px 18px; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fff; }
@@ -1278,8 +1280,9 @@
               <th>Email</th>
               <th>Role</th>
               <th>Project</th>
-              <th>Phone</th>
+              <th>Last Login</th>
               <th>Status</th>
+              <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
           <tbody id="usersBody"></tbody>
@@ -1704,6 +1707,7 @@ const DATA = {
   daily_reports: [],
   milestones: [],
   profiles: [],         // Phase B: native auth user profiles (RLS-scoped)
+  users: [],            // Phase 4-07: owner-only directory (plz_users) w/ last_sign_in_at
   notifications: [],    // Phase B Layer 3: in-app notifications (RLS-scoped to user)
 };
 
@@ -1730,9 +1734,12 @@ async function loadAllData() {
   // Phase 4: dashboard rollup RPC + inspection templates (may not exist yet -> soft).
   const dashP = sb.rpc('plz_dashboard');
   const tplP  = sb.from('inspection_templates').select('*').eq('active', true).order('standard');
+  // Phase 4-07: owner-only user directory w/ last_sign_in_at + activity counts.
+  // RPC raises 'forbidden' for non-owners -> soft-handled (DATA.users stays []).
+  const usersP = sb.rpc('plz_users');
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms, prf, dash, tpl] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP, prfP, dashP, tplP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms, prf, dash, tpl, usr] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP, prfP, dashP, tplP, usersP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1774,6 +1781,9 @@ async function loadAllData() {
   // Phase 4 caches (silent if not yet deployed)
   DATA.dashboard     = (dash && !dash.error && dash.data) ? dash.data : [];
   DATA.templates     = (tpl  && !tpl.error  && tpl.data)  ? tpl.data  : [];
+  // Owner user directory (plz_users). Non-owners get an error -> empty; fall
+  // back to profiles so assignee pickers still work.
+  DATA.users         = (usr && !usr.error && Array.isArray(usr.data)) ? usr.data : [];
 
   // Phase B Layer 3: load in-app notifications for native users (RLS-scoped).
   // Cheap, isolated select; failures are swallowed inside loadNotifications.
@@ -4350,6 +4360,7 @@ window.copyAccessLink = copyAccessLink;
    ========================================================================= */
 const ROLE_LABELS = { owner: 'Owner', staff: 'Staff', member: 'Member', contractor: 'Contractor' };
 const INVITE_FN_URL = SUPABASE_URL + '/functions/v1/invite-user';
+const MANAGE_USER_FN_URL = SUPABASE_URL + '/functions/v1/manage-user';
 const NOTIFY_FN_URL = SUPABASE_URL + '/functions/v1/notify-task';
 // Phase 4 edge functions
 const ROUTE_FN_URL    = SUPABASE_URL + '/functions/v1/notify-route';
@@ -4432,29 +4443,149 @@ function renderUsers() {
     body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-title">Owner only</div></div></td></tr>`;
     return;
   }
-  const list = DATA.profiles || [];
+  // Prefer the owner directory (plz_users: has last_sign_in_at + activity);
+  // fall back to plain profiles if the RPC isn't deployed yet.
+  const list = (DATA.users && DATA.users.length) ? DATA.users : (DATA.profiles || []);
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">👥</div><div class="empty-title">No users yet</div><div class="empty-sub">Click "Invite User" to send the first invitation.</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">👥</div><div class="empty-title">No users yet</div><div class="empty-sub">Click "Invite User" to send the first invitation.</div></div></td></tr>`;
     return;
   }
   body.innerHTML = list.map(u => {
     const proj = u.project_id ? getProject(u.project_id) : null;
     const projLabel = proj ? (escapeHtml(proj.code) + ' — ' + escapeHtml(proj.name))
                            : '<span class="text-muted">All projects</span>';
-    const status = u.active === false ? '<span class="role-pill contractor">Inactive</span>'
-                 : (u.accepted_at ? '<span class="role-pill" style="background:var(--green-bg,#e6f4ea);color:var(--green,#137333);">Active</span>'
-                                  : '<span class="role-pill contractor">Pending</span>');
+    // last_sign_in_at comes from plz_users(); invite_pending = never signed in.
+    const neverSignedIn = ('last_sign_in_at' in u) ? !u.last_sign_in_at : !u.accepted_at;
+    const lastLogin = u.last_sign_in_at
+      ? `<span title="${escapeHtml(new Date(u.last_sign_in_at).toLocaleString())}">${escapeHtml(relTime(u.last_sign_in_at))}</span>`
+      : '<span class="text-muted">Never</span>';
+    let status;
+    if (u.active === false)       status = '<span class="role-pill contractor">Inactive</span>';
+    else if (neverSignedIn)        status = '<span class="role-pill contractor">Pending invite</span>';
+    else                           status = '<span class="role-pill" style="background:var(--green-bg,#e6f4ea);color:var(--green,#137333);">Active</span>';
+    const actCount = (u.activity_count != null) ? Number(u.activity_count) : null;
+    // Build the per-row action menu.
+    const isSelf = AUTH && u.id === AUTH.userId;
+    const acts = [];
+    acts.push(`<button class="btn btn-xs btn-secondary" onclick="viewUserActivity('${u.id}')">📋 Activity${actCount!=null?` (${actCount})`:''}</button>`);
+    if (neverSignedIn && u.active !== false) {
+      acts.push(`<button class="btn btn-xs btn-secondary" onclick="manageUser('resend_invite','${u.id}')">✉️ Resend</button>`);
+      acts.push(`<button class="btn btn-xs btn-danger" onclick="manageUser('cancel_invite','${u.id}')">✖ Cancel</button>`);
+    }
+    if (!neverSignedIn && u.active !== false && !isSelf) {
+      acts.push(`<button class="btn btn-xs btn-danger" onclick="manageUser('deactivate','${u.id}')">🚫 Deactivate</button>`);
+    }
+    if (u.active === false) {
+      acts.push(`<button class="btn btn-xs btn-secondary" onclick="manageUser('reactivate','${u.id}')">↩ Reactivate</button>`);
+    }
+    if (!isSelf) {
+      acts.push(`<button class="btn btn-xs btn-secondary" onclick="openRoleModal('${u.id}')">🔧 Role</button>`);
+    }
     return `
       <tr>
         <td><strong>${escapeHtml(u.full_name || '—')}</strong></td>
         <td class="text-sm">${escapeHtml(u.email || '')}</td>
         <td class="text-sm">${escapeHtml(ROLE_LABELS[u.app_role] || u.app_role || '')}</td>
         <td class="text-sm">${projLabel}</td>
-        <td class="text-sm">${escapeHtml(u.phone || '—')}</td>
+        <td class="text-sm">${lastLogin}</td>
         <td class="text-sm">${status}</td>
+        <td class="text-sm" style="text-align:right;"><div class="row-actions">${acts.join(' ')}</div></td>
       </tr>`;
   }).join('');
 }
+
+// ── Phase 4-07: user status management via manage-user edge fn ───────────────
+const MANAGE_ACTION_META = {
+  resend_invite: { confirm: null, busy: 'Resending…', done: 'Invitation resent' },
+  cancel_invite: { confirm: 'Cancel this invitation? The pending account will be removed.', busy: 'Cancelling…', done: 'Invitation cancelled' },
+  deactivate:    { confirm: 'Deactivate this user? They will be signed out and blocked from logging in.', busy: 'Deactivating…', done: 'User deactivated' },
+  reactivate:    { confirm: 'Reactivate this user and allow login again?', busy: 'Reactivating…', done: 'User reactivated' },
+};
+async function manageUser(action, userId, extra) {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const meta = MANAGE_ACTION_META[action] || { confirm: null, busy: 'Working…', done: 'Done' };
+  if (meta.confirm && !confirm(meta.confirm)) return;
+  toast(meta.busy);
+  let out = {};
+  try {
+    const res = await fetch(MANAGE_USER_FN_URL, {
+      method: 'POST',
+      headers: { 'content-type':'application/json', 'apikey': SUPABASE_KEY, 'authorization':'Bearer ' + (AUTH?.jwt || '') },
+      body: JSON.stringify({ action, user_id: userId, ...(extra||{}) }),
+    });
+    out = await res.json().catch(()=>({}));
+    if (!res.ok || out.error) { toast('Failed: ' + (out.error || res.status), 'error'); return; }
+  } catch (e) { toast('Network error: ' + (e.message||e), 'error'); return; }
+  toast(meta.done);
+  await loadAllData();
+  renderUsers();
+  return out;
+}
+window.manageUser = manageUser;
+
+function openRoleModal(userId) {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const u = (DATA.users||[]).find(x => x.id === userId) || (DATA.profiles||[]).find(x => x.id === userId);
+  if (!u) { toast('User not found', 'error'); return; }
+  const roleOpts = ['owner','staff','member','contractor'].map(r =>
+    `<option value="${r}" ${u.app_role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join('');
+  const projOpts = '<option value="">All projects (owner/staff)</option>' +
+    (DATA.projects||[]).map(p => `<option value="${p.id}" ${u.project_id===p.id?'selected':''}>${escapeHtml(p.code)} — ${escapeHtml(p.name)}</option>`).join('');
+  showModal({
+    title: `Change Role — ${escapeHtml(u.full_name || u.email)}`,
+    body: `
+      <div class="form-row two-col">
+        <div><label class="form-label">Role</label><select id="ru-role">${roleOpts}</select></div>
+        <div><label class="form-label">Project</label><select id="ru-project">${projOpts}</select></div>
+      </div>
+      <div class="login-error" id="ru-error"></div>`,
+    footer: `<div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRoleChange('${userId}')">Save</button>`,
+  });
+}
+window.openRoleModal = openRoleModal;
+
+async function submitRoleChange(userId) {
+  const app_role = document.getElementById('ru-role')?.value;
+  const project_id = document.getElementById('ru-project')?.value || null;
+  const out = await manageUser('set_role', userId, { app_role, project_id });
+  if (out && out.ok) closeModal();
+}
+window.submitRoleChange = submitRoleChange;
+
+// Per-user activity feed drawer (owner-only RPC plz_user_activity).
+const ACTIVITY_LABELS = {
+  login:'Signed in', invite_sent:'Invite sent', invite_resent:'Invite resent',
+  invite_cancelled:'Invite cancelled', deactivated:'Deactivated', reactivated:'Reactivated',
+  role_changed:'Role changed', phone_changed:'Phone updated',
+  rfi_created:'Created RFI', submittal_created:'Created submittal', deficiency_created:'Logged deficiency',
+  report_finalized:'Sealed report', field_report_created:'Created field report',
+};
+async function viewUserActivity(userId) {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const u = (DATA.users||[]).find(x => x.id === userId) || (DATA.profiles||[]).find(x => x.id === userId) || {};
+  showModal({
+    title: `Activity — ${escapeHtml(u.full_name || u.email || 'User')}`,
+    size: 'wide',
+    body: `<div id="ua-body"><div class="text-muted" style="padding:16px;">Loading…</div></div>`,
+    footer: `<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button>`,
+  });
+  const { data, error } = await sb.rpc('plz_user_activity', { p_user: userId, p_limit: 100 });
+  const el = document.getElementById('ua-body'); if (!el) return;
+  if (error) { el.innerHTML = `<div class="login-error">Could not load activity: ${escapeHtml(error.message||'')}</div>`; return; }
+  if (!data || !data.length) { el.innerHTML = `<div class="empty"><div class="empty-icon">🕓</div><div class="empty-title">No activity yet</div></div>`; return; }
+  el.innerHTML = `<table class="data"><thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead><tbody>` +
+    data.map(a => {
+      const det = a.detail && Object.keys(a.detail).length
+        ? Object.entries(a.detail).map(([k,v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`).join(', ') : '';
+      const ref = a.ref_table ? `${escapeHtml(a.ref_table)}${a.ref_id?' #'+String(a.ref_id).slice(0,8):''}` : '';
+      return `<tr><td class="text-sm" title="${escapeHtml(new Date(a.created_at).toLocaleString())}">${escapeHtml(relTime(a.created_at))}</td>`+
+             `<td class="text-sm"><strong>${escapeHtml(ACTIVITY_LABELS[a.action] || a.action)}</strong></td>`+
+             `<td class="text-sm text-muted">${[ref, det].filter(Boolean).join(' · ')}</td></tr>`;
+    }).join('') + `</tbody></table>`;
+}
+window.viewUserActivity = viewUserActivity;
 
 function openInviteModal() {
   if (!isOwner()) { toast('Owner only', 'error'); return; }
@@ -5485,9 +5616,31 @@ function notifyRoute(refTable, refId, event) {
                  'Authorization': 'Bearer ' + _sbJwt },
       body: JSON.stringify({ ref_table: refTable, ref_id: refId, event: event || 'created' }),
     }).catch(e => console.warn('notify-route failed (non-blocking):', e));
+    // Also record an actor activity entry for the user activity log (fire-and-forget).
+    logActivity((event === 'created' ? (refTable === 'rfis' ? 'rfi_created' : refTable === 'submittals' ? 'submittal_created' : refTable === 'deficiencies' ? 'deficiency_created' : 'created') : event),
+                { ref_table: refTable, ref_id: refId, project_id: STATE.activeProjectId || null });
   } catch (e) { console.warn('notify-route dispatch error:', e); }
 }
 window.notifyRoute = notifyRoute;
+
+// Phase 4-07: append an actor entry to user_activity via SECURITY DEFINER RPC.
+// Fire-and-forget; never blocks the UI. actor is derived server-side from JWT.
+function logActivity(action, opts) {
+  try {
+    if (!action || !AUTH || !AUTH.userId) return;
+    opts = opts || {};
+    sb.rpc('plz_log_activity', {
+      p_action: action,
+      p_subject_id: opts.subject_id || null,
+      p_ref_table: opts.ref_table || null,
+      p_ref_id: opts.ref_id || null,
+      p_project_id: opts.project_id || null,
+      p_detail: opts.detail || {},
+    }).then(r => { if (r && r.error) console.warn('log_activity:', r.error.message); })
+      .catch(e => console.warn('log_activity failed (non-blocking):', e));
+  } catch (e) { /* swallow */ }
+}
+window.logActivity = logActivity;
 
 // Mark complete. owner/staff anytime; member/contractor via their advance scope
 // (RLS enforces own/created for members). Surfaces denials gracefully.
@@ -6115,6 +6268,7 @@ async function finalizeReport(id) {
     if (!res.ok || !out.ok) { toast('Finalize failed: ' + (out.error||res.status)); return; }
   } catch (e) { toast('Finalize failed: ' + e.message); return; }
   toast('Report sealed ✓  hash ' + (out.sha256||'').slice(0,10));
+  logActivity('report_finalized', { ref_table:'field_reports', ref_id:id, detail:{ hash:(out.sha256||'').slice(0,16) } });
   await loadAllData(); render();
 }
 window.finalizeReport = finalizeReport;

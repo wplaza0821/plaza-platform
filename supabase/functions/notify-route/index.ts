@@ -27,12 +27,18 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const APP_URL = "https://plazacore.plazaandassociates.com";
-
-const cors = {
-  "Access-Control-Allow-Origin": APP_URL,
-  "Access-Control-Allow-Headers": "content-type, apikey, authorization",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+// Allow prod + staging origins (echo the caller's origin when allowed).
+const ALLOWED_ORIGINS = [APP_URL, "https://wplaza0821.github.io"];
+function corsFor(origin: string | null) {
+  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : APP_URL;
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Vary": "Origin",
+    "Access-Control-Allow-Headers": "content-type, apikey, authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
+const cors = corsFor(null);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_TABLES = new Set(["rfis", "submittals", "deficiencies"]);
 const ALLOWED_EVENTS = new Set(["created", "ball_in_court_change", "due_reminder", "overdue"]);
@@ -63,6 +69,10 @@ function projectionFor(table: string) {
 }
 
 Deno.serve(async (req) => {
+  // Per-request CORS + json() so the Allow-Origin header can echo the caller.
+  const cors = corsFor(req.headers.get("origin"));
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 

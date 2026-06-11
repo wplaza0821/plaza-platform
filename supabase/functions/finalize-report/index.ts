@@ -29,20 +29,18 @@ const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const PDF_RENDER_URL = Deno.env.get("PDF_RENDER_URL") || "";
 const APP_URL = "https://plazacore.plazaandassociates.com";
-
-const cors = {
-  "Access-Control-Allow-Origin": APP_URL,
-  "Access-Control-Allow-Headers": "content-type, apikey, authorization",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const ALLOWED_ORIGINS = [APP_URL, "https://wplaza0821.github.io"];
+function corsFor(origin: string | null) {
+  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : APP_URL;
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Vary": "Origin",
+    "Access-Control-Allow-Headers": "content-type, apikey, authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status, headers: { ...cors, "content-type": "application/json" },
-  });
-}
 
 function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"]/g, (c) =>
@@ -86,6 +84,9 @@ function buildHtml(r: any, projectName: string, checklistRows: string, generated
 }
 
 Deno.serve(async (req) => {
+  const cors = corsFor(req.headers.get("origin"));
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
