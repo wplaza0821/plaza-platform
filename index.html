@@ -880,6 +880,9 @@
                 <tr>
                   <th style="width:60px;">Item #</th>
                   <th>Description</th>
+                  <th class="num" style="width:80px;">Qty</th>
+                  <th style="width:56px;">Unit</th>
+                  <th class="num" style="width:110px;">Unit Price</th>
                   <th class="num">Scheduled Value</th>
                   <th class="num">Completed to Date</th>
                   <th class="num" style="width:120px;">% Used</th>
@@ -1866,6 +1869,13 @@ function fmt$2(n) {
   const v = Number(n) || 0;
   return v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+// Quantity: up to 2 decimals, no trailing zeros; em-dash when absent (lump-sum line).
+function fmtQty(n) {
+  if (n === null || n === undefined || n === '') return '—';
+  const v = Number(n);
+  if (!isFinite(v)) return '—';
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
 function fmtDate(d) {
   if (!d) return '—';
   try {
@@ -2235,7 +2245,7 @@ function renderSov() {
   // (same source the next pay app pre-fills from), so SOV and pay apps always reconcile.
   const body = document.getElementById('currentSovBody');
   if (!sovItems.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📝</div><div class="empty-title">No Schedule of Values yet</div><div class="empty-sub">${isOwner() ? 'Click "Manage SOV" to create one.' : 'Waiting for owner to publish the SOV.'}</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📝</div><div class="empty-title">No Schedule of Values yet</div><div class="empty-sub">${isOwner() ? 'Click "Manage SOV" to create one.' : 'Waiting for owner to publish the SOV.'}</div></div></td></tr>`;
     document.getElementById('currentSovFoot').innerHTML = '';
   } else {
     const completedMap = previousCompletedBySov(proj.id); // {sov_item_id: $ completed to date}
@@ -2246,10 +2256,14 @@ function renderSov() {
       const bal   = sched - done;
       const pct   = sched > 0 ? (done / sched) * 100 : 0;
       totCompleted += done;
+      const hasUnit = (i.unit_price !== null && i.unit_price !== undefined && i.unit_price !== '');
       return `
       <tr>
         <td style="font-weight:600;">${escapeHtml(i.item_no)}</td>
         <td>${escapeHtml(i.description)}</td>
+        <td class="num">${fmtQty(i.quantity)}</td>
+        <td>${i.unit ? escapeHtml(i.unit) : '<span class="text-muted">LS</span>'}</td>
+        <td class="num">${hasUnit ? fmt$2(i.unit_price) : '<span class="text-muted">—</span>'}</td>
         <td class="num">${fmt$2(sched)}</td>
         <td class="num">${fmt$2(done)}</td>
         <td class="num">${sovPctCell(pct)}</td>
@@ -2260,7 +2274,7 @@ function renderSov() {
     const totPct = sovSum > 0 ? (totCompleted / sovSum) * 100 : 0;
     document.getElementById('currentSovFoot').innerHTML = `
       <tr>
-        <td colspan="2">TOTAL CONTRACT VALUE (SOV v${sovVer})</td>
+        <td colspan="5">TOTAL CONTRACT VALUE (SOV v${sovVer})</td>
         <td class="num">${fmt$2(sovSum)}</td>
         <td class="num">${fmt$2(totCompleted)}</td>
         <td class="num">${sovPctCell(totPct)}</td>
@@ -2323,8 +2337,8 @@ function openSovAdminModal() {
       <!-- Paste -->
       <div id="sovMethod-paste" class="sov-method">
         <div class="form-row">
-          <label class="form-label">Paste tab-separated or CSV data (Item # / Description / Scheduled Value)</label>
-          <textarea id="sovPaste" class="mono" rows="10" placeholder="1.01&#9;Mobilization&#9;25000&#10;1.02&#9;General Conditions&#9;18500&#10;..."></textarea>
+          <label class="form-label">Paste tab-separated or CSV data — <strong>Item # / Description / Qty / Unit / Unit Price</strong> (Scheduled Value auto-computes as Qty × Unit Price). Lump-sum lines: leave Qty/Unit Price blank and put the amount in a 6th column or as Unit Price with Qty 1.</label>
+          <textarea id="sovPaste" class="mono" rows="10" placeholder="1.01&#9;Mobilization&#9;1&#9;LS&#9;25000&#10;2.01&#9;Concrete Spall Repair&#9;1200&#9;SF&#9;42.50&#10;2.02&#9;Epoxy Crack Injection&#9;850&#9;LF&#9;18.00&#10;..."></textarea>
         </div>
         <button class="btn btn-secondary btn-sm" id="parsePasteBtn">Parse &amp; Preview</button>
       </div>
@@ -2340,11 +2354,19 @@ function openSovAdminModal() {
 
       <!-- Manual -->
       <div id="sovMethod-manual" class="sov-method" style="display:none;">
-        <div class="form-row three-col">
+        <div class="form-row two-col">
           <div><label class="form-label">Item #</label><input id="manItem" type="text" /></div>
           <div><label class="form-label">Description</label><input id="manDesc" type="text" /></div>
-          <div><label class="form-label">Scheduled Value</label><input id="manVal" type="number" step="0.01" /></div>
-        </div>        <button class="btn btn-secondary btn-sm" id="addManualBtn">＋ Add to staging</button>
+        </div>
+        <div class="form-row three-col">
+          <div><label class="form-label">Quantity</label><input id="manQty" type="number" step="0.01" oninput="window.__manCompute&&window.__manCompute()" /></div>
+          <div><label class="form-label">Unit</label><input id="manUnit" type="text" placeholder="LS, SF, LF, CY, EA" /></div>
+          <div><label class="form-label">Unit Price</label><input id="manUnitPrice" type="number" step="0.01" oninput="window.__manCompute&&window.__manCompute()" /></div>
+        </div>
+        <div class="form-row">
+          <div><label class="form-label">Scheduled Value <span class="text-muted" style="font-weight:400;">(auto = Qty × Unit Price; override for lump sum)</span></label><input id="manVal" type="number" step="0.01" /></div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="addManualBtn">＋ Add to staging</button>
       </div>
 
       <hr style="margin:18px 0; border:none; border-top:1px solid var(--gray-200);" />
@@ -2356,10 +2378,10 @@ function openSovAdminModal() {
       <div class="table-wrap" style="max-height:280px; overflow-y:auto;">
         <table class="data" id="sovStageTable">
           <thead>
-            <tr><th style="width:80px;">Item #</th><th>Description</th><th class="num" style="width:160px;">Scheduled Value</th><th style="width:40px;"></th></tr>
+            <tr><th style="width:72px;">Item #</th><th>Description</th><th class="num" style="width:80px;">Qty</th><th style="width:60px;">Unit</th><th class="num" style="width:110px;">Unit Price</th><th class="num" style="width:130px;">Scheduled Value</th><th style="width:40px;"></th></tr>
           </thead>
           <tbody id="sovStageBody">
-            <tr><td colspan="4" class="loading-row">No items staged yet</td></tr>
+            <tr><td colspan="7" class="loading-row">No items staged yet</td></tr>
           </tbody>
           <tfoot class="totals" id="sovStageFoot"></tfoot>
         </table>
@@ -2383,7 +2405,7 @@ function openSovAdminModal() {
     const foot = document.getElementById('sovStageFoot');
     const meta = document.getElementById('sovStageMeta');
     if (!staged.length) {
-      body.innerHTML = `<tr><td colspan="4" class="loading-row">No items staged yet</td></tr>`;
+      body.innerHTML = `<tr><td colspan="7" class="loading-row">No items staged yet</td></tr>`;
       foot.innerHTML = '';
       meta.textContent = '0 items';
       return;
@@ -2392,12 +2414,15 @@ function openSovAdminModal() {
       <tr>
         <td><input class="cell-input" value="${escapeHtml(s.item_no)}" oninput="window.__sovEdit(${idx}, 'item_no', this.value)" /></td>
         <td><input class="cell-input" value="${escapeHtml(s.description)}" oninput="window.__sovEdit(${idx}, 'description', this.value)" /></td>
+        <td class="num"><input class="cell-input num" type="number" step="0.01" value="${s.quantity ?? ''}" oninput="window.__sovEdit(${idx}, 'quantity', this.value)" /></td>
+        <td><input class="cell-input" value="${escapeHtml(s.unit || '')}" oninput="window.__sovEdit(${idx}, 'unit', this.value)" placeholder="LS" /></td>
+        <td class="num"><input class="cell-input num" type="number" step="0.01" value="${s.unit_price ?? ''}" oninput="window.__sovEdit(${idx}, 'unit_price', this.value)" /></td>
         <td class="num"><input class="cell-input num" type="number" step="0.01" value="${s.scheduled_value}" oninput="window.__sovEdit(${idx}, 'scheduled_value', this.value)" /></td>
         <td><button class="btn btn-ghost btn-sm" onclick="window.__sovDel(${idx})">✕</button></td>
       </tr>
     `).join('');
     const total = staged.reduce((a, x) => a + Number(x.scheduled_value || 0), 0);
-    foot.innerHTML = `<tr><td colspan="2">TOTAL</td><td class="num">${fmt$2(total)}</td><td></td></tr>`;
+    foot.innerHTML = `<tr><td colspan="5">TOTAL</td><td class="num">${fmt$2(total)}</td><td></td></tr>`;
     meta.textContent = `${staged.length} items · ${fmt$(total)}`;
     // Validation indicators
     const errs = [];
@@ -2419,10 +2444,27 @@ function openSovAdminModal() {
 
   window.__sovEdit = (idx, field, v) => {
     if (field === 'scheduled_value') v = Number(v) || 0;
+    else if (field === 'quantity' || field === 'unit_price') v = (v === '' ? null : Number(v));
     staged[idx][field] = v;
+    // Auto-recompute scheduled value when both qty and unit price are present.
+    if (field === 'quantity' || field === 'unit_price') {
+      const q = staged[idx].quantity, up = staged[idx].unit_price;
+      if (q !== null && q !== '' && up !== null && up !== '' && isFinite(q) && isFinite(up)) {
+        staged[idx].scheduled_value = Math.round(Number(q) * Number(up) * 100) / 100;
+      }
+    }
     renderStage();
   };
   window.__sovDel = (idx) => { staged.splice(idx, 1); renderStage(); };
+
+  // Manual-entry live compute: Qty × Unit Price -> Scheduled Value field.
+  window.__manCompute = () => {
+    const q = document.getElementById('manQty').value;
+    const up = document.getElementById('manUnitPrice').value;
+    if (q !== '' && up !== '' && isFinite(Number(q)) && isFinite(Number(up))) {
+      document.getElementById('manVal').value = (Math.round(Number(q) * Number(up) * 100) / 100);
+    }
+  };
 
   // Method tabs
   document.getElementById('sovMethodTabs').addEventListener('click', e => {
@@ -2435,19 +2477,37 @@ function openSovAdminModal() {
 
   function parseSovText(txt) {
     const items = [];
+    const num = (x) => { const n = parseFloat(String(x == null ? '' : x).replace(/[$,]/g, '')); return isFinite(n) ? n : null; };
     txt.split(/\r?\n/).forEach((line, i) => {
       if (!line.trim()) return;
       // Try tab first, then comma
       let parts = line.split('\t');
       if (parts.length < 3) parts = parseCsvLine(line);
       if (parts.length < 3) return;
-      const itemNo = parts[0].trim();
-      const desc   = parts[1].trim();
-      const val    = parseFloat(String(parts[2]).replace(/[$,]/g, '')) || 0;
       // Skip likely header rows
-      if (i === 0 && /item|desc|value|sched/i.test(itemNo + desc + parts[2])) return;
+      if (i === 0 && /item|desc|value|sched|qty|quantity|unit/i.test(parts.join(' '))) return;
+      const itemNo = (parts[0] || '').trim();
+      const desc   = (parts[1] || '').trim();
       if (!itemNo && !desc) return;
-      items.push({ item_no: itemNo, description: desc, scheduled_value: val });
+      let quantity = null, unit = null, unit_price = null, scheduled_value = 0;
+      if (parts.length >= 5) {
+        // Item# / Desc / Qty / Unit / UnitPrice [ / Value ]
+        quantity   = num(parts[2]);
+        unit       = (parts[3] || '').trim() || null;
+        unit_price = num(parts[4]);
+        scheduled_value = parts.length >= 6 && num(parts[5]) != null
+          ? num(parts[5])
+          : ((quantity != null && unit_price != null) ? Math.round(quantity * unit_price * 100) / 100 : 0);
+      } else if (parts.length === 4) {
+        // Item# / Desc / Qty / UnitPrice  (no unit)
+        quantity   = num(parts[2]);
+        unit_price = num(parts[3]);
+        scheduled_value = (quantity != null && unit_price != null) ? Math.round(quantity * unit_price * 100) / 100 : (num(parts[3]) || 0);
+      } else {
+        // Back-compat: Item# / Desc / Value (lump sum)
+        scheduled_value = num(parts[2]) || 0;
+      }
+      items.push({ item_no: itemNo, description: desc, quantity, unit, unit_price, scheduled_value });
     });
     return items;
   }
@@ -2492,12 +2552,16 @@ function openSovAdminModal() {
   document.getElementById('addManualBtn').addEventListener('click', () => {
     const item = document.getElementById('manItem').value.trim();
     const desc = document.getElementById('manDesc').value.trim();
-    const val  = Number(document.getElementById('manVal').value) || 0;
-    if (!item || !desc || val <= 0) { toast('Fill item #, description, and value > 0', 'error'); return; }
-    staged.push({ item_no: item, description: desc, scheduled_value: val });
-    document.getElementById('manItem').value = '';
-    document.getElementById('manDesc').value = '';
-    document.getElementById('manVal').value  = '';
+    const qRaw  = document.getElementById('manQty').value;
+    const upRaw = document.getElementById('manUnitPrice').value;
+    const unit  = document.getElementById('manUnit').value.trim() || null;
+    const quantity   = qRaw === '' ? null : Number(qRaw);
+    const unit_price = upRaw === '' ? null : Number(upRaw);
+    let val = Number(document.getElementById('manVal').value) || 0;
+    if (!val && quantity != null && unit_price != null) val = Math.round(quantity * unit_price * 100) / 100;
+    if (!item || !desc || val <= 0) { toast('Fill item #, description, and a value > 0 (or Qty × Unit Price)', 'error'); return; }
+    staged.push({ item_no: item, description: desc, quantity, unit, unit_price, scheduled_value: val });
+    ['manItem','manDesc','manQty','manUnit','manUnitPrice','manVal'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('manItem').focus();
     renderStage();
   });
@@ -2529,6 +2593,9 @@ function openSovAdminModal() {
       version: nextVer,
       item_no: s.item_no.trim(),
       description: s.description.trim(),
+      quantity: (s.quantity === null || s.quantity === undefined || s.quantity === '') ? null : Number(s.quantity),
+      unit: s.unit ? String(s.unit).trim() : null,
+      unit_price: (s.unit_price === null || s.unit_price === undefined || s.unit_price === '') ? null : Number(s.unit_price),
       scheduled_value: Number(s.scheduled_value),
       sort_order: idx,
       locked: true,
