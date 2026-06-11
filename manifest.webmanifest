@@ -1,0 +1,25 @@
+{
+  "name": "Plazacore — Plaza & Associates",
+  "short_name": "Plazacore",
+  "description": "Construction PM, special inspection & field reporting platform for Plaza and Associates.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#020000",
+  "theme_color": "#020000",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

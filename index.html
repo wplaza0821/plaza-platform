@@ -4,6 +4,13 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#020000" />
+<!-- PWA: installable + offline field use (Phase 4) -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Plazacore" />
+<link rel="apple-touch-icon" href="icon-192.png" />
 <title>Plaza &amp; Associates — Construction Platform</title>
 <style>
   /* =========================================================================
@@ -191,6 +198,21 @@
   .btn-sm { padding: 6px 11px; font-size: 12px; }
   .btn-xs { padding: 3px 8px; font-size: 11px; line-height: 1.4; }
   table.data .row-actions { flex-wrap: wrap; }
+  /* Phase 4: offline connectivity banner */
+  .conn-banner { position: fixed; left: 50%; transform: translateX(-50%); bottom: -60px; z-index: 9999;
+    padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #fff;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25); cursor: pointer; transition: bottom .25s ease; max-width: 90vw; white-space: nowrap; }
+  .conn-banner.show { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .conn-banner.offline { background: #b45309; }
+  .conn-banner.pending { background: #2563eb; }
+  /* Phase 4: plan pins overlay */
+  .pv-pin { position: absolute; width: 26px; height: 26px; margin-left: -13px; margin-top: -26px;
+    cursor: pointer; transform-origin: bottom center; z-index: 5; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+  .pv-pin svg { width: 100%; height: 100%; display: block; }
+  .pv-pin .pv-pin-num { position: absolute; top: 2px; left: 0; width: 26px; text-align: center;
+    font-size: 11px; font-weight: 700; color: #fff; pointer-events: none; }
+  .pv-pin.dragging { opacity: .7; }
+  .pv-tool.active[data-tool="pin"] { background: var(--ink, #020000); color: #fff; }
 
   .card { background: #fff; border-radius: var(--radius); border: 1px solid var(--gray-200); box-shadow: var(--shadow-sm); overflow: hidden; }
   .card-head { padding: 14px 18px; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fff; }
@@ -3789,7 +3811,11 @@ const PV = {
   tool: 'pan', color: '#e11d48', width: 3,
   shapes: {}, dirty: {}, markupRowId: {},
   drawing: false, cur: null, ctx2d: null, canEdit: false,
+  pins: [],            // Phase 4: plan_pins rows for this document
 };
+// Pin color by status/kind for quick visual triage on the sheet.
+const PIN_COLORS = { open:'#e11d48', in_repair:'#f59e0b', answered:'#2563eb', closed:'#16a34a', verified:'#16a34a', note:'#6b7280' };
+const PIN_KIND_ICON = { deficiency:'⚠', rfi:'?', task:'✓', photo:'📷', note:'📍' };
 const PV_COLORS = ['#e11d48','#2563eb','#16a34a','#f59e0b','#000000','#ffffff'];
 
 async function openPlanViewer(doc) {
@@ -3807,6 +3833,7 @@ async function openPlanViewer(doc) {
     '<button class="pv-tool" data-tool="rect" onclick="pvSetTool(\'rect\')" title="Rectangle">\u25AD</button>'+
     '<button class="pv-tool" data-tool="cloud" onclick="pvSetTool(\'cloud\')" title="Revision cloud">\u2601\uFE0F</button>'+
     '<button class="pv-tool" data-tool="text" onclick="pvSetTool(\'text\')" title="Text note">T</button>'+
+    '<button class="pv-tool" data-tool="pin" onclick="pvSetTool(\'pin\')" title="Drop pin (deficiency / RFI / task / note)">\uD83D\uDCCD</button>'+
     '<div class="pv-sep"></div>'+colorBtns+
     '<button class="pv-btn" onclick="pvUndo()" title="Undo">\u21B6</button>'
   ) : '';
@@ -3831,6 +3858,7 @@ async function openPlanViewer(doc) {
       '<div class="pv-stage" id="pvStage">'+
         '<div class="pv-canvas-wrap" id="pvWrap">'+
           '<canvas id="pvPdf"></canvas><canvas id="pvAnno"></canvas>'+
+          '<div id="pvPins" class="pv-pins-layer" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>'+
         '</div>'+
       '</div>'+
     '</div>';
@@ -3841,6 +3869,7 @@ async function openPlanViewer(doc) {
     PV.pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
     PV.numPages = PV.pdf.numPages;
     await pvLoadMarkups();
+    await pvLoadPins();
     await pvRenderPage();
     pvWireCanvas();
   } catch(e) { toast('Could not open plan: ' + e.message, 'error'); pvClose(); }
@@ -3856,6 +3885,179 @@ async function pvLoadMarkups() {
   });
 }
 
+/* ── Phase 4: PLAN PINS (Fieldwire-style sheet markers) ─────────────────── */
+async function pvLoadPins() {
+  PV.pins = [];
+  const { data, error } = await sb.from('plan_pins').select('*').eq('document_id', PV.doc.id);
+  if (error) { console.warn('pins load', error.message); return; }
+  PV.pins = data || [];
+}
+// Resolve a pin's live status from its linked entity (so colors stay accurate).
+function pinLiveStatus(p) {
+  if (p.ref_table && p.ref_id) {
+    const coll = p.ref_table === 'deficiencies' ? DATA.deficiencies
+               : p.ref_table === 'rfis' ? DATA.rfis
+               : p.ref_table === 'tasks' ? DATA.tasks : null;
+    const row = coll && coll.find(x => x.id === p.ref_id);
+    if (row && row.status) return row.status;
+  }
+  return p.status || (p.kind === 'note' ? 'note' : 'open');
+}
+function pinLabel(p) {
+  if (p.ref_table && p.ref_id) {
+    if (p.ref_table === 'deficiencies') { const d = DATA.deficiencies.find(x=>x.id===p.ref_id); if (d) return (d.deficiency_no?d.deficiency_no+': ':'') + (d.description||'Deficiency'); }
+    if (p.ref_table === 'rfis')         { const r = DATA.rfis.find(x=>x.id===p.ref_id); if (r) return 'RFI #'+(r.rfi_number||'')+': '+(r.subject||''); }
+    if (p.ref_table === 'tasks')        { const t = DATA.tasks.find(x=>x.id===p.ref_id); if (t) return t.title||'Task'; }
+  }
+  return p.label || (PIN_KIND_ICON[p.kind]||'') + ' Pin';
+}
+function pvRenderPins() {
+  const layer = document.getElementById('pvPins'); if (!layer) return;
+  const vp = PV.baseViewport; if (!vp) return;
+  layer.style.width = vp.width + 'px'; layer.style.height = vp.height + 'px';
+  const here = PV.pins.filter(p => (p.page_number||1) === PV.page);
+  layer.innerHTML = here.map((p, i) => {
+    const x = p.nx * vp.width, y = p.ny * vp.height;
+    const st = pinLiveStatus(p);
+    const color = PIN_COLORS[st] || p.color || '#e11d48';
+    const icon = PIN_KIND_ICON[p.kind] || '📍';
+    return '<div class="pv-pin" data-pin-id="'+p.id+'" style="left:'+x+'px;top:'+y+'px;pointer-events:auto;" '+
+      'title="'+escapeHtml(pinLabel(p))+'">'+
+      '<svg viewBox="0 0 24 24"><path fill="'+color+'" stroke="#fff" stroke-width="1.5" d="M12 1.5c-4.4 0-8 3.4-8 7.6 0 5.4 8 13.4 8 13.4s8-8 8-13.4c0-4.2-3.6-7.6-8-7.6z"/></svg>'+
+      '<span class="pv-pin-num">'+(icon)+'</span></div>';
+  }).join('');
+  // wire click + drag
+  layer.querySelectorAll('.pv-pin').forEach(el => {
+    const id = el.dataset.pinId;
+    el.addEventListener('click', (ev) => { ev.stopPropagation(); if (!el._dragged) pvOpenPin(id); });
+    if (PV.canEdit) pvMakePinDraggable(el, id);
+  });
+}
+function pvMakePinDraggable(el, id) {
+  let startX, startY, moved=false;
+  const onDown = (e) => {
+    e.stopPropagation(); e.preventDefault();
+    moved = false; el._dragged = false;
+    const move = (ev) => {
+      const wrap = document.getElementById('pvWrap'); const r = wrap.getBoundingClientRect();
+      const cx = (ev.touches?ev.touches[0].clientX:ev.clientX) - r.left;
+      const cy = (ev.touches?ev.touches[0].clientY:ev.clientY) - r.top;
+      el.style.left = cx + 'px'; el.style.top = cy + 'px';
+      el.classList.add('dragging'); moved = true; el._dragged = true;
+    };
+    const upp = async () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', upp);
+      window.removeEventListener('touchmove', move); window.removeEventListener('touchend', upp);
+      el.classList.remove('dragging');
+      if (moved) {
+        const vp = PV.baseViewport;
+        const nx = parseFloat(el.style.left)/vp.width, ny = parseFloat(el.style.top)/vp.height;
+        const pin = PV.pins.find(p=>p.id===id); if (pin) { pin.nx=nx; pin.ny=ny; }
+        const { error } = await sb.from('plan_pins').update({ nx, ny }).eq('id', id);
+        if (error) toast('Could not move pin: '+error.message, 'error');
+        setTimeout(()=>{ el._dragged=false; }, 50);
+      }
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', upp);
+    window.addEventListener('touchmove', move, {passive:false}); window.addEventListener('touchend', upp);
+  };
+  el.addEventListener('mousedown', onDown);
+  el.addEventListener('touchstart', onDown, {passive:false});
+}
+// Drop a new pin at normalized coords -> prompt what it is.
+async function pvDropPin(nx, ny) {
+  if (!PV.canEdit) return;
+  pvPinModal(null, nx, ny);
+}
+// Open existing pin -> navigate to its entity or show note.
+function pvOpenPin(id) {
+  const p = PV.pins.find(x=>x.id===id); if (!p) return;
+  if (p.ref_table && p.ref_id) {
+    pvClose();
+    if (p.ref_table === 'deficiencies') { switchTab('deficiencies'); setTimeout(()=>openDeficiencyModal(p.ref_id), 200); return; }
+    if (p.ref_table === 'rfis')         { switchTab('rfis');         setTimeout(()=>openRfiModal(p.ref_id), 200); return; }
+    if (p.ref_table === 'tasks')        { switchTab('tasks');        setTimeout(()=>openTaskModal(p.ref_id), 200); return; }
+  }
+  pvPinModal(p);  // note-only or unlinked -> edit/delete
+}
+function pvPinModal(pin, nx, ny) {
+  const editing = !!pin;
+  const kind = pin?.kind || 'deficiency';
+  showModal({
+    title: editing ? 'Plan Pin' : 'Drop Pin',
+    body:
+      '<div class="form-row"><label class="form-label">What is this pin?</label>'+
+      '<select id="pin-kind" onchange="window.__pinKindChange&&window.__pinKindChange()">'+
+        ['deficiency','rfi','task','note'].map(k=>'<option value="'+k+'" '+(kind===k?'selected':'')+'>'+
+          ({deficiency:'⚠ Deficiency',rfi:'? RFI',task:'✓ Task',note:'📍 Note only'})[k]+'</option>').join('')+
+      '</select></div>'+
+      '<div class="form-row"><label class="form-label">Label / description</label>'+
+      '<input id="pin-label" type="text" value="'+escapeHtml(pin?.label||'')+'" placeholder="Spalling at column C-4, etc."/></div>'+
+      '<div class="hint-banner" id="pin-hint" style="font-size:12px;">A new item will be created and linked to this spot on the sheet.</div>',
+    footer:
+      (editing ? '<button class="btn btn-danger" onclick="pvDeletePin(\''+pin.id+'\')">Delete</button>' : '')+
+      '<div style="flex:1"></div>'+
+      '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>'+
+      '<button class="btn btn-primary" onclick="pvSavePin('+(editing?"'"+pin.id+"'":'null')+','+(nx??(pin?pin.nx:0))+','+(ny??(pin?pin.ny:0))+')">'+(editing?'Save':'Create & Pin')+'</button>'
+  });
+  window.__pinKindChange = () => {
+    const k = document.getElementById('pin-kind').value;
+    document.getElementById('pin-hint').textContent = k==='note'
+      ? 'A standalone note pin — no tracked item is created.'
+      : 'A new '+k+' will be created and linked to this spot on the sheet.';
+  };
+}
+window.pvPinModal = pvPinModal;
+async function pvSavePin(id, nx, ny) {
+  const kind  = document.getElementById('pin-kind').value;
+  const label = document.getElementById('pin-label').value.trim();
+  if (id) {
+    const pin = PV.pins.find(p=>p.id===id);
+    const { error } = await sb.from('plan_pins').update({ kind, label }).eq('id', id);
+    if (error) { toast('Save failed: '+error.message,'error'); return; }
+    if (pin) { pin.kind=kind; pin.label=label; }
+    closeModal(); pvRenderPins(); return;
+  }
+  // New pin. For deficiency/rfi/task, create the entity first, then link.
+  let ref_table = null, ref_id = null, status = 'open';
+  try {
+    if (kind === 'deficiency') {
+      const row = { project_id: PV.doc.project_id, description: label || 'Field deficiency', severity:'moderate', status:'open', deficiency_no: nextDeficiencyNumber(PV.doc.project_id) };
+      const r = await queueableInsert('deficiencies', row, { select:'id' });
+      if (r.error) throw new Error(r.error.message);
+      if (!r.queued) { ref_table='deficiencies'; ref_id=r.data.id; notifyRoute('deficiencies', ref_id, 'created'); }
+    } else if (kind === 'rfi') {
+      const row = { project_id: PV.doc.project_id, subject: label || 'Field RFI', rfi_number: nextRfiNumber(), status:'open', ball_in_court:'engineer' };
+      const r = await queueableInsert('rfis', row, { select:'id' });
+      if (r.error) throw new Error(r.error.message);
+      if (!r.queued) { ref_table='rfis'; ref_id=r.data.id; notifyRoute('rfis', ref_id, 'created'); }
+    } else if (kind === 'task') {
+      const row = { project_id: PV.doc.project_id, title: label || 'Field task', status:'open', priority:'normal' };
+      const r = await queueableInsert('tasks', row, { select:'id' });
+      if (r.error) throw new Error(r.error.message);
+      if (!r.queued) { ref_table='tasks'; ref_id=r.data.id; }
+    } else { status = 'note'; }
+  } catch(e) { toast('Could not create linked item: '+e.message, 'error'); return; }
+  const pinRow = { document_id: PV.doc.id, project_id: PV.doc.project_id, page_number: PV.page,
+    nx, ny, ref_table, ref_id, kind, label: label||null, color: PIN_COLORS[status]||'#e11d48', status, created_by: AUTH?.name||null };
+  const pr = await queueableInsert('plan_pins', pinRow, { select:'*' });
+  if (pr.error) { toast('Pin save failed: '+pr.error.message,'error'); return; }
+  if (!pr.queued && pr.data) PV.pins.push(pr.data);
+  closeModal();
+  await loadAllData();
+  pvRenderPins();
+  toast(kind==='note' ? 'Note pinned' : kind+' created & pinned ✓');
+}
+window.pvSavePin = pvSavePin;
+async function pvDeletePin(id) {
+  if (!confirm('Delete this pin? (The linked item is NOT deleted.)')) return;
+  const { error } = await sb.from('plan_pins').delete().eq('id', id);
+  if (error) { toast('Delete failed: '+error.message,'error'); return; }
+  PV.pins = PV.pins.filter(p=>p.id!==id);
+  closeModal(); pvRenderPins();
+}
+window.pvDeletePin = pvDeletePin;
+
 async function pvRenderPage() {
   const page = await PV.pdf.getPage(PV.page);
   PV.baseViewport = page.getViewport({ scale: PV.scale });
@@ -3867,6 +4069,7 @@ async function pvRenderPage() {
   await page.render({ canvasContext: pdfC.getContext('2d'), viewport: vp }).promise;
   PV.ctx2d = annoC.getContext('2d');
   pvRedraw();
+  pvRenderPins();
   document.getElementById('pvPageLabel').textContent = PV.page + ' / ' + PV.numPages;
   pvSetStatus();
 }
@@ -3934,6 +4137,10 @@ function pvWireCanvas() {
     if (!PV.canEdit || PV.tool === 'pan') return;
     e.preventDefault();
     const p = pvEvtPos(e);
+    if (PV.tool === 'pin') {
+      const [nx, ny] = pvN(p[0], p[1]);
+      pvDropPin(nx, ny); return;
+    }
     if (PV.tool === 'text') {
       const txt = prompt('Note text:'); if (!txt) return;
       pvPush({ type:'text', points:[pvN(p[0],p[1])], text:txt, color:PV.color, width:PV.width });
@@ -4020,7 +4227,7 @@ function pvClose(){
   if (anyDirty && !confirm('You have unsaved markups. Close anyway?')) return;
   const root=document.getElementById('modalRoot'); if(root) root.innerHTML='';
   document.body.style.overflow='';
-  PV.pdf=null; PV.shapes={}; PV.dirty={};
+  PV.pdf=null; PV.shapes={}; PV.dirty={}; PV.pins=[];
 }
 window.pvClose = pvClose;
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && document.getElementById('pvOverlay')) pvClose(); });
@@ -5103,7 +5310,162 @@ async function init() {
 
   // Phase B Layer 3: begin light notification polling for native users.
   startNotifPolling();
+
+  // Phase 4: flush any writes queued while offline, once we're authed + online.
+  flushOutbox();
 }
+
+/* =========================================================================
+   PHASE 4 — PWA / OFFLINE FIELD CAPTURE
+   Service worker (app-shell cache) + an IndexedDB "outbox" that queues
+   inserts made while offline and replays them on reconnect. Designed for
+   inspectors in the field (parking garages, rooftops) with no signal.
+   ========================================================================= */
+const OUTBOX_DB = 'plazacore_outbox';
+const OUTBOX_STORE = 'queue';
+const OFFLINE_TABLES = new Set(['field_reports','deficiencies','daily_reports','plan_pins','tasks','rfis','submittals']);
+let _odb = null;
+
+function openOutbox() {
+  if (_odb) return Promise.resolve(_odb);
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) return reject(new Error('no-indexeddb'));
+    const req = indexedDB.open(OUTBOX_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(OUTBOX_STORE))
+        db.createObjectStore(OUTBOX_STORE, { keyPath: 'localId' });
+    };
+    req.onsuccess = () => { _odb = req.result; resolve(_odb); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function outboxAdd(entry) {
+  const db = await openOutbox();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OUTBOX_STORE, 'readwrite');
+    tx.objectStore(OUTBOX_STORE).put(entry);
+    tx.oncomplete = () => resolve(entry);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function outboxAll() {
+  const db = await openOutbox();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OUTBOX_STORE, 'readonly');
+    const r = tx.objectStore(OUTBOX_STORE).getAll();
+    r.onsuccess = () => resolve(r.result || []);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function outboxDel(localId) {
+  const db = await openOutbox();
+  return new Promise((resolve) => {
+    const tx = db.transaction(OUTBOX_STORE, 'readwrite');
+    tx.objectStore(OUTBOX_STORE).delete(localId);
+    tx.oncomplete = () => resolve(); tx.onerror = () => resolve();
+  });
+}
+async function outboxCount() { try { return (await outboxAll()).length; } catch { return 0; } }
+
+// Insert that survives offline: tries the network first; if offline (or the
+// request throws), the row is queued and replayed later. Returns
+// { data, error, queued }. Use for create operations on OFFLINE_TABLES.
+async function queueableInsert(table, row, opts) {
+  opts = opts || {};
+  const online = navigator.onLine;
+  if (online) {
+    try {
+      let q = sb.from(table).insert(row);
+      if (opts.select !== false) q = q.select(opts.select || '*').single();
+      const res = await q;
+      if (!res.error) return { ...res, queued: false };
+      // Genuine server/RLS error -> surface, do NOT queue (it would just fail again).
+      return { ...res, queued: false };
+    } catch (e) {
+      // Network blip mid-flight -> fall through to queue.
+    }
+  }
+  if (!OFFLINE_TABLES.has(table)) {
+    return { data: null, error: { message: 'Offline and this action cannot be queued.' }, queued: false };
+  }
+  const localId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  await outboxAdd({ localId, table, row, queuedAt: new Date().toISOString() });
+  updateConnBanner();
+  toast('📴 Saved offline — will sync when back online', 'warn');
+  return { data: { ...row, id: localId, _pending: true }, error: null, queued: true };
+}
+window.queueableInsert = queueableInsert;
+
+let _flushing = false;
+async function flushOutbox() {
+  if (_flushing || !navigator.onLine) return;
+  let items;
+  try { items = await outboxAll(); } catch { return; }
+  if (!items.length) { updateConnBanner(); return; }
+  _flushing = true;
+  let ok = 0, fail = 0;
+  for (const it of items) {
+    try {
+      const res = await sb.from(it.table).insert(it.row).select('id').single();
+      if (res.error) {
+        // Permanent error (RLS/validation) -> drop it so it can't wedge the queue; log.
+        console.warn('outbox drop (server rejected):', it.table, res.error.message);
+        await outboxDel(it.localId); fail++;
+      } else {
+        await outboxDel(it.localId); ok++;
+      }
+    } catch (e) {
+      // Still offline / transient -> stop; retry on next reconnect.
+      break;
+    }
+  }
+  _flushing = false;
+  updateConnBanner();
+  if (ok)   { toast(`✅ Synced ${ok} offline change${ok===1?'':'s'}`); await loadAllData(); render(); }
+  if (fail) { toast(`⚠️ ${fail} queued change${fail===1?'':'s'} were rejected on sync (see console)`, 'error'); }
+}
+window.flushOutbox = flushOutbox;
+
+// Connectivity banner (fixed, unobtrusive). Shows offline state + pending count.
+function ensureConnBanner() {
+  let el = document.getElementById('connBanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'connBanner';
+    el.className = 'conn-banner';
+    el.onclick = () => flushOutbox();
+    document.body.appendChild(el);
+  }
+  return el;
+}
+async function updateConnBanner() {
+  const el = ensureConnBanner();
+  const pending = await outboxCount();
+  if (!navigator.onLine) {
+    el.className = 'conn-banner show offline';
+    el.textContent = pending ? `📴 Offline — ${pending} change${pending===1?'':'s'} queued` : '📴 Offline — changes will be saved locally';
+  } else if (pending) {
+    el.className = 'conn-banner show pending';
+    el.textContent = `↻ ${pending} change${pending===1?'':'s'} pending — tap to sync`;
+  } else {
+    el.className = 'conn-banner';
+  }
+}
+
+function initConnectivity() {
+  window.addEventListener('online',  () => { updateConnBanner(); flushOutbox(); });
+  window.addEventListener('offline', () => updateConnBanner());
+  updateConnBanner();
+}
+
+// Register the service worker (relative scope so it works at /plazacore-staging/ too).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW register failed:', e));
+  });
+}
+initConnectivity();
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
@@ -6549,12 +6911,11 @@ async function saveDeficiency(id) {
   let res, newId = id;
   if (id) res = await sb.from('deficiencies').update(data).eq('id', id);
   else {
-    res = await sb.from('deficiencies').insert(data).select('id').single();
-    if (!res.error && res.data) { newId = res.data.id; notifyRoute('deficiencies', newId, 'created'); }
+    res = await queueableInsert('deficiencies', data, { select: 'id' });
+    if (!res.error && res.data && !res.queued) { newId = res.data.id; notifyRoute('deficiencies', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save deficiency'); return; }
-  await loadAllData();
-  toast(id ? 'Deficiency updated' : 'Deficiency logged');
+  if (!res.queued) { await loadAllData(); toast(id ? 'Deficiency updated' : 'Deficiency logged'); }
   closeModal();
   render();
 }
@@ -6689,10 +7050,9 @@ async function saveDailyReport(id) {
   };
   let res;
   if (id) res = await sb.from('daily_reports').update(data).eq('id', id);
-  else    res = await sb.from('daily_reports').insert(data);
+  else    res = await queueableInsert('daily_reports', data, { select: false });
   if (res.error) { handleSbError(res.error, 'Save daily report'); return; }
-  await loadAllData();
-  toast(id ? 'Daily log saved' : 'Daily log created');
+  if (!res.queued) { await loadAllData(); toast(id ? 'Daily log saved' : 'Daily log created'); }
   closeModal();
   render();
 }
