@@ -878,8 +878,8 @@
             <table class="data" id="currentSovTable">
               <thead>
                 <tr>
-                  <th style="width:96px;white-space:nowrap;">Item #</th>
-                  <th>Description</th>
+                  <th style="width:120px;min-width:120px;white-space:nowrap;">Item #</th>
+                  <th style="width:auto;">Description</th>
                   <th class="num" style="width:80px;">Qty</th>
                   <th style="width:56px;">Unit</th>
                   <th class="num" style="width:110px;">Unit Price</th>
@@ -2264,7 +2264,7 @@ function renderSov() {
       const altBadge = i.is_alternate ? ' <span class="badge badge-gray" title="Bid alternate — excluded from Contract Sum until added by change order">ALT</span>' : '';
       return `
       <tr${i.is_alternate ? ' style="opacity:0.7;background:rgba(127,127,127,0.06);"' : ''}>
-        <td style="font-weight:600;white-space:nowrap;">${escapeHtml(i.item_no)}${altBadge}</td>
+        <td style="font-weight:600;white-space:nowrap;min-width:120px;">${escapeHtml(i.item_no)}${altBadge}</td>
         <td>${escapeHtml(i.description)}</td>
         <td class="num">${fmtQty(i.quantity)}</td>
         <td>${i.unit ? escapeHtml(i.unit) : '<span class="text-muted">LS</span>'}</td>
