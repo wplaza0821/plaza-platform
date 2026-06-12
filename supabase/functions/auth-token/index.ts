@@ -19,7 +19,7 @@ const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const OWNER_HASH   = Deno.env.get("OWNER_PASSWORD_HASH")!;
 
-const TOKEN_TTL_SECONDS = 60 * 60 * 8; // 8h sessions
+const TOKEN_TTL_SECONDS = 60 * 60 * 12; // 12h sessions (covers a full workday; app also handles expiry gracefully)
 
 const cors = {
   "Access-Control-Allow-Origin": "https://plazacore.plazaandassociates.com",

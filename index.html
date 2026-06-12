@@ -1455,6 +1455,57 @@ async function mintToken(body) {
   } catch (e) { return null; }
 }
 
+// Decode a JWT payload (no verification — display/expiry checks only).
+function decodeJwtPayload(jwt) {
+  try {
+    const part = (jwt || '').split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64 + '==='.slice((b64.length + 3) % 4);
+    return JSON.parse(decodeURIComponent(escape(atob(pad))));
+  } catch (e) { return null; }
+}
+
+// True when the active CUSTOM owner/contractor JWT is missing or expired (with a
+// 60s skew buffer). Native GoTrue sessions auto-refresh, so they're never "expired"
+// here. This is what previously caused privileged edge calls (invite-user /
+// manage-user) to fail with a cryptic `invalid_token` ~8h after login.
+function customJwtExpired() {
+  if (isNative && typeof isNative === 'function' && isNative()) return false;
+  const jwt = AUTH?.jwt;
+  if (!jwt) return true;
+  const p = decodeJwtPayload(jwt);
+  if (!p || !p.exp) return true;
+  return (p.exp * 1000) <= (Date.now() + 60 * 1000);
+}
+
+// Guard to run BEFORE any owner-only privileged edge call. If the owner's custom
+// token has expired, re-mint silently for contractors, or for the owner force a
+// clean re-login (we never store the owner password, so we can't silently renew).
+// Returns true if the session is good to proceed, false if the caller should abort.
+async function ensureFreshPrivilegedSession() {
+  if (!customJwtExpired()) return true;
+  // Contractor: we still hold the long-lived access token -> re-mint transparently.
+  if (AUTH?.role === 'contractor' && AUTH?.token) {
+    const out = await mintToken({ mode: 'contractor', token: AUTH.token });
+    if (out && out.jwt) {
+      setSbAuth(out.jwt);
+      AUTH.jwt = out.jwt;
+      try {
+        const raw = sessionStorage.getItem(SESSION_AUTH_KEY);
+        if (raw) { const s = JSON.parse(raw); s.jwt = out.jwt; sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(s)); }
+      } catch (e) {}
+      return true;
+    }
+  }
+  // Owner (or failed re-mint): session is dead. Surface a clear message + re-login.
+  toast('Your session expired — please sign in again.', 'error');
+  try { sessionStorage.removeItem(SESSION_AUTH_KEY); } catch (e) {}
+  clearSbAuth();
+  if (typeof showLogin === 'function') showLogin();
+  return false;
+}
+
 // signedUrl(bucket, filePath) — always strips bucket-name prefix if accidentally
 // included in filePath, so sync scripts and manual uploads can never break the viewer.
 async function signedUrl(bucket, filePath) {
@@ -4905,6 +4956,7 @@ async function manageUser(action, userId, extra) {
   if (!isOwner()) { toast('Owner only', 'error'); return; }
   const meta = MANAGE_ACTION_META[action] || { confirm: null, busy: 'Working…', done: 'Done' };
   if (meta.confirm && !confirm(meta.confirm)) return;
+  if (!(await ensureFreshPrivilegedSession())) return;
   toast(meta.busy);
   let out = {};
   try {
@@ -4914,7 +4966,18 @@ async function manageUser(action, userId, extra) {
       body: JSON.stringify({ action, user_id: userId, ...(extra||{}) }),
     });
     out = await res.json().catch(()=>({}));
-    if (!res.ok || out.error) { toast('Failed: ' + (out.error || res.status), 'error'); return; }
+    if (!res.ok || out.error) {
+      const expired = res.status === 401 || /invalid_token|missing_authorization/.test(out.error || '');
+      if (expired) {
+        toast('Your session expired — please sign in again.', 'error');
+        try { sessionStorage.removeItem(SESSION_AUTH_KEY); } catch (e) {}
+        clearSbAuth();
+        if (typeof showLogin === 'function') showLogin();
+      } else {
+        toast('Failed: ' + (out.error || res.status), 'error');
+      }
+      return;
+    }
   } catch (e) { toast('Network error: ' + (e.message||e), 'error'); return; }
   toast(meta.done);
   await loadAllData();
@@ -5068,6 +5131,13 @@ async function submitInvite() {
   };
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   try {
+    // Make sure the owner's custom JWT hasn't expired (8h TTL) before calling the
+    // edge fn — otherwise it falls through to GoTrue and returns `invalid_token`.
+    if (!(await ensureFreshPrivilegedSession())) {
+      if (errEl) errEl.textContent = 'Session expired — please sign in again, then retry.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Invite'; }
+      return;
+    }
     const res = await fetch(INVITE_FN_URL, {
       method: 'POST',
       headers: {
@@ -5080,7 +5150,16 @@ async function submitInvite() {
     });
     const out = await res.json().catch(() => ({}));
     if (!res.ok || out.error) {
-      if (errEl) errEl.textContent = out.error || ('Invite failed (' + res.status + ')');
+      const expired = res.status === 401 || /invalid_token|missing_authorization/.test(out.error || '');
+      if (expired) {
+        if (errEl) errEl.textContent = 'Session expired — please sign in again, then resend the invite.';
+        toast('Your session expired — please sign in again.', 'error');
+        try { sessionStorage.removeItem(SESSION_AUTH_KEY); } catch (e) {}
+        clearSbAuth();
+        if (typeof showLogin === 'function') showLogin();
+      } else if (errEl) {
+        errEl.textContent = out.error || ('Invite failed (' + res.status + ')');
+      }
       if (btn) { btn.disabled = false; btn.textContent = 'Send Invite'; }
       return;
     }
