@@ -835,7 +835,6 @@
     <button class="tab" data-tab="daily"><span>📅</span> Daily Log <span class="count" id="cnt-daily">0</span></button>
     <button class="tab" data-tab="milestones"><span>🎯</span> Schedule <span class="count" id="cnt-milestones">0</span></button>
     <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
-    <button class="tab" data-tab="access" data-role-hide="contractor"><span>🔑</span> Access</button>
     <button class="tab" data-tab="users" data-role-show="owner"><span>👥</span> Users</button>
     <button class="tab" data-tab="profile"><span>👤</span> Profile</button>
   </nav>
@@ -1307,36 +1306,6 @@
     </section>
 
     <!-- ========== ACCESS ========== -->
-    <section id="page-access" class="tab-page" data-role-hide="contractor">
-      <div class="page-header">
-        <div>
-          <h1 class="page-title">Contractor Access</h1>
-          <div class="page-subtitle">Generate scoped share links — each contractor sees only the project &amp; modules you grant.</div>
-        </div>
-        <button class="btn btn-primary" onclick="openAccessModal()">＋ New Access Link</button>
-      </div>
-
-      <div class="hint-banner" style="background:var(--gray-100); border-color:var(--gray-200); color:var(--ink);">
-        🔒 Tokens are stored server-side. Revoke any link to disable it instantly across all devices.
-      </div>
-
-      <div class="table-wrap">
-        <table class="data" id="accessTable">
-          <thead>
-            <tr>
-              <th>Contractor</th>
-              <th>Project</th>
-              <th>Modules</th>
-              <th>Created</th>
-              <th>Link</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="accessBody"></tbody>
-        </table>
-      </div>
-    </section>
-
     <!-- ========== USERS (owner-only invite admin) ========== -->
     <section id="page-users" class="tab-page" data-role-show="owner">
       <div class="page-header">
@@ -2031,7 +2000,7 @@ document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => switchTab(t.dataset.tab));
 });
 function switchTab(tab) {
-  if (tab === 'access' && !isOwner()) tab = 'projects';
+  if (tab === 'access') tab = 'users';   // Access section retired — Users is the single access surface
   if (tab === 'users'  && !isOwner()) tab = 'projects';
   // Profile only meaningful for native (email/password) users — legacy
   // owner-pw / contractor-token sessions have no profiles row.
@@ -4962,13 +4931,14 @@ function renderUsers() {
       acts.push(`<button class="btn btn-xs btn-danger" onclick="manageUser('cancel_invite','${u.id}')">✖ Cancel</button>`);
     }
     if (!neverSignedIn && u.active !== false && !isSelf) {
-      acts.push(`<button class="btn btn-xs btn-danger" onclick="manageUser('deactivate','${u.id}')">🚫 Deactivate</button>`);
+      acts.push(`<button class="btn btn-xs btn-secondary" onclick="manageUser('deactivate','${u.id}')">🚫 Suspend</button>`);
     }
     if (u.active === false) {
       acts.push(`<button class="btn btn-xs btn-secondary" onclick="manageUser('reactivate','${u.id}')">↩ Reactivate</button>`);
     }
     if (!isSelf) {
       acts.push(`<button class="btn btn-xs btn-secondary" onclick="openRoleModal('${u.id}')">🔧 Role</button>`);
+      acts.push(`<button class="btn btn-xs btn-danger" onclick="manageUser('remove_user','${u.id}')">🗑 Remove</button>`);
     }
     return `
       <tr>
@@ -4987,8 +4957,9 @@ function renderUsers() {
 const MANAGE_ACTION_META = {
   resend_invite: { confirm: null, busy: 'Resending…', done: 'Invitation resent' },
   cancel_invite: { confirm: 'Cancel this invitation? The pending account will be removed.', busy: 'Cancelling…', done: 'Invitation cancelled' },
-  deactivate:    { confirm: 'Deactivate this user? They will be signed out and blocked from logging in.', busy: 'Deactivating…', done: 'User deactivated' },
+  deactivate:    { confirm: 'Suspend this user? They will be signed out and blocked from logging in (reversible).', busy: 'Suspending…', done: 'User suspended' },
   reactivate:    { confirm: 'Reactivate this user and allow login again?', busy: 'Reactivating…', done: 'User reactivated' },
+  remove_user:   { confirm: 'PERMANENTLY remove this user? This deletes their account and cannot be undone. To temporarily block them instead, use Suspend.', busy: 'Removing…', done: 'User removed' },
 };
 async function manageUser(action, userId, extra) {
   if (!isOwner()) { toast('Owner only', 'error'); return; }
@@ -5317,7 +5288,6 @@ function render() {
     else if (tab === 'daily')         renderDailyReports();
     else if (tab === 'milestones')    renderMilestones();
     else if (tab === 'docs')       renderDocs();
-    else if (tab === 'access')     renderAccess();
     else if (tab === 'users')      renderUsers();
     else if (tab === 'profile')    renderProfile();
   } catch (e) {

@@ -10,8 +10,9 @@
 // Request (POST JSON):
 //   { "action": "resend_invite"  , "user_id": "<uuid>" }
 //   { "action": "cancel_invite"  , "user_id": "<uuid>" }      // deletes the auth user if never signed in
-//   { "action": "deactivate"     , "user_id": "<uuid>" }      // active=false + ban (cannot sign in)
+//   { "action": "deactivate"     , "user_id": "<uuid>" }      // suspend: active=false + ban (cannot sign in)
 //   { "action": "reactivate"     , "user_id": "<uuid>" }
+//   { "action": "remove_user"    , "user_id": "<uuid>" }      // HARD DELETE: removes auth user + profile (any state)
 //   { "action": "set_role"       , "user_id": "<uuid>", "app_role": "staff", "project_id": "<uuid>|null" }
 //   { "action": "set_phone"      , "user_id": "<uuid>", "phone": "+1305..."|null }
 // Response: 200 { ok:true, action, user_id, ... } | 4xx { error }
@@ -110,7 +111,7 @@ Deno.serve(async (req) => {
   const action  = String(body.action || "");
   const userId  = String(body.user_id || "");
   if (!userId) return json({ error: "user_id_required" }, 400);
-  if (userId === callerId && (action === "deactivate" || action === "cancel_invite" || (action === "set_role" && body.app_role !== "owner"))) {
+  if (userId === callerId && (action === "deactivate" || action === "cancel_invite" || action === "remove_user" || (action === "set_role" && body.app_role !== "owner"))) {
     return json({ error: "cannot_demote_or_disable_self" }, 400);
   }
 
@@ -167,6 +168,21 @@ Deno.serve(async (req) => {
         await admin.from("profiles").update({ active: false, updated_at: new Date().toISOString() }).eq("id", userId);
         await logActivity("deactivated", { email: target.email });
         return json({ ok: true, action, user_id: userId, status: "deactivated" });
+      }
+
+      case "remove_user": {
+        // Hard delete: permanently removes the auth user (any state, signed-in or
+        // not). The profiles row drops via ON DELETE cascade; we also delete
+        // explicitly in case the FK isn't cascading. The owner cannot remove self
+        // (guarded above). Audit row is written to a non-cascading table, so it
+        // survives the user deletion.
+        await logActivity("removed", { email: target.email, full_name: target.full_name, app_role: target.app_role });
+        const { error: delErr } = await admin.auth.admin.deleteUser(userId);
+        if (delErr && !/not.*found/i.test(delErr.message)) {
+          return json({ error: delErr.message }, 400);
+        }
+        await admin.from("profiles").delete().eq("id", userId);
+        return json({ ok: true, action, user_id: userId, status: "removed" });
       }
 
       case "reactivate": {
