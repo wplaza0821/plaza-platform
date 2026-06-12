@@ -2734,9 +2734,13 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   // - Draft + owner OR (contractor owns it) → editable
   // - Owner can edit even after submission
   const isDraft = pa.status === 'draft';
-  const ownerCanEdit = isOwner();
+  // Finance is LOCKED once an application is submitted/certified/approved/paid.
+  // Locked apps must display their stored (approved) figures verbatim — never
+  // recompute retainage at the project rate (mobilization draws carry 0% per contract).
+  const financeLocked = ['submitted','approved','approved_as_noted','paid'].includes(pa.status);
+  const ownerCanEdit = isOwner() && !financeLocked;
   const contractorCanEdit = isContractor() && pa.contractor_id === AUTH.contractorId && isDraft;
-  const editable = forceEdit || ownerCanEdit || contractorCanEdit;
+  const editable = (forceEdit && !financeLocked) || ownerCanEdit || contractorCanEdit;
 
   const lines = DATA.payAppLines.filter(l => l.pay_app_id === pa.id);
   // Index by sov_item_id for easy lookup
@@ -2757,7 +2761,9 @@ async function openPayAppModal(payAppId, forceEdit = false) {
       const F = Number(l.materials_stored) || 0;
       const G = D + E + F;
       const I = C - G;
-      const J = G * ((Number(proj.retainage_pct) || 0) / 100);
+      // Locked apps: use stored per-line retainage (Column I variable retainage).
+      // Editable drafts: derive from project rate.
+      const J = financeLocked ? (Number(l.retainage) || 0) : G * ((Number(proj.retainage_pct) || 0) / 100);
       scheduledTotal += C;
       completedTotal += G;
       prevTotal += D;
@@ -2778,7 +2784,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     const G = D + E + F;
     const H = C > 0 ? (G / C) * 100 : 0;
     const I = C - G;
-    const J = G * ((Number(proj.retainage_pct) || 0) / 100);
+    const J = financeLocked ? (Number(l.retainage) || 0) : G * ((Number(proj.retainage_pct) || 0) / 100);
     const over = G > C + 0.01;
     return `
       <tr data-sov="${si.id}" class="${over ? 'overbilled' : ''}">
@@ -2827,7 +2833,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
 
       <div class="sov-section-head" style="margin-top:18px;">
         <div class="sov-section-title">G703 — Continuation Sheet</div>
-        <div class="sov-meta">SOV v${pa.sov_version || 1} · Retainage ${proj.retainage_pct}%</div>
+        <div class="sov-meta">SOV v${pa.sov_version || 1} · Retainage ${financeLocked ? 'as certified' : proj.retainage_pct + '%'}</div>
       </div>
       <div class="table-wrap" style="max-height:420px; overflow:auto;">
         <table class="data" id="paLineTable">
