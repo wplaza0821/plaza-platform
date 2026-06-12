@@ -2292,10 +2292,15 @@ function renderSov() {
   const retainage = last ? Number(last.retainage_held) : 0;
   const netToDate = last ? Number(last.total_earned_less_retainage) : 0;
   const balance = revisedContract - completed;
+  // Only call it "Revised Contract" when an approved change order has actually
+  // revised it. With zero COs the contract sum == the signed contract, so the
+  // tile reads "Contract Sum" to avoid implying a revision that never happened.
+  const hasRevision = coTotal !== 0;
+  const contractTileLabel = hasRevision ? 'Revised Contract' : 'Contract Sum';
   document.getElementById('sov-tiles').innerHTML = `
     <div class="tile"><div class="tile-label">Original Contract</div><div class="tile-value">${fmt$(proj.contract_value)}</div></div>
     <div class="tile"><div class="tile-label">Approved COs</div><div class="tile-value">${fmt$(coTotal)}</div></div>
-    <div class="tile"><div class="tile-label">Revised Contract</div><div class="tile-value">${fmt$(revisedContract)}</div></div>
+    <div class="tile"><div class="tile-label">${contractTileLabel}</div><div class="tile-value">${fmt$(revisedContract)}</div></div>
     <div class="tile"><div class="tile-label">Completed to Date</div><div class="tile-value pos">${fmt$(completed)}</div></div>
     <div class="tile"><div class="tile-label">Retainage Held</div><div class="tile-value">${fmt$(retainage)}</div></div>
     <div class="tile"><div class="tile-label">Balance to Finish</div><div class="tile-value">${fmt$(balance)}</div></div>
@@ -3686,7 +3691,7 @@ function renderCos() {
     <div class="tile"><div class="tile-label">Original Contract</div><div class="tile-value">${fmt$(proj?.contract_value || 0)}</div></div>
     <div class="tile"><div class="tile-label">Approved COs</div><div class="tile-value pos">${fmt$(approvedTotal)}</div><div class="tile-sub">${approved.length} executed</div></div>
     <div class="tile"><div class="tile-label">Pending / PCO</div><div class="tile-value">${fmt$(pendingTotal)}</div><div class="tile-sub">${pending.length} open</div></div>
-    <div class="tile"><div class="tile-label">Revised Contract</div><div class="tile-value pos">${fmt$(revised)}</div></div>
+    <div class="tile"><div class="tile-label">${approvedTotal !== 0 ? 'Revised Contract' : 'Contract Sum'}</div><div class="tile-value pos">${fmt$(revised)}</div></div>
   `;
 
   const body = document.getElementById('coBody');
