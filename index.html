@@ -1584,7 +1584,7 @@ function isContractor() { return AUTH && AUTH.role === 'contractor'; }
 function isNative()     { return AUTH && AUTH.native === true; }
 
 function defaultContractorModules() {
-  return { rfis: true, submittals: true, payapps: true, plans: true };
+  return { rfis: true, submittals: true, payapps: true, plans: true, cos: true };
 }
 
 function canEdit(scope) {
@@ -1596,6 +1596,7 @@ function canEdit(scope) {
   if (scope === 'rfis')       return !!p.rfis;
   if (scope === 'submittals') return !!p.submittals;
   if (scope === 'payapps')    return !!p.payapps;
+  if (scope === 'cos')        return !!p.cos;
   return false;
 }
 function canView(scope) {
@@ -1796,7 +1797,7 @@ function applyRoleBodyClasses() {
     if (!canEdit('payapps'))    body.classList.add('perm-no-edit-payapps');
     if (!canEdit('rfis'))       body.classList.add('perm-no-edit-rfis');
     if (!canEdit('submittals')) body.classList.add('perm-no-edit-subs');
-    body.classList.add('perm-no-edit-cos');
+    if (!canEdit('cos'))        body.classList.add('perm-no-edit-cos');
     body.classList.add('perm-no-edit-docs');
     body.classList.add('perm-no-edit-projects');
     // Layer 2: contractors MAY create/advance tasks on their project (RLS allows insert),
@@ -1809,7 +1810,7 @@ function applyRoleBodyClasses() {
     if (!canView('payapps'))    body.classList.add('perm-no-view-payapps');
     if (!canView('rfis'))       body.classList.add('perm-no-view-rfis');
     if (!canView('submittals')) body.classList.add('perm-no-view-subs');
-    body.classList.add('perm-no-view-cos');
+    if (!canView('cos'))        body.classList.add('perm-no-view-cos');
     if (!canView('plans'))      body.classList.add('perm-no-view-docs');
   } else if (isMember()) {
     // members: read everything, edit nothing EXCEPT tasks (Layer 2: members may
