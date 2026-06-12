@@ -2787,7 +2787,8 @@ function previousCertificatesTotal(projectId, excludePayAppId = null) {
 async function newPayAppFlow() {
   const proj = activeProject();
   if (!proj) { toast('Select a project first'); return; }
-  const sovItems = currentSovItems(proj.id);
+  // Bill the executed contract only — exclude bid alternates (added via change order).
+  const sovItems = currentSovItems(proj.id).filter(i => !i.is_alternate);
   if (!sovItems.length) {
     toast('No SOV published yet — owner must publish the SOV first', 'error');
     return;
@@ -2845,8 +2846,11 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   if (!pa) { toast('Pay app not found', 'error'); return; }
   const proj = getProject(pa.project_id);
   const contractor = DATA.contractors.find(c => c.id === pa.contractor_id);
+  // Pay apps bill the executed contract only: exclude bid alternates (they enter
+  // the contract via change order, not the base SOV). Keeps the schedule total
+  // equal to the Contract Sum.
   const sovItems = DATA.sovItems
-    .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1))
+    .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1) && !i.is_alternate)
     .sort((a,b) => (a.sort_order || 0) - (b.sort_order || 0));
 
   // Determine editability:
