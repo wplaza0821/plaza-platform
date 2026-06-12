@@ -2203,11 +2203,23 @@ function openProjectModal(projectId) {
         <label class="form-label">Progress Override % <span style="font-weight:400;color:var(--gray-400);text-transform:none;letter-spacing:0;">(design/pre-construction only — leave blank to calculate from Pay Apps)</span></label>
         <input id="f-progress" type="number" min="0" max="100" step="1" placeholder="e.g. 15" value="${editing?.progress_override ?? ''}" />
       </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Project Manager <span style="font-weight:400;color:var(--gray-400);text-transform:none;letter-spacing:0;">(gets notified on all activity)</span></label>
+          <select id="f-pm">${projectPeopleOptions(editing?.pm_id)}</select></div>
+        <div><label class="form-label">Client / Property Mgr <span style="font-weight:400;color:var(--gray-400);text-transform:none;letter-spacing:0;">(gets notified on all activity)</span></label>
+          <select id="f-client">${projectPeopleOptions(editing?.client_id)}</select></div>
+      </div>
     `,
     footer: editing
       ? `<button class="btn btn-danger" onclick="deleteProject('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="save-proj-btn" onclick="saveProject('${editing.id}')">Save</button>`
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="save-proj-btn" onclick="saveProject()">Create Project</button>`
   });
+}
+// Build <option>s for PM/Client pickers from all active profiles.
+function projectPeopleOptions(selectedId) {
+  const people = (DATA.profiles || []).filter(p => p.active !== false);
+  return '<option value="">— None —</option>' + people.map(p =>
+    `<option value="${p.id}" ${selectedId === p.id ? 'selected' : ''}>${escapeHtml(p.full_name || p.email || p.id.slice(0,8))}${p.app_role ? ' ('+escapeHtml(ROLE_LABELS[p.app_role]||p.app_role)+')' : ''}</option>`).join('');
 }
 function nextProjectCode() {
   const nums = DATA.projects.map(p => parseInt(p.code, 10)).filter(n => !isNaN(n));
@@ -2225,6 +2237,8 @@ async function saveProject(id) {
     contract_value:     Number(document.getElementById('f-sum').value) || 0,
     retainage_pct:      Number(document.getElementById('f-ret').value) || 10,
     progress_override:  document.getElementById('f-progress').value !== '' ? Math.min(100, Math.max(0, parseInt(document.getElementById('f-progress').value))) : null,
+    pm_id:     document.getElementById('f-pm').value || null,
+    client_id: document.getElementById('f-client').value || null,
   };
   if (!data.name) { toast('Project name required'); if (btn) btn.disabled = false; return; }
   if (!data.code) { toast('Project code required'); if (btn) btn.disabled = false; return; }
