@@ -28,10 +28,30 @@
 // requires it to equal 'owner'.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
 
 const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
+const JWT_SECRET    = Deno.env.get("JWT_SECRET")!;
+
+// Verifies the custom owner JWT minted by the auth-token function (owner-password
+// login path). Returns true only for a valid, unexpired token with user_role=owner.
+async function isCustomOwnerToken(token: string): Promise<boolean> {
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(JWT_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const payload = await verify(token, key);
+    return payload?.iss === "plazacore-auth" && payload?.user_role === "owner";
+  } catch {
+    return false;
+  }
+}
 
 // CORS locked to the prod origin, mirroring auth-token.
 const cors = {
@@ -63,24 +83,32 @@ Deno.serve(async (req) => {
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!token) return json({ error: "missing_authorization" }, 401);
 
-  // Resolve the caller from their JWT using a request-scoped client.
-  const caller = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false },
-  });
-  const { data: userData, error: userErr } = await caller.auth.getUser();
-  if (userErr || !userData?.user) return json({ error: "invalid_token" }, 401);
-  const callerId = userData.user.id;
+  // Two valid owner login paths:
+  //  (a) owner-password login -> custom JWT signed with JWT_SECRET (iss=plazacore-auth)
+  //  (b) native email/password -> real GoTrue session token
+  // Accept either. (a) is verified by signature; (b) is verified via GoTrue + profiles.
+  let callerId: string | null = null;
+  const customOwner = await isCustomOwnerToken(token);
+  if (!customOwner) {
+    // Resolve the caller from their GoTrue JWT using a request-scoped client.
+    const caller = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+    const { data: userData, error: userErr } = await caller.auth.getUser();
+    if (userErr || !userData?.user) return json({ error: "invalid_token" }, 401);
+    callerId = userData.user.id;
 
-  // Authoritative role check: read the caller's profile with service role.
-  const { data: prof, error: profErr } = await admin
-    .from("profiles")
-    .select("app_role, active")
-    .eq("id", callerId)
-    .maybeSingle();
-  if (profErr) return json({ error: "profile_lookup_failed" }, 500);
-  if (!prof || prof.app_role !== "owner" || prof.active === false) {
-    return json({ error: "forbidden_owner_only" }, 403);
+    // Authoritative role check: read the caller's profile with service role.
+    const { data: prof, error: profErr } = await admin
+      .from("profiles")
+      .select("app_role, active")
+      .eq("id", callerId)
+      .maybeSingle();
+    if (profErr) return json({ error: "profile_lookup_failed" }, 500);
+    if (!prof || prof.app_role !== "owner" || prof.active === false) {
+      return json({ error: "forbidden_owner_only" }, 403);
+    }
   }
 
   // ---------- 2. Parse + validate input ----------

@@ -17,11 +17,31 @@
 // Response: 200 { ok:true, action, user_id, ... } | 4xx { error }
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
+const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const REDIRECT_TO  = "https://plazacore.plazaandassociates.com";
+
+// Verifies the custom owner JWT minted by the auth-token function (owner-password
+// login path). Returns true only for a valid, unexpired token with user_role=owner.
+async function isCustomOwnerToken(token: string): Promise<boolean> {
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(JWT_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const payload = await verify(token, key);
+    return payload?.iss === "plazacore-auth" && payload?.user_role === "owner";
+  } catch {
+    return false;
+  }
+}
 
 // CORS: allow prod + staging origins (echo the caller's origin if allowed).
 const ALLOWED_ORIGINS = [
@@ -61,19 +81,27 @@ Deno.serve(async (req) => {
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!token) return json({ error: "missing_authorization" }, 401);
 
-  const caller = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false },
-  });
-  const { data: userData, error: userErr } = await caller.auth.getUser();
-  if (userErr || !userData?.user) return json({ error: "invalid_token" }, 401);
-  const callerId = userData.user.id;
+  // Two valid owner login paths: custom owner-password JWT (iss=plazacore-auth,
+  // signed with JWT_SECRET) OR a real GoTrue session. Accept either.
+  let callerId: string | null = null;
+  let callerEmail: string | null = null;
+  const customOwner = await isCustomOwnerToken(token);
+  if (!customOwner) {
+    const caller = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+    const { data: userData, error: userErr } = await caller.auth.getUser();
+    if (userErr || !userData?.user) return json({ error: "invalid_token" }, 401);
+    callerId = userData.user.id;
 
-  const { data: callerProf, error: profErr } = await admin
-    .from("profiles").select("app_role, active, email").eq("id", callerId).maybeSingle();
-  if (profErr) return json({ error: "profile_lookup_failed" }, 500);
-  if (!callerProf || callerProf.app_role !== "owner" || callerProf.active === false) {
-    return json({ error: "forbidden_owner_only" }, 403);
+    const { data: callerProf, error: profErr } = await admin
+      .from("profiles").select("app_role, active, email").eq("id", callerId).maybeSingle();
+    if (profErr) return json({ error: "profile_lookup_failed" }, 500);
+    if (!callerProf || callerProf.app_role !== "owner" || callerProf.active === false) {
+      return json({ error: "forbidden_owner_only" }, 403);
+    }
+    callerEmail = callerProf.email ?? null;
   }
 
   // ---------- 2. Parse ----------
@@ -96,7 +124,7 @@ Deno.serve(async (req) => {
   // helper: write audit row as the owner (actor = caller).
   const logActivity = async (act: string, detail: Record<string, unknown>) => {
     await admin.from("user_activity").insert({
-      actor_id: callerId, actor_email: callerProf.email,
+      actor_id: callerId, actor_email: callerEmail ?? "owner-password",
       subject_id: userId, action: act,
       project_id: target.project_id ?? null, detail,
     });
