@@ -1869,6 +1869,7 @@ const DATA = {
   milestones: [],
   profiles: [],         // Phase B: native auth user profiles (RLS-scoped)
   users: [],            // Phase 4-07: owner-only directory (plz_users) w/ last_sign_in_at
+  projectMembers: [],   // Phase 6: {user_id, project_id} multi-project membership
   notifications: [],    // Phase B Layer 3: in-app notifications (RLS-scoped to user)
 };
 
@@ -1899,9 +1900,11 @@ async function loadAllData() {
   // Phase 4-07: owner-only user directory w/ last_sign_in_at + activity counts.
   // RPC raises 'forbidden' for non-owners -> soft-handled (DATA.users stays []).
   const usersP = sb.rpc('plz_users');
+  // Phase 6: per-user project memberships (owner reads all; others read own).
+  const pmP = sb.from('project_members').select('user_id, project_id');
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, prf, dash, tpl, usr] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, prfP, dashP, tplP, usersP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, prf, dash, tpl, usr, pm] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, prfP, dashP, tplP, usersP, pmP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1948,6 +1951,7 @@ async function loadAllData() {
   // Owner user directory (plz_users). Non-owners get an error -> empty; fall
   // back to profiles so assignee pickers still work.
   DATA.users         = (usr && !usr.error && Array.isArray(usr.data)) ? usr.data : [];
+  DATA.projectMembers = (pm && !pm.error && Array.isArray(pm.data)) ? pm.data : [];
 
   // Phase B Layer 3: load in-app notifications for native users (RLS-scoped).
   // Cheap, isolated select; failures are swallowed inside loadNotifications.
@@ -4946,9 +4950,18 @@ function renderUsers() {
     return;
   }
   body.innerHTML = list.map(u => {
-    const proj = u.project_id ? getProject(u.project_id) : null;
-    const projLabel = proj ? (escapeHtml(proj.code) + ' — ' + escapeHtml(proj.name))
-                           : '<span class="text-muted">All projects</span>';
+    // Phase 6: projects come from project_members (multi). Owner/staff = all projects.
+    const memberPids = (DATA.projectMembers || []).filter(m => m.user_id === u.id).map(m => m.project_id);
+    let projLabel;
+    if (u.app_role === 'owner' || u.app_role === 'staff') {
+      projLabel = '<span class="text-muted">All projects</span>';
+    } else if (memberPids.length) {
+      const codes = memberPids.map(pid => { const p = getProject(pid); return p ? escapeHtml(p.code) : null; }).filter(Boolean);
+      projLabel = codes.length <= 2 ? codes.join(', ')
+        : `${codes.slice(0,2).join(', ')} <span class="text-muted">+${codes.length-2} more</span>`;
+    } else {
+      projLabel = '<span class="text-muted">None</span>';
+    }
     // last_sign_in_at comes from plz_users(); invite_pending = never signed in.
     const neverSignedIn = ('last_sign_in_at' in u) ? !u.last_sign_in_at : !u.accepted_at;
     const lastLogin = u.last_sign_in_at
@@ -4972,6 +4985,9 @@ function renderUsers() {
     }
     if (u.active === false) {
       acts.push(`<button class="btn btn-xs btn-secondary" onclick="manageUser('reactivate','${u.id}')">↩ Reactivate</button>`);
+    }
+    if (u.app_role !== 'owner' && u.app_role !== 'staff') {
+      acts.push(`<button class="btn btn-xs btn-secondary" onclick="openProjectsModal('${u.id}')">🏗 Projects</button>`);
     }
     if (!isSelf) {
       acts.push(`<button class="btn btn-xs btn-secondary" onclick="openRoleModal('${u.id}')">🔧 Role</button>`);
@@ -5062,6 +5078,65 @@ async function submitRoleChange(userId) {
   if (out && out.ok) closeModal();
 }
 window.submitRoleChange = submitRoleChange;
+
+// ── Phase 6: multi-project assignment (project_members) ──────────────────────
+// Owner assigns any number of projects to a member/contractor from ONE invite.
+// Writes directly to project_members (owner RLS); takes effect instantly for the
+// target user (plz_has_project reads the table live — no re-login needed).
+function openProjectsModal(userId) {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const u = (DATA.users||[]).find(x => x.id === userId) || (DATA.profiles||[]).find(x => x.id === userId);
+  if (!u) { toast('User not found', 'error'); return; }
+  if (u.app_role === 'owner' || u.app_role === 'staff') {
+    toast('Owner & staff already have access to all projects', 'info'); return;
+  }
+  const assigned = new Set((DATA.projectMembers||[]).filter(m => m.user_id === userId).map(m => m.project_id));
+  const rows = (DATA.projects||[]).map(p => `
+    <label style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border,#eee);cursor:pointer;">
+      <input type="checkbox" class="up-proj" value="${p.id}" ${assigned.has(p.id)?'checked':''} style="width:17px;height:17px;" />
+      <span><strong>${escapeHtml(p.code)}</strong> — ${escapeHtml(p.name)}</span>
+    </label>`).join('');
+  showModal({
+    title: `Projects — ${escapeHtml(u.full_name || u.email)}`,
+    body: `
+      <p class="text-sm text-muted" style="margin-bottom:8px;">Select every project this user should access. Changes apply immediately — no new invite needed.</p>
+      <div style="max-height:340px;overflow:auto;">${rows || '<div class="empty">No projects yet</div>'}</div>
+      <div class="login-error" id="up-error"></div>`,
+    footer: `<div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveUserProjects('${userId}')">Save</button>`,
+  });
+}
+window.openProjectsModal = openProjectsModal;
+
+async function saveUserProjects(userId) {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const checked = new Set(Array.from(document.querySelectorAll('.up-proj:checked')).map(el => el.value));
+  const current = new Set((DATA.projectMembers||[]).filter(m => m.user_id === userId).map(m => m.project_id));
+  const toAdd = [...checked].filter(pid => !current.has(pid));
+  const toRemove = [...current].filter(pid => !checked.has(pid));
+  if (!toAdd.length && !toRemove.length) { closeModal(); return; }
+  const errEl = document.getElementById('up-error');
+  try {
+    if (toAdd.length) {
+      const rows = toAdd.map(pid => ({ user_id: userId, project_id: pid }));
+      const { error } = await sb.from('project_members').upsert(rows, { onConflict: 'user_id,project_id' });
+      if (error) throw error;
+    }
+    for (const pid of toRemove) {
+      const { error } = await sb.from('project_members').delete().eq('user_id', userId).eq('project_id', pid);
+      if (error) throw error;
+    }
+    toast('Projects updated');
+    closeModal();
+    await loadAllData();
+    renderUsers();
+  } catch (e) {
+    if (errEl) errEl.textContent = 'Could not update projects: ' + (e.message || e);
+    else toast('Could not update projects', 'error');
+  }
+}
+window.saveUserProjects = saveUserProjects;
 
 // Per-user activity feed drawer (owner-only RPC plz_user_activity).
 const ACTIVITY_LABELS = {
