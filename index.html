@@ -1580,6 +1580,9 @@ function isOwner()      { return AUTH && AUTH.role === 'owner'; }
 function isStaff()      { return AUTH && AUTH.role === 'staff'; }
 function isMember()     { return AUTH && AUTH.role === 'member'; }
 function isContractor() { return AUTH && AUTH.role === 'contractor'; }
+// Per-user financial lockout (profiles.perms.no_financials) — mirrors the RLS
+// gate plz_no_financials() so the UI hides what the DB already refuses to serve.
+function noFinancials() { return !!(AUTH && AUTH.permissions && AUTH.permissions.no_financials); }
 // Native (email/password) login vs legacy custom-JWT (owner-pw / contractor-token).
 function isNative()     { return AUTH && AUTH.native === true; }
 
@@ -1820,6 +1823,13 @@ function applyRoleBodyClasses() {
        body.classList.add('perm-no-edit-' + s));
   }
   // staff & owner: full edit, no perm-block classes.
+  // Financial lockout (any role flagged no_financials): hide Pay Apps + Change
+  // Orders tabs/pages entirely. RLS already returns nothing; this hides the
+  // empty shells so flagged users (e.g. field inspectors) never see financials.
+  if (noFinancials() && !isOwner()) {
+    body.classList.add('perm-no-view-payapps');
+    body.classList.add('perm-no-view-cos');
+  }
 }
 
 function renderRoleIndicator() {
@@ -2147,7 +2157,7 @@ function renderProjects() {
         <div class="project-stats">
           <div>
             <div class="stat-label">Contract</div>
-            <div class="stat-value">${fmt$(p.contract_value)}</div>
+            <div class="stat-value">${noFinancials() && !isOwner() ? '—' : fmt$(p.contract_value)}</div>
           </div>
           <div>
             <div class="stat-label">Open Items</div>
