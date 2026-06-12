@@ -1633,6 +1633,39 @@ function authFromNativeSession(session) {
   };
 }
 
+// Make project/role re-assignments take effect INSTANTLY (on next page load)
+// instead of only after a manual sign-out. The Access Token Hook bakes
+// project_id/user_role/perms into the JWT at mint time, and RLS reads them from
+// the token — so a session minted before an assignment carries stale claims.
+// Here we compare the live profile against the current token's claims; if they
+// diverge we call refreshSession(), which re-runs the hook and issues a fresh
+// token with the correct claims. Returns the (possibly refreshed) session.
+async function reconcileNativeClaims(session) {
+  try {
+    const uid = session?.user?.id;
+    if (!uid) return session;
+    const claims = decodeJwt(session.access_token) || {};
+    const { data: prof, error } = await sb
+      .from('profiles')
+      .select('project_id, app_role, active')
+      .eq('id', uid)
+      .maybeSingle();
+    if (error || !prof) return session;
+    const liveProj = prof.project_id || null;
+    const liveRole = prof.app_role || null;
+    const tokProj  = claims.project_id || null;
+    const tokRole  = claims.user_role || null;
+    if (prof.active && (liveProj !== tokProj || liveRole !== tokRole)) {
+      const { data, error: rErr } = await sb.auth.refreshSession();
+      if (!rErr && data?.session?.access_token) {
+        setSbAuth(data.session.access_token);
+        return data.session;
+      }
+    }
+  } catch (e) {}
+  return session;
+}
+
 async function tryBootAuth() {
   const params = new URLSearchParams(window.location.search);
   const key = params.get('key');
@@ -1663,8 +1696,10 @@ async function tryBootAuth() {
   }
   // Phase B: native (email/password) session takes priority on boot/restore.
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    let { data: { session } } = await sb.auth.getSession();
     if (session && session.access_token) {
+      // Pull fresh claims if the profile changed since this token was minted.
+      session = await reconcileNativeClaims(session);
       setSbAuth(session.access_token);
       const a = authFromNativeSession(session);
       if (a && a.role && a.role !== 'none') {
