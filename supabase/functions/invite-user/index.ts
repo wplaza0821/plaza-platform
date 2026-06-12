@@ -53,12 +53,22 @@ async function isCustomOwnerToken(token: string): Promise<boolean> {
   }
 }
 
-// CORS locked to the prod origin, mirroring auth-token.
-const cors = {
-  "Access-Control-Allow-Origin": "https://plazacore.plazaandassociates.com",
-  "Access-Control-Allow-Headers": "content-type, apikey, authorization",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+// CORS: allow prod + staging origins (echo the caller's origin if allowed),
+// mirroring manage-user so the Add User panel works from either URL.
+const ALLOWED_ORIGINS = [
+  "https://plazacore.plazaandassociates.com",
+  "https://wplaza0821.github.io",
+];
+function corsFor(req: Request) {
+  const origin = req.headers.get("origin") || "";
+  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Vary": "Origin",
+    "Access-Control-Allow-Headers": "content-type, apikey, authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
 
 const ALLOWED_ROLES = ["owner", "staff", "member", "contractor"];
 
@@ -67,14 +77,14 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { persistSession: false },
 });
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...cors, "content-type": "application/json" },
-  });
-}
-
 Deno.serve(async (req) => {
+  const cors = corsFor(req);
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...cors, "content-type": "application/json" },
+    });
+
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
