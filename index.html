@@ -1145,6 +1145,7 @@
         <table class="data" id="frTable">
           <thead>
             <tr>
+              <th style="width:90px;">Report #</th>
               <th>File Name</th>
               <th style="width:110px;">Date</th>
               <th style="width:160px;">Type</th>
@@ -6796,14 +6797,26 @@ function renderFieldReports() {
     .filter(r => r.project_id === proj.id && r.file_path)
     .filter(r => !search || (r.file_name || '').toLowerCase().includes(search));
 
+  // Sort cleanly by report number: group by type prefix (FR/SI/SM/...), then by
+  // the numeric portion ascending so FR-002 < FR-010 (not lexical). Falls back
+  // to visit_date then file_name when a report has no parseable number.
+  const parseRN = (r) => {
+    const rn = r.report_number || '';
+    const m = rn.match(/^([A-Za-z]+)[-_ ]?(\d+)/);
+    if (m) return { pre: m[1].toUpperCase(), num: parseInt(m[2], 10) };
+    return { pre: '~', num: Number.MAX_SAFE_INTEGER };
+  };
   list.sort((a, b) => {
+    const ra = parseRN(a), rb = parseRN(b);
+    if (ra.pre !== rb.pre) return ra.pre.localeCompare(rb.pre);
+    if (ra.num !== rb.num) return ra.num - rb.num;
     const dateDiff = (b.visit_date || '').localeCompare(a.visit_date || '');
     if (dateDiff !== 0) return dateDiff;
-    return (a.file_name || a.report_number || '').localeCompare(b.file_name || b.report_number || '');
+    return (a.file_name || '').localeCompare(b.file_name || '');
   });
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No reports on file</div><div class="empty-sub">Reports sync automatically from Dropbox.</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No reports on file</div><div class="empty-sub">Reports sync automatically from Dropbox.</div></div></td></tr>`;
     return;
   }
 
@@ -6815,7 +6828,8 @@ function renderFieldReports() {
 
   body.innerHTML = list.map(r => `
     <tr>
-      <td style="font-weight:500;">${escapeHtml(r.file_name || r.report_number || '—')}</td>
+      <td style="font-weight:600;white-space:nowrap;">${escapeHtml(r.report_number || '—')}</td>
+      <td style="font-weight:500;">${escapeHtml(r.file_name || '—')}</td>
       <td>${fmtDate(r.visit_date)}</td>
       <td>${escapeHtml(typeLabels[r.report_type] || r.report_type || '—')}</td>
       <td>
