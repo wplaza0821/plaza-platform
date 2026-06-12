@@ -2171,7 +2171,11 @@ function currentSovItems(projectId) {
     .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 }
 function sovTotal(projectId) {
-  return currentSovItems(projectId).reduce((s, i) => s + Number(i.scheduled_value || 0), 0);
+  // Contract total EXCLUDES bid alternates (added back only via change order)
+  return currentSovItems(projectId).filter(i => !i.is_alternate).reduce((s, i) => s + Number(i.scheduled_value || 0), 0);
+}
+function sovAlternatesTotal(projectId) {
+  return currentSovItems(projectId).filter(i => i.is_alternate).reduce((s, i) => s + Number(i.scheduled_value || 0), 0);
 }
 
 function projectPayApps(projectId) {
@@ -2255,11 +2259,12 @@ function renderSov() {
       const done  = Number(completedMap[i.id] || 0);
       const bal   = sched - done;
       const pct   = sched > 0 ? (done / sched) * 100 : 0;
-      totCompleted += done;
+      if (!i.is_alternate) totCompleted += done;
       const hasUnit = (i.unit_price !== null && i.unit_price !== undefined && i.unit_price !== '');
+      const altBadge = i.is_alternate ? ' <span class="badge badge-gray" title="Bid alternate — excluded from Contract Sum until added by change order">ALT</span>' : '';
       return `
-      <tr>
-        <td style="font-weight:600;">${escapeHtml(i.item_no)}</td>
+      <tr${i.is_alternate ? ' style="opacity:0.7;background:rgba(127,127,127,0.06);"' : ''}>
+        <td style="font-weight:600;">${escapeHtml(i.item_no)}${altBadge}</td>
         <td>${escapeHtml(i.description)}</td>
         <td class="num">${fmtQty(i.quantity)}</td>
         <td>${i.unit ? escapeHtml(i.unit) : '<span class="text-muted">LS</span>'}</td>
@@ -2272,6 +2277,15 @@ function renderSov() {
     }).join('');
     const totBal = sovSum - totCompleted;
     const totPct = sovSum > 0 ? (totCompleted / sovSum) * 100 : 0;
+    const altSum = sovAlternatesTotal(proj.id);
+    const altRow = altSum > 0 ? `
+      <tr style="opacity:0.75;">
+        <td colspan="5">Bid Alternates (excluded — add via change order)</td>
+        <td class="num">${fmt$2(altSum)}</td>
+        <td class="num">—</td>
+        <td class="num"></td>
+        <td class="num"></td>
+      </tr>` : '';
     document.getElementById('currentSovFoot').innerHTML = `
       <tr>
         <td colspan="5">TOTAL CONTRACT VALUE (SOV v${sovVer})</td>
@@ -2279,7 +2293,7 @@ function renderSov() {
         <td class="num">${fmt$2(totCompleted)}</td>
         <td class="num">${sovPctCell(totPct)}</td>
         <td class="num ${totBal < 0 ? 'neg' : ''}">${fmt$2(totBal)}</td>
-      </tr>
+      </tr>${altRow}
     `;
   }
 
@@ -2599,12 +2613,14 @@ function openSovAdminModal() {
       scheduled_value: Number(s.scheduled_value),
       sort_order: idx,
       locked: true,
+      is_alternate: !!s.is_alternate,
     }));
     const { error } = await sb.from('sov_items').insert(rows);
     if (error) { handleSbError(error, 'Publish SOV'); btn.disabled = false; btn.textContent = 'Publish'; return; }
 
     // Also bump project contract_value to sov total if currently 0 or explicit
-    const totalVal = rows.reduce((a, r) => a + r.scheduled_value, 0);
+    // (alternates excluded — they enter the Contract Sum only via change order)
+    const totalVal = rows.filter(r => !r.is_alternate).reduce((a, r) => a + r.scheduled_value, 0);
     if (!proj.contract_value || Number(proj.contract_value) === 0) {
       await sb.from('projects').update({ contract_value: totalVal }).eq('id', proj.id);
     }
