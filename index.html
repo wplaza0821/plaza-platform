@@ -1174,6 +1174,7 @@
       <div class="toolbar" style="margin-top:-8px;">
         <div class="filter-bar" id="defStatusFilters" style="margin:0;">
           <span class="chip active" data-filter="all">Any Status</span>
+          <span class="chip" data-filter="needs_followup">🔔 Needs Follow-up</span>
           <span class="chip" data-filter="open">Open</span>
           <span class="chip" data-filter="in_repair">In Repair</span>
           <span class="chip" data-filter="repaired">Repaired</span>
@@ -1192,6 +1193,7 @@
               <th>Severity</th>
               <th>Responsible</th>
               <th>Due</th>
+              <th>Follow-up</th>
               <th>Status</th>
               <th style="width:140px;"></th>
             </tr>
@@ -1772,6 +1774,7 @@ const DATA = {
   photos: [],
   field_reports: [],
   deficiencies: [],
+  deficiency_followups: [],
   daily_reports: [],
   milestones: [],
   profiles: [],         // Phase B: native auth user profiles (RLS-scoped)
@@ -1794,6 +1797,7 @@ async function loadAllData() {
   const phP   = sb.from('photos').select('*').order('created_at', { ascending: false });
   const frP   = sb.from('field_reports').select('*').order('visit_date', { ascending: false });
   const dfP   = sb.from('deficiencies').select('*').order('created_at', { ascending: false });
+  const dfuP  = sb.from('deficiency_followups').select('*').order('created_at', { ascending: false });
   const dlP   = sb.from('daily_reports').select('*').order('report_date', { ascending: false });
   const msP   = sb.from('milestones').select('*').order('sort_order', { ascending: true });
   // Phase B: profiles. RLS returns own row to anyone; owner/staff get the full
@@ -1806,8 +1810,8 @@ async function loadAllData() {
   // RPC raises 'forbidden' for non-owners -> soft-handled (DATA.users stays []).
   const usersP = sb.rpc('plz_users');
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dl, ms, prf, dash, tpl, usr] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dlP, msP, prfP, dashP, tplP, usersP
+  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, prf, dash, tpl, usr] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, prfP, dashP, tplP, usersP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1825,6 +1829,7 @@ async function loadAllData() {
   softErr(ph, 'Loading photos');
   softErr(fr, 'Loading field reports');
   softErr(df, 'Loading deficiencies');
+  softErr(dfu, 'Loading deficiency follow-ups');
   softErr(dl, 'Loading daily reports');
   softErr(ms, 'Loading milestones');
 
@@ -1842,6 +1847,7 @@ async function loadAllData() {
   DATA.photos        = ph.data || [];
   DATA.field_reports = fr.data || [];
   DATA.deficiencies  = df.data || [];
+  DATA.deficiency_followups = dfu.data || [];
   DATA.daily_reports = dl.data || [];
   DATA.milestones    = ms.data || [];
   softErr(prf, 'Loading profiles');
@@ -3764,13 +3770,34 @@ async function getPdfJs() {
   return _pdfjs;
 }
 
-const _thumbCache = {};  // docId → objectURL or 'error'
+const _thumbCache = {};      // "docId:page" → objectURL or 'error'
+const _docPageCounts = {};   // docId → number of PDF pages (Fieldwire-style per-sheet split)
+const _pdfDocCache = {};      // docId → loaded pdf.js doc (reused across page thumbs)
 
-async function renderDocThumb(docId, container) {
-  if (_thumbCache[docId]) {
-    if (_thumbCache[docId] === 'error') return;
+// Lazily resolve (and cache) the page count for a PDF document, then re-render
+// the documents grid so each page becomes its own thumbnail tile.
+async function getDocPageCount(doc) {
+  if (_docPageCounts[doc.id] != null) return _docPageCounts[doc.id];
+  try {
+    const url = await signedUrl('plans-specs', doc.file_path);
+    const pdfjsLib = await getPdfJs();
+    const pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
+    _pdfDocCache[doc.id] = pdf;
+    _docPageCounts[doc.id] = pdf.numPages;
+    return pdf.numPages;
+  } catch(e) {
+    _docPageCounts[doc.id] = 1; // fall back to single tile
+    return 1;
+  }
+}
+
+async function renderDocThumb(docId, container, pageNum) {
+  pageNum = pageNum || parseInt(container.dataset.page || '1', 10) || 1;
+  const key = docId + ':' + pageNum;
+  if (_thumbCache[key]) {
+    if (_thumbCache[key] === 'error') return;
     const img = document.createElement('img');
-    img.src = _thumbCache[docId];
+    img.src = _thumbCache[key];
     img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
     container.innerHTML = ''; container.appendChild(img);
     return;
@@ -3778,10 +3805,15 @@ async function renderDocThumb(docId, container) {
   try {
     const doc = DATA.documents.find(d => d.id === docId);
     if (!doc?.file_path) return;
-    const url = await signedUrl('plans-specs', doc.file_path);
-    const pdfjsLib = await getPdfJs();
-    const pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
-    const page = await pdf.getPage(1);
+    let pdf = _pdfDocCache[docId];
+    if (!pdf) {
+      const url = await signedUrl('plans-specs', doc.file_path);
+      const pdfjsLib = await getPdfJs();
+      pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
+      _pdfDocCache[docId] = pdf;
+      if (_docPageCounts[docId] == null) _docPageCounts[docId] = pdf.numPages;
+    }
+    const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.2 });
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width; canvas.height = viewport.height;
@@ -3789,7 +3821,7 @@ async function renderDocThumb(docId, container) {
     // Convert to blob URL so we can reuse without re-rendering
     canvas.toBlob(blob => {
       const burl = URL.createObjectURL(blob);
-      _thumbCache[docId] = burl;
+      _thumbCache[key] = burl;
       if (container.isConnected) {
         const img = document.createElement('img');
         img.src = burl;
@@ -3798,7 +3830,7 @@ async function renderDocThumb(docId, container) {
       }
     }, 'image/jpeg', 0.85);
   } catch(e) {
-    _thumbCache[docId] = 'error';
+    _thumbCache[key] = 'error';
     container.innerHTML = `<div style="font-size:28px;color:var(--gray-300);">📄</div>`;
   }
 }
@@ -3808,7 +3840,8 @@ const _thumbObserver = new IntersectionObserver((entries) => {
     if (entry.isIntersecting) {
       const el = entry.target;
       const id = el.dataset.docId;
-      if (id && !_thumbCache[id]) renderDocThumb(id, el);
+      const pg = parseInt(el.dataset.page || '1', 10) || 1;
+      if (id && !_thumbCache[id + ':' + pg]) renderDocThumb(id, el, pg);
       _thumbObserver.unobserve(el);
     }
   });
@@ -3870,35 +3903,62 @@ function renderDocs() {
   const orderedGroups = ['structural','architectural','mep','civil','permits','specifications','other']
     .filter(g => groups[g]?.length);
 
-  grid.innerHTML = orderedGroups.map(cat => {
-    const docs = groups[cat];
-    const label = CAT_LABELS[cat] || cat;
-    const cards = docs.map(d => `
-      <div class="doc-card" onclick="viewDoc('${d.id}')" title="${escapeHtml(d.name)}">
-        <div class="doc-card-thumb" data-doc-id="${d.id}">
-          <div class="thumb-spinner"></div>
+  // Fieldwire-style: a multi-page PDF expands into one tile per page (sheet).
+  // We count total sheets across the group for the header.
+  const isPdf = d => (d.file_path || '').toLowerCase().endsWith('.pdf');
+  const docCard = (d, page, totalPages) => {
+    const multi = totalPages > 1;
+    const sheetLabel = multi
+      ? `${escapeHtml(d.sheet_number || d.name.slice(0,8))} · p${page}`
+      : escapeHtml(d.sheet_number || d.name.slice(0,8));
+    const badge = multi ? `<div class="doc-card-badge">${page}/${totalPages}</div>` : '';
+    return `
+      <div class="doc-card" onclick="viewDoc('${d.id}', ${page})" title="${escapeHtml(d.name)}${multi ? ' — page ' + page : ''}">
+        <div class="doc-card-thumb" data-doc-id="${d.id}" data-page="${page}">
+          ${badge}<div class="thumb-spinner"></div>
         </div>
         <div class="doc-card-info">
-          <div class="doc-card-sheet">${escapeHtml(d.sheet_number || d.name.slice(0,8))}</div>
+          <div class="doc-card-sheet">${sheetLabel}</div>
           <div class="doc-card-name">${escapeHtml(d.name)}</div>
           ${d.doc_date ? `<div class="doc-card-meta">${fmtDate(d.doc_date)}</div>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+  };
+
+  grid.innerHTML = orderedGroups.map(cat => {
+    const docs = groups[cat];
+    const label = CAT_LABELS[cat] || cat;
+    let sheetCount = 0;
+    const cards = docs.map(d => {
+      const pc = isPdf(d) ? _docPageCounts[d.id] : 1;
+      if (isPdf(d) && pc == null) {
+        // Page count not yet known — probe it, then re-render the grid.
+        getDocPageCount(d).then(() => { if (STATE.activeTab === 'docs') renderDocs(); });
+        sheetCount += 1;
+        return docCard(d, 1, 1); // placeholder single tile until count resolves
+      }
+      const total = pc || 1;
+      sheetCount += total;
+      let out = '';
+      for (let p = 1; p <= total; p++) out += docCard(d, p, total);
+      return out;
+    }).join('');
 
     return `
       <div class="doc-group">
         <div class="doc-group-header">
           ${(DOC_CAT_ICONS[cat]||DOC_CAT_ICONS.other).icon} ${escapeHtml(label)}
-          <span>${docs.length} sheet${docs.length === 1 ? '' : 's'}</span>
+          <span>${sheetCount} sheet${sheetCount === 1 ? '' : 's'}</span>
         </div>
         <div class="doc-thumb-grid">${cards}</div>
       </div>`;
   }).join('');
 
-  // Wire up IntersectionObserver for lazy thumbnail loading
+  // Wire up IntersectionObserver for lazy thumbnail loading (per page tile)
   grid.querySelectorAll('.doc-card-thumb[data-doc-id]').forEach(el => {
-    if (_thumbCache[el.dataset.docId]) {
-      renderDocThumb(el.dataset.docId, el); // instant from cache
+    const pg = parseInt(el.dataset.page || '1', 10) || 1;
+    if (_thumbCache[el.dataset.docId + ':' + pg]) {
+      renderDocThumb(el.dataset.docId, el, pg); // instant from cache
     } else {
       _thumbObserver.observe(el);
     }
@@ -3922,11 +3982,11 @@ document.getElementById('docSearch').addEventListener('input', e => {
   renderDocs();
 });
 
-async function viewDoc(id) {
+async function viewDoc(id, page) {
   const d = DATA.documents.find(x => x.id === id);
   if (!d || !d.file_path) return;
   if ((d.file_path || '').toLowerCase().endsWith('.pdf')) {
-    return openPlanViewer(d);
+    return openPlanViewer(d, page);
   }
   try {
     window.open(await signedUrl('plans-specs', d.file_path), '_blank');
@@ -3950,8 +4010,8 @@ const PIN_COLORS = { open:'#e11d48', in_repair:'#f59e0b', answered:'#2563eb', cl
 const PIN_KIND_ICON = { deficiency:'⚠', rfi:'?', task:'✓', photo:'📷', note:'📍' };
 const PV_COLORS = ['#e11d48','#2563eb','#16a34a','#f59e0b','#000000','#ffffff'];
 
-async function openPlanViewer(doc) {
-  PV.doc = doc; PV.page = 1; PV.scale = 1.4;
+async function openPlanViewer(doc, startPage) {
+  PV.doc = doc; PV.page = Math.max(1, parseInt(startPage, 10) || 1); PV.scale = 1.4;
   PV.shapes = {}; PV.dirty = {}; PV.markupRowId = {};
   PV.tool = 'pan'; PV.color = '#e11d48'; PV.width = 3;
   const root = document.getElementById('modalRoot');
@@ -4000,6 +4060,7 @@ async function openPlanViewer(doc) {
     const pdfjsLib = await getPdfJs();
     PV.pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
     PV.numPages = PV.pdf.numPages;
+    if (PV.page > PV.numPages) PV.page = 1;
     await pvLoadMarkups();
     await pvLoadPins();
     await pvRenderPage();
@@ -6899,6 +6960,27 @@ const DEF_STATUS_META = {
   rejected:  { label: 'Rejected',   cls: 'badge-purple' },
 };
 
+// A deficiency "needs follow-up" when it's still active (not closed/verified)
+// and either has no scheduled follow-up date or that date is due/overdue.
+function defNeedsFollowUp(d) {
+  if (['closed', 'verified'].includes(d.status)) return false;
+  if (!d.next_follow_up_date) return true;
+  return d.next_follow_up_date <= todayStr();
+}
+function defFollowUps(deficiencyId) {
+  return (DATA.deficiency_followups || [])
+    .filter(f => f.deficiency_id === deficiencyId)
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+}
+const DEF_FU_ACTION_META = {
+  note:        { label: 'Note',         icon: '📝' },
+  contacted:   { label: 'Contacted',    icon: '📞' },
+  reinspected: { label: 'Re-inspected', icon: '🔍' },
+  escalated:   { label: 'Escalated',    icon: '⚠️' },
+  scheduled:   { label: 'Scheduled',    icon: '📅' },
+  resolved:    { label: 'Resolved',     icon: '✅' },
+};
+
 function nextDeficiencyNumber(projectId, offset = 0) {
   const nums = DATA.deficiencies
     .filter(d => d.project_id === projectId)
@@ -6930,12 +7012,14 @@ function renderDeficiencies() {
   const totalOpen = list.filter(d => !['closed','verified'].includes(d.status)).length;
   const totalCritical = list.filter(d => d.severity === 'critical' && !['closed','verified'].includes(d.status)).length;
   const totalMajor = list.filter(d => d.severity === 'major' && !['closed','verified'].includes(d.status)).length;
+  const needsFollowUp = list.filter(defNeedsFollowUp).length;
   const monthStart = today.slice(0, 7) + '-01';
   const resolvedMonth = list.filter(d => ['closed','verified'].includes(d.status) && (d.updated_at || '') >= monthStart).length;
   if (tiles) tiles.innerHTML = `
     <div class="tile"><div class="tile-label">Total Open</div><div class="tile-value ${totalOpen ? 'neg' : ''}">${totalOpen}</div></div>
     <div class="tile"><div class="tile-label">Critical</div><div class="tile-value ${totalCritical ? 'neg' : ''}">${totalCritical}</div></div>
     <div class="tile"><div class="tile-label">Major</div><div class="tile-value">${totalMajor}</div></div>
+    <div class="tile ${needsFollowUp ? 'tile-clickable' : ''}" ${needsFollowUp ? 'onclick="defFilterNeedsFollowUp()" style="cursor:pointer;"' : ''}><div class="tile-label">🔔 Needs Follow-up</div><div class="tile-value ${needsFollowUp ? 'neg' : 'pos'}">${needsFollowUp}</div></div>
     <div class="tile"><div class="tile-label">Resolved (This Month)</div><div class="tile-value pos">${resolvedMonth}</div></div>
   `;
 
@@ -6943,7 +7027,8 @@ function renderDeficiencies() {
     list = list.filter(d => (d.severity || 'moderate') === STATE.defSeverityFilter);
   }
   if (STATE.defStatusFilter && STATE.defStatusFilter !== 'all') {
-    list = list.filter(d => d.status === STATE.defStatusFilter);
+    if (STATE.defStatusFilter === 'needs_followup') list = list.filter(defNeedsFollowUp);
+    else list = list.filter(d => d.status === STATE.defStatusFilter);
   }
   const search = (STATE.defSearch || '').toLowerCase();
   if (search) {
@@ -6962,7 +7047,7 @@ function renderDeficiencies() {
   });
 
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">No deficiencies</div><div class="empty-sub">Log field deficiencies to track repairs.</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">No deficiencies</div><div class="empty-sub">Log field deficiencies to track repairs.</div></div></td></tr>`;
     return;
   }
 
@@ -6974,6 +7059,17 @@ function renderDeficiencies() {
       dueCell = fmtDate(d.due_date);
       if (overdue) dueCell += ` <span class="text-sm" style="color:var(--red); font-weight:600;">overdue</span>`;
     }
+    // Follow-up cell: log count + next scheduled date / needs-attention flag
+    const fuCount = defFollowUps(d.id).length;
+    let fuCell;
+    if (['closed','verified'].includes(d.status)) {
+      fuCell = `<span class="text-muted">—</span>${fuCount ? ` <span class="text-sm text-muted">(${fuCount})</span>` : ''}`;
+    } else if (defNeedsFollowUp(d)) {
+      const overdueFu = d.next_follow_up_date && d.next_follow_up_date < today;
+      fuCell = `<span class="badge badge-red badge-dot">🔔 ${d.next_follow_up_date ? (overdueFu ? 'Overdue' : 'Due') : 'Schedule'}</span>${fuCount ? ` <span class="text-sm text-muted">(${fuCount})</span>` : ''}`;
+    } else {
+      fuCell = `<span class="text-sm" style="color:var(--green,#16a34a); font-weight:600;">${fmtDate(d.next_follow_up_date)}</span>${fuCount ? ` <span class="text-sm text-muted">(${fuCount})</span>` : ''}`;
+    }
     return `
       <tr style="${rowStyle}">
         <td style="font-weight:600;">${escapeHtml(d.deficiency_no || '—')}</td>
@@ -6982,10 +7078,11 @@ function renderDeficiencies() {
         <td>${defSeverityBadge(d.severity || 'moderate')}</td>
         <td>${escapeHtml(d.responsible_party || '—')}</td>
         <td>${dueCell}</td>
+        <td>${fuCell}</td>
         <td>${defStatusBadge(d.status || 'open')}</td>
         <td>
           <div class="row-actions">
-            <button class="btn btn-ghost btn-sm" onclick="openDeficiencyModal('${d.id}')">Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="openDeficiencyModal('${d.id}')">Open</button>
           </div>
         </td>
       </tr>`;
@@ -7008,6 +7105,15 @@ document.getElementById('defStatusFilters')?.addEventListener('click', e => {
 document.getElementById('defSearch')?.addEventListener('input', e => {
   STATE.defSearch = e.target.value; renderDeficiencies();
 });
+
+// Jump straight to the "needs follow-up" view (from the summary tile).
+function defFilterNeedsFollowUp() {
+  STATE.defStatusFilter = 'needs_followup';
+  document.querySelectorAll('#defStatusFilters .chip').forEach(c =>
+    c.classList.toggle('active', c.dataset.filter === 'needs_followup'));
+  renderDeficiencies();
+}
+window.defFilterNeedsFollowUp = defFilterNeedsFollowUp;
 
 function openDeficiencyModal(id) {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
@@ -7048,13 +7154,46 @@ function openDeficiencyModal(id) {
           </select>
         </div>
       </div>
-      <div class="form-row"><label class="form-label">Notes</label><textarea id="d-notes" rows="3">${escapeHtml(editing?.notes || '')}</textarea></div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Next Follow-up Date</label><input id="d-nextfu" type="date" value="${editing?.next_follow_up_date || ''}" /><div class="text-sm text-muted" style="margin-top:4px;">Leave blank on an open item and it will flag as “Needs Follow-up.”</div></div>
+        <div><label class="form-label">Responsible / Notes</label><textarea id="d-notes" rows="2">${escapeHtml(editing?.notes || '')}</textarea></div>
+      </div>
+      ${editing ? defFollowUpThreadHtml(editing) : '<div class="hint-banner" style="margin-top:4px;">🔔 Save this deficiency first, then log follow-ups (calls, re-inspections, escalations) to build its history.</div>'}
     `,
     footer: editing
       ? `<button class="btn btn-danger" onclick="deleteDeficiency('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDeficiency('${editing.id}')">Save</button>`
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDeficiency()">Create</button>`
   });
 }
+
+// Renders the threaded follow-up log + "add follow-up" composer inside the modal.
+function defFollowUpThreadHtml(d) {
+  const ups = defFollowUps(d.id);
+  const actionOpts = Object.keys(DEF_FU_ACTION_META).map(k =>
+    `<option value="${k}">${DEF_FU_ACTION_META[k].icon} ${DEF_FU_ACTION_META[k].label}</option>`).join('');
+  const items = ups.length ? ups.map(f => {
+    const m = DEF_FU_ACTION_META[f.action] || DEF_FU_ACTION_META.note;
+    const when = (f.created_at || '').slice(0, 16).replace('T', ' ');
+    const sched = f.next_follow_up_date ? ` · next: ${fmtDate(f.next_follow_up_date)}` : '';
+    return `<div style="padding:8px 0; border-bottom:1px solid var(--gray-100);">
+      <div class="text-sm" style="font-weight:600;">${m.icon} ${escapeHtml(m.label)}
+        <span class="text-muted" style="font-weight:400;">— ${escapeHtml(f.created_by || 'owner')} · ${escapeHtml(when)}${escapeHtml(sched)}</span></div>
+      ${f.note ? `<div class="text-sm" style="margin-top:2px;">${escapeHtml(f.note)}</div>` : ''}
+    </div>`;
+  }).join('') : '<div class="text-sm text-muted" style="padding:8px 0;">No follow-ups logged yet.</div>';
+  return `
+    <div style="margin-top:12px; border-top:2px solid var(--gray-200); padding-top:12px;">
+      <label class="form-label">🔔 Follow-up History</label>
+      <div style="max-height:180px; overflow:auto; margin-bottom:10px;">${items}</div>
+      <div class="form-row two-col" style="margin-bottom:6px;">
+        <div><label class="form-label">Action</label><select id="fu-action">${actionOpts}</select></div>
+        <div><label class="form-label">Reschedule Next Follow-up</label><input id="fu-next" type="date" /></div>
+      </div>
+      <div class="form-row"><textarea id="fu-note" rows="2" placeholder="What happened? (e.g. Called GC — promised repair by Fri)"></textarea></div>
+      <button class="btn btn-secondary btn-sm" onclick="addDeficiencyFollowUp('${d.id}')">➕ Log Follow-up</button>
+    </div>`;
+}
+window.defFollowUpThreadHtml = defFollowUpThreadHtml;
 window.openDeficiencyModal = openDeficiencyModal;
 
 async function saveDeficiency(id) {
@@ -7070,6 +7209,7 @@ async function saveDeficiency(id) {
     due_date: document.getElementById('d-due').value || null,
     status: document.getElementById('d-status').value,
     field_report_id: document.getElementById('d-fr').value || null,
+    next_follow_up_date: document.getElementById('d-nextfu')?.value || null,
     notes: document.getElementById('d-notes').value.trim() || null,
     updated_at: new Date().toISOString(),
   };
@@ -7096,6 +7236,51 @@ async function deleteDeficiency(id) {
   render();
 }
 window.deleteDeficiency = deleteDeficiency;
+
+// Log a follow-up entry against a deficiency. Also advances the deficiency's
+// next_follow_up_date (clears it if 'resolved' so it stops flagging), and
+// nudges status forward so the item visibly progresses toward closeout.
+async function addDeficiencyFollowUp(deficiencyId) {
+  const def = DATA.deficiencies.find(d => d.id === deficiencyId);
+  if (!def) { toast('Deficiency not found'); return; }
+  const action = document.getElementById('fu-action').value;
+  const note = (document.getElementById('fu-note').value || '').trim();
+  const nextDate = document.getElementById('fu-next').value || null;
+  if (!note && action === 'note') { toast('Add a note'); return; }
+
+  const row = {
+    deficiency_id: deficiencyId,
+    project_id: def.project_id,
+    action,
+    note: note || null,
+    status_at_time: def.status || 'open',
+    next_follow_up_date: nextDate,
+    created_by: AUTH?.name || 'owner',
+  };
+  const r = await queueableInsert('deficiency_followups', row, { select: 'id' });
+  if (r.error) { handleSbError(r.error, 'Log follow-up'); return; }
+
+  // Update parent deficiency: scheduling + light status progression.
+  const patch = { updated_at: new Date().toISOString() };
+  if (action === 'resolved') { patch.status = 'verified'; patch.next_follow_up_date = null; }
+  else {
+    if (nextDate) patch.next_follow_up_date = nextDate;
+    if (action === 'reinspected' && def.status === 'open') patch.status = 'in_repair';
+  }
+  const up = await sb.from('deficiencies').update(patch).eq('id', deficiencyId);
+  if (up.error) handleSbError(up.error, 'Update deficiency');
+
+  if (!r.queued) {
+    notifyRoute('deficiencies', deficiencyId, action === 'resolved' ? 'resolved' : 'followed_up');
+    await loadAllData();
+  }
+  toast('Follow-up logged');
+  closeModal();
+  // Reopen so the user sees the freshly-logged entry in context.
+  openDeficiencyModal(deficiencyId);
+  render();
+}
+window.addDeficiencyFollowUp = addDeficiencyFollowUp;
 
 
 /* =========================================================================
