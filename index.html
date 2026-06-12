@@ -769,6 +769,16 @@
       <div class="login-error" id="nativeLoginError"></div>
     </form>
 
+    <!-- Invite / password-reset: set a new password (shown after invite link) -->
+    <form id="setPasswordForm" autocomplete="on" style="display:none;">
+      <div id="setPwWelcome" style="font-size:13px;color:var(--gray-600,#666);margin-bottom:10px;line-height:1.4;">Welcome! Set a password to finish creating your account.</div>
+      <input id="setPwEmail" class="login-input" type="email" placeholder="Email" autocomplete="username" readonly style="opacity:0.75;" />
+      <input id="setPwNew" class="login-input" type="password" placeholder="New password (min 8 chars)" autocomplete="new-password" style="margin-top:8px;" />
+      <input id="setPwConfirm" class="login-input" type="password" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px;" />
+      <button type="submit" class="login-btn" style="margin-top:10px;">Set password &amp; sign in</button>
+      <div class="login-error" id="setPwError"></div>
+    </form>
+
     <!-- Legacy access-code (owner password / contractor token) — kept intact -->
     <form id="loginForm" autocomplete="off" style="display:none; margin-top:4px;">
       <input id="loginInput" class="login-input" type="password" placeholder="Access code" autocomplete="off" />
@@ -1420,6 +1430,29 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
     storageKey: 'plaza_native_auth_v1',
   },
 });
+
+// Capture invite / password-reset callback type from the URL hash IMMEDIATELY,
+// before supabase-js (detectSessionInUrl) consumes and clears it. Supabase invite
+// links land as #access_token=...&type=invite (or type=recovery). We must show a
+// "set your password" screen for these — otherwise the invited user gets a
+// temporary session with NO password set and can never sign in again.
+const _authCallback = (() => {
+  try {
+    const h = (window.location.hash || '').replace(/^#/, '');
+    const q = window.location.search || '';
+    const hp = new URLSearchParams(h);
+    const sp = new URLSearchParams(q);
+    const type = hp.get('type') || sp.get('type') || '';
+    const errDesc = hp.get('error_description') || sp.get('error_description') || '';
+    const errCode = hp.get('error_code') || sp.get('error_code') || '';
+    return {
+      type,
+      isInvite: type === 'invite' || type === 'recovery' || type === 'signup',
+      hasError: !!(errDesc || errCode),
+      errDesc, errCode,
+    };
+  } catch (e) { return { type: '', isInvite: false, hasError: false }; }
+})();
 
 function setSbAuth(jwt) {
   _sbJwt = jwt;
@@ -5300,9 +5333,95 @@ window.render = render;
 function showLogin() {
   const overlay = document.getElementById('loginOverlay');
   if (overlay) overlay.style.display = 'flex';
+  // Make sure the set-password panel is hidden and the normal sign-in shows.
+  const spF = document.getElementById('setPasswordForm');
+  const nativeF = document.getElementById('nativeLoginForm');
+  if (spF) spF.style.display = 'none';
+  if (nativeF && nativeF.style.display === 'none') nativeF.style.display = '';
   const email = document.getElementById('nativeEmail');
   if (email) { setTimeout(() => email.focus(), 50); }
 }
+
+// Invite / password-reset flow: the user arrived from a Supabase invite or
+// recovery email. supabase-js has already created a temporary session from the
+// URL token; we just need them to choose a password (updateUser), which both
+// sets the credential AND keeps them signed in.
+async function showSetPassword() {
+  const overlay = document.getElementById('loginOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  document.body.classList.remove('app-booting');
+  const nativeF = document.getElementById('nativeLoginForm');
+  const codeF   = document.getElementById('loginForm');
+  const altMode = document.getElementById('toggleLoginMode');
+  const spF     = document.getElementById('setPasswordForm');
+  if (nativeF) nativeF.style.display = 'none';
+  if (codeF)   codeF.style.display = 'none';
+  if (altMode && altMode.parentElement) altMode.parentElement.style.display = 'none';
+  if (spF) spF.style.display = '';
+  // Pre-fill the email from the invite session so they know which account.
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const emailEl = document.getElementById('setPwEmail');
+    if (emailEl) emailEl.value = session?.user?.email || '';
+    const nameEl = document.getElementById('setPwWelcome');
+    const fn = session?.user?.user_metadata?.full_name;
+    if (nameEl && fn) nameEl.textContent = `Welcome, ${fn}! Set a password to finish creating your account.`;
+  } catch (e) {}
+  setTimeout(() => { const n = document.getElementById('setPwNew'); if (n) n.focus(); }, 60);
+}
+
+document.getElementById('setPasswordForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const newEl  = document.getElementById('setPwNew');
+  const confEl = document.getElementById('setPwConfirm');
+  const errEl  = document.getElementById('setPwError');
+  const btn    = e.currentTarget.querySelector('button[type="submit"]');
+  if (errEl) errEl.textContent = '';
+  const pw = newEl?.value || '';
+  const confirm = confEl?.value || '';
+  if (pw.length < 8) { if (errEl) errEl.textContent = 'Password must be at least 8 characters.'; return; }
+  if (pw !== confirm) { if (errEl) errEl.textContent = 'Passwords do not match.'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Setting password…'; }
+  try {
+    // Must have the temporary invite/recovery session for updateUser to work.
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      if (errEl) errEl.textContent = 'Your invite link has expired. Ask the administrator to resend the invitation.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Set password & sign in'; }
+      return;
+    }
+    const { error } = await sb.auth.updateUser({ password: pw });
+    if (error) {
+      if (errEl) errEl.textContent = error.message || 'Could not set password. Try again.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Set password & sign in'; }
+      return;
+    }
+    // Password set; the session is now a full authenticated session. Boot the app.
+    const { data: { session: fresh } } = await sb.auth.getSession();
+    if (fresh?.access_token) {
+      setSbAuth(fresh.access_token);
+      const a = authFromNativeSession(fresh);
+      if (a && a.role && a.role !== 'none') {
+        AUTH = a;
+        // Clean the token fragment out of the address bar.
+        try { history.replaceState({}, '', window.location.pathname); } catch (e) {}
+        hideLogin();
+        document.body.classList.remove('app-booting');
+        await loadAllData();
+        render();
+        startNotifPolling();
+        return;
+      }
+    }
+    // Fallback: password set but profile not provisioned — send to normal login.
+    if (errEl) errEl.textContent = 'Password set. Please sign in with your email and new password.';
+    showLogin();
+  } catch (err) {
+    if (errEl) errEl.textContent = 'Unexpected error. Please try again.';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Set password & sign in'; }
+  }
+});
 
 function hideLogin() {
   const overlay = document.getElementById('loginOverlay');
@@ -5545,6 +5664,29 @@ async function init() {
 
   // Hide login overlay until we know we need it
   hideLogin();
+
+  // INVITE / PASSWORD-RESET callback: if the user arrived from a Supabase invite
+  // or recovery email, show the "set your password" screen instead of trying to
+  // boot normally. supabase-js (detectSessionInUrl) has already turned the URL
+  // token into a temporary session; updateUser() will set their password.
+  if (_authCallback && _authCallback.isInvite && !_authCallback.hasError) {
+    // Give supabase-js a tick to finish consuming the URL hash into a session.
+    for (let i = 0; i < 20; i++) {
+      try { const { data: { session } } = await sb.auth.getSession(); if (session) break; } catch (e) {}
+      await new Promise(r => setTimeout(r, 100));
+    }
+    await showSetPassword();
+    return;
+  }
+  // Expired/invalid invite link: tell them clearly instead of a blank login.
+  if (_authCallback && _authCallback.hasError) {
+    try { history.replaceState({}, '', window.location.pathname); } catch (e) {}
+    showLogin();
+    const errEl = document.getElementById('nativeLoginError');
+    if (errEl) errEl.textContent = 'That invite/reset link has expired or was already used. Ask the administrator to resend it.';
+    document.body.classList.remove('app-booting');
+    return;
+  }
 
   const authed = await tryBootAuth();
   if (!authed) {
