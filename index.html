@@ -4789,6 +4789,7 @@ function moduleSummary(perms) {
   if (perms?.rfis) labels.push('RFIs');
   if (perms?.submittals) labels.push('Submittals');
   if (perms?.payapps) labels.push('Pay Apps');
+  if (perms?.cos) labels.push('Change Orders');
   if (perms?.plans) labels.push('Plans');
   return labels.length ? labels.join(', ') : '—';
 }
@@ -4872,6 +4873,9 @@ function openAccessModal(contractorId) {
             <input type="checkbox" id="ac-perm-payapps" ${perms.payapps ? 'checked' : ''} /> Pay Apps
           </label>
           <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
+            <input type="checkbox" id="ac-perm-cos" ${perms.cos ? 'checked' : ''} /> Change Orders
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
             <input type="checkbox" id="ac-perm-plans" ${perms.plans ? 'checked' : ''} /> Plans &amp; Specs
           </label>
         </div>
@@ -4917,6 +4921,7 @@ async function generateAccessLink(contractorId) {
     rfis:       document.getElementById('ac-perm-rfis').checked,
     submittals: document.getElementById('ac-perm-submittals').checked,
     payapps:    document.getElementById('ac-perm-payapps').checked,
+    cos:        document.getElementById('ac-perm-cos').checked,
     plans:      document.getElementById('ac-perm-plans').checked,
   };
 
@@ -5368,6 +5373,7 @@ function openInviteModal() {
           <label><input type="checkbox" id="iv-perm-rfis" checked> RFIs</label>
           <label><input type="checkbox" id="iv-perm-submittals" checked> Submittals</label>
           <label><input type="checkbox" id="iv-perm-payapps" checked> Pay Apps</label>
+          <label><input type="checkbox" id="iv-perm-cos" checked> Change Orders</label>
           <label><input type="checkbox" id="iv-perm-plans" checked> Plans</label>
         </div>
       </div>
@@ -5402,6 +5408,7 @@ async function submitInvite() {
       rfis:       !!document.getElementById('iv-perm-rfis')?.checked,
       submittals: !!document.getElementById('iv-perm-submittals')?.checked,
       payapps:    !!document.getElementById('iv-perm-payapps')?.checked,
+      cos:        !!document.getElementById('iv-perm-cos')?.checked,
       plans:      !!document.getElementById('iv-perm-plans')?.checked,
     };
   }
