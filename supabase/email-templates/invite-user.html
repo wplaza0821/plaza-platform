@@ -1,0 +1,86 @@
+<!--
+  Plazacore — Supabase Auth "Invite user" email template.
+  Paste into: Supabase Dashboard -> Authentication -> Emails -> Invite user -> Message body (Source).
+  Subject line: You're invited to Plazacore — Plaza and Associates
+  Uses Supabase template var {{ .ConfirmationURL }} (the set-password / accept link).
+  Logo served from GitHub Pages: https://plazacore.plazaandassociates.com/email-logo.png
+  Email-client safe: table layout, inline styles, hosted PNG logo (no SVG).
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f5f7;">
+  <tr>
+    <td align="center" style="padding:28px 12px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;font-family:Helvetica,Arial,sans-serif;color:#212121;">
+
+        <!-- Logo header -->
+        <tr>
+          <td align="center" style="padding:32px 40px 12px 40px;border-bottom:1px solid #eef0f2;">
+            <img src="https://plazacore.plazaandassociates.com/email-logo.png" alt="Plaza and Associates" width="180" style="display:block;width:180px;max-width:60%;height:auto;border:0;" />
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:32px 40px 8px 40px;">
+            <p style="margin:0 0 18px 0;font-size:16px;line-height:1.5;color:#212121;">Dear Colleague,</p>
+
+            <p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:#333333;">
+              You have been invited to access <strong>Plazacore</strong>, the project management platform for Plaza and Associates.
+              Plazacore is where we coordinate schedules of values, pay applications, change orders, RFIs, submittals, and field reports
+              for our active projects.
+            </p>
+
+            <p style="margin:0 0 26px 0;font-size:15px;line-height:1.6;color:#333333;">
+              To activate your account, please set your password using the secure link below. This invitation is unique to you and
+              will expire for security purposes.
+            </p>
+
+            <!-- CTA button -->
+            <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 28px auto;">
+              <tr>
+                <td align="center" bgcolor="#0086f0" style="border-radius:8px;">
+                  <a href="{{ .ConfirmationURL }}" target="_blank"
+                     style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Helvetica,Arial,sans-serif;">
+                    Accept Invitation &amp; Set Password
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#888888;">
+              If the button does not work, copy and paste this link into your browser:
+            </p>
+            <p style="margin:0 0 24px 0;font-size:12px;line-height:1.5;word-break:break-all;">
+              <a href="{{ .ConfirmationURL }}" style="color:#0086f0;">{{ .ConfirmationURL }}</a>
+            </p>
+
+            <p style="margin:0 0 4px 0;font-size:13px;line-height:1.5;color:#999999;">
+              If you were not expecting this invitation, you may safely disregard this email.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Signature -->
+        <tr>
+          <td style="padding:8px 40px 36px 40px;border-top:1px solid #eef0f2;">
+            <p style="margin:18px 0 14px 0;font-size:15px;color:#212121;">Regards,</p>
+            <p style="margin:0;font-size:15px;line-height:1.4;color:#000000;"><strong>WILLIAM PLAZA</strong></p>
+            <p style="margin:0 0 12px 0;font-size:15px;line-height:1.4;color:#000000;">Principal</p>
+            <img src="https://plazacore.plazaandassociates.com/email-logo.png" alt="Plaza and Associates" width="123" style="display:block;width:123px;height:auto;border:0;margin:0 0 12px 0;" />
+            <p style="margin:0;font-size:13px;line-height:1.5;color:#212121;">2222 Ponce de Leon Boulevard</p>
+            <p style="margin:0;font-size:13px;line-height:1.5;color:#212121;">Coral Gables, Florida 33134</p>
+            <p style="margin:0;font-size:13px;line-height:1.5;color:#212121;">O: (786) 310-5428 ext. 1</p>
+            <p style="margin:0;font-size:13px;line-height:1.5;color:#212121;">C: (305) 469-1120</p>
+            <p style="margin:6px 0 0 0;font-size:13px;line-height:1.5;">
+              <a href="https://www.plazaandassociates.com/" style="color:#0086f0;text-decoration:underline;">www.plazaandassociates.com</a>
+            </p>
+          </td>
+        </tr>
+
+      </table>
+
+      <p style="margin:16px 0 0 0;font-size:11px;color:#aaaaaa;font-family:Helvetica,Arial,sans-serif;">
+        &copy; Plaza and Associates &middot; This is an automated invitation from Plazacore.
+      </p>
+    </td>
+  </tr>
+</table>
