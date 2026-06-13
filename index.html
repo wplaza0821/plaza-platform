@@ -1866,6 +1866,7 @@ const DATA = {
   payApps: [],
   payAppLines: [],    // joined by pay_app_id
   lienWaivers: [],
+  payAppDocs: [],     // supporting docs (e.g. formal CO PDF), joined by pay_app_id
   rfis: [],
   submittals: [],
   changeOrders: [],
@@ -1890,6 +1891,7 @@ async function loadAllData() {
   const paP   = sb.from('pay_apps').select('*').order('pay_app_number');
   const palP  = sb.from('pay_app_lines').select('*');
   const lwP   = sb.from('lien_waivers').select('*');
+  const padP  = sb.from('pay_app_documents').select('*').order('uploaded_at', { ascending: false });
   const rfP   = sb.from('rfis').select('*').order('rfi_number', { ascending: false });
   const subP  = sb.from('submittals').select('*').order('created_at', { ascending: false });
   const coP   = sb.from('change_orders').select('*').order('co_number', { ascending: false });
@@ -1913,8 +1915,8 @@ async function loadAllData() {
   // Phase 6: per-user project memberships (owner reads all; others read own).
   const pmP = sb.from('project_members').select('user_id, project_id');
 
-  const [proj, con, sov, pa, pal, lw, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, prf, dash, tpl, usr, pm] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, prfP, dashP, tplP, usersP, pmP
+  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, prf, dash, tpl, usr, pm] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, prfP, dashP, tplP, usersP, pmP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1942,6 +1944,8 @@ async function loadAllData() {
   DATA.payApps      = pa.data   || [];
   DATA.payAppLines  = pal.data  || [];
   DATA.lienWaivers  = lw.data   || [];
+  softErr(pad, 'Loading pay app documents');
+  DATA.payAppDocs   = pad.data  || [];
   DATA.rfis         = rf.data   || [];
   DATA.submittals   = sub.data  || [];
   DATA.changeOrders = co.data   || [];
@@ -2028,6 +2032,7 @@ const STATUS_LABELS = {
   final_conditional: 'Final Conditional',
   final_unconditional: 'Final Unconditional',
   contractor: 'Contractor', engineer: 'Engineer', owner: 'Owner',
+  change_order: 'Change Order', backup: 'Backup / Supporting', correspondence: 'Correspondence',
 };
 function lbl(k) { return STATUS_LABELS[k] || k || ''; }
 
@@ -2896,6 +2901,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   lines.forEach(l => { lineBySov[l.sov_item_id] = l; });
 
   const waiver = DATA.lienWaivers.find(w => w.pay_app_id === pa.id);
+  const payAppDocs = (DATA.payAppDocs || []).filter(d => d.pay_app_id === pa.id);
 
   // Calc totals
   function calcTotals() {
@@ -3050,6 +3056,42 @@ async function openPayAppModal(payAppId, forceEdit = false) {
         ` : '<span class="text-muted">No waiver attached.</span>')}
       </div>
 
+      <!-- Supporting documents: formal Change Order PDF + other backup -->
+      <div class="sov-section-head" style="margin-top:22px;">
+        <div class="sov-section-title">Supporting Documents</div>
+        <div class="sov-meta">Attach the formal change order document or other backup</div>
+      </div>
+      <div id="paDocsZone" class="waiver-zone ${payAppDocs.length ? 'uploaded' : ''}">
+        ${payAppDocs.length ? payAppDocs.map(d => `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;text-align:left;">
+            <span>📎 <strong>${escapeHtml(d.file_name || 'Document')}</strong>
+              <span class="text-muted text-sm">(${escapeHtml(lbl(d.doc_type) || 'Document')}${d.co_number ? ` · CO-${String(d.co_number).padStart(3,'0')}` : ''})</span>
+            </span>
+            <button class="btn btn-secondary btn-sm" onclick="viewPayAppDoc('${d.id}')">View</button>
+            ${editable ? `<button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${d.id}','${pa.id}')">Remove</button>` : ''}
+          </div>
+        `).join('') : '<div class="text-muted" style="margin-bottom:10px;">No supporting documents attached yet.</div>'}
+        ${editable ? `
+          <div class="form-row two-col" style="text-align:left;margin-top:8px;">
+            <div>
+              <label class="form-label">Document Type</label>
+              <select id="padType">
+                <option value="change_order" selected>Change Order</option>
+                <option value="backup">Backup / Supporting</option>
+                <option value="correspondence">Correspondence</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">CO # (optional)</label>
+              <input id="padCoNum" type="number" min="1" placeholder="e.g. 1" />
+            </div>
+          </div>
+          <input type="file" id="padFile" accept=".pdf,image/jpeg,image/png" />
+          <button class="btn btn-primary btn-sm" id="uploadPadBtn" style="margin-top:10px;">📎 Upload Document</button>
+        ` : ''}
+      </div>
+
       ${pa.status !== 'draft' ? `
         <div class="sov-section-head" style="margin-top:22px;">
           <div class="sov-section-title">Certificate Summary</div>
@@ -3088,6 +3130,12 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   const uploadBtn = document.getElementById('uploadWaiverBtn');
   if (uploadBtn) {
     uploadBtn.addEventListener('click', () => uploadWaiver(pa));
+  }
+
+  // Wire supporting-document (e.g. formal CO) upload
+  const uploadPadBtn = document.getElementById('uploadPadBtn');
+  if (uploadPadBtn) {
+    uploadPadBtn.addEventListener('click', () => uploadPayAppDoc(pa));
   }
 
   function recalcPaRow(inp) {
@@ -3256,6 +3304,66 @@ async function removeWaiver(waiverId, payAppId) {
   openPayAppModal(payAppId, true);
 }
 window.removeWaiver = removeWaiver;
+
+// ---- Pay App supporting documents (formal CO PDF + backup) ----
+// Stored in the 'change-orders' bucket, pathed by project CODE so the contractor
+// storage-insert policy ((storage.foldername(name))[1] = plz_project_code()) allows it.
+async function uploadPayAppDoc(pa) {
+  const fileEl = document.getElementById('padFile');
+  const file = fileEl?.files?.[0];
+  if (!file) { toast('Choose a file first', 'error'); return; }
+  if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
+  const allowed = ['application/pdf','image/jpeg','image/png'];
+  if (!allowed.includes(file.type)) { toast('Only PDF/JPG/PNG allowed', 'error'); return; }
+  const docType = document.getElementById('padType')?.value || 'change_order';
+  const coNumRaw = document.getElementById('padCoNum')?.value;
+  const coNum = coNumRaw ? Number(coNumRaw) : null;
+
+  const btn = document.getElementById('uploadPadBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
+
+  const proj = getProject(pa.project_id);
+  const codePrefix = proj?.code || pa.project_id;
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${codePrefix}/payapp/${pa.id}/${Date.now()}_${safeName}`;
+  const { error: upErr } = await sb.storage.from('change-orders').upload(path, file, { upsert: false });
+  if (upErr) { handleSbError(upErr, 'Upload document'); if (btn) { btn.disabled = false; btn.textContent = '📎 Upload Document'; } return; }
+
+  const { error: insErr } = await sb.from('pay_app_documents').insert({
+    pay_app_id: pa.id,
+    doc_type: docType,
+    co_number: coNum,
+    file_path: path,
+    file_name: file.name,
+    file_size: file.size,
+    uploaded_by: AUTH.name,
+  });
+  if (insErr) { handleSbError(insErr, 'Record document'); if (btn) { btn.disabled = false; btn.textContent = '📎 Upload Document'; } return; }
+
+  await loadAllData();
+  toast('Document uploaded');
+  openPayAppModal(pa.id, true);
+}
+window.uploadPayAppDoc = uploadPayAppDoc;
+
+async function viewPayAppDoc(docId) {
+  const d = (DATA.payAppDocs || []).find(x => x.id === docId);
+  if (!d?.file_path) { toast('No file on record', 'error'); return; }
+  try {
+    window.open(await signedUrl('change-orders', d.file_path), '_blank');
+  } catch (e) { handleSbError(e, 'Open document'); }
+}
+window.viewPayAppDoc = viewPayAppDoc;
+
+async function removePayAppDoc(docId, payAppId) {
+  if (!confirm('Remove this document?')) return;
+  const d = (DATA.payAppDocs || []).find(x => x.id === docId);
+  if (d?.file_path) await sb.storage.from('change-orders').remove([d.file_path]).catch(()=>{});
+  await sb.from('pay_app_documents').delete().eq('id', docId);
+  await loadAllData();
+  openPayAppModal(payAppId, true);
+}
+window.removePayAppDoc = removePayAppDoc;
 
 async function submitPayApp(payAppId) {
   const pa = DATA.payApps.find(x => x.id === payAppId);
