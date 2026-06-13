@@ -3955,7 +3955,9 @@ function openCoModal(id) {
         ${editing?.file_path ? `<div style="margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-sm" onclick="viewCoFile('${editing.id}')">📎 ${escapeHtml(editing.file_name || 'View attachment')}</button></div>` : ''}
         <input type="file" id="co-file" accept=".pdf,image/jpeg,image/png" />
       </div>
-      ${editing && editing.status === 'approved' && !editing.is_pco ? `<div class="hint-banner" style="margin-top:4px;">${editing.applied_to_sov ? `✓ Rolled into SOV v${editing.sov_version_applied} as a line item.` : 'Approved — will roll into the SOV as a new line item on save.'}</div>` : ''}
+      ${!editing?.is_pco && editing?.analyzed_at ? `<div class="hint-banner" style="margin-top:4px; ${editing.signed ? '' : 'background:#fde8e8;border-color:#f5b5b5;'}">${editing.signed ? '✅ Signature verified' : '⛔ NOT signed'} — ${escapeHtml(editing.signature_summary || '')}${editing.analysis?.line_items?.length ? ` · ${editing.analysis.line_items.length} line item(s), total $${Number(editing.analysis.total||0).toLocaleString()}` : ''}</div>` : ''}
+      ${!editing?.is_pco ? `<div class="hint-banner" style="margin-top:4px;">📝 Setting status to <strong>Approved</strong> requires the fully executed (signed) document. On save it is analyzed for signatures; only if signed does it get approved and roll into the SOV as itemized line(s).</div>` : ''}
+      ${editing && editing.status === 'approved' && !editing.is_pco && editing.applied_to_sov ? `<div class="hint-banner" style="margin-top:4px;">✓ Rolled into SOV v${editing.sov_version_applied}.</div>` : ''}
     `,
     footer: editing
       ? `<button class="btn btn-danger" onclick="deleteCo('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="saveCoBtn" onclick="saveCo('${editing.id}')">Save</button>`
@@ -3978,6 +3980,9 @@ async function saveCo(id) {
   const isPco = document.getElementById('co-pco').value === 'true';
   const status = document.getElementById('co-status').value;
   const prior = id ? DATA.changeOrders.find(c => c.id === id) : null;
+  // Are we trying to APPROVE an executed CO that isn't already applied? That path
+  // is signature-gated: it must pass document analysis (signed === true) first.
+  const wantsApprove = status === 'approved' && !isPco && !(prior?.applied_to_sov);
   const data = {
     project_id: STATE.activeProjectId,
     co_number: Number(document.getElementById('co-number').value) || 1,
@@ -3985,7 +3990,9 @@ async function saveCo(id) {
     description: document.getElementById('co-desc').value.trim() || null,
     amount: Number(document.getElementById('co-amount').value) || 0,
     reason: document.getElementById('co-reason').value,
-    status: status,
+    // Hold approval back at first write — the DB trigger rejects status='approved'
+    // unless signed=true. We set it to approved only AFTER analysis confirms signatures.
+    status: wantsApprove ? (prior?.status && prior.status !== 'approved' ? prior.status : 'pending') : status,
     approved_at: status === 'approved' ? (prior?.approved_at || new Date().toISOString()) : null,
   };
   if (!data.description) { toast('Description required'); return; }
@@ -4006,6 +4013,8 @@ async function saveCo(id) {
     data.file_path = path;
     data.file_name = file.name;
     data.file_size = file.size;
+    // A new file invalidates any prior signature verification.
+    data.signed = false;
   }
 
   let res, savedId = id;
@@ -4018,14 +4027,47 @@ async function saveCo(id) {
   }
   if (res.error) { handleSbError(res.error, 'Save change order'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
 
-  // CO -> SOV roll-in: when an executed (non-PCO) CO becomes 'approved' and has
-  // not already been applied, clone the current SOV into a new version and
-  // append the CO as a new line item. Guarded so it never rolls in twice.
+  // ---- Signature-gated approval + itemized SOV roll-in ----
   let rolledVer = null;
-  const becameApproved = status === 'approved' && !isPco && !(prior?.applied_to_sov);
-  if (becameApproved && savedId) {
+  if (wantsApprove && savedId) {
+    const hasFile = !!(data.file_path || prior?.file_path);
+    if (!hasFile) {
+      toast('Upload the fully executed (signed) change order document before approving.', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      await loadAllData();
+      return;
+    }
+    // 1. Analyze the executed document server-side: verify signatures + extract lines.
+    if (btn) btn.innerHTML = '<span class="spinner"></span> Analyzing document…';
+    let analysis;
     try {
-      rolledVer = await rollCoIntoSov(STATE.activeProjectId, savedId, data);
+      analysis = await analyzeCoDocument(savedId);
+    } catch (e) {
+      toast('Document analysis failed: ' + (e?.message || e), 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      await loadAllData();
+      return;
+    }
+    // 2. Hard signature gate.
+    if (!analysis.signed) {
+      toast('⚠️ NOT APPROVED — no valid signatures detected. ' + (analysis.signature_summary || ''), 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      await loadAllData();
+      openCoModal(savedId);
+      return;
+    }
+    // 3. Reconciliation warning (non-blocking) if extracted total != typed amount.
+    if (analysis.reconciles === false) {
+      const ok = confirm(`Heads up: the document total ($${(analysis.total||0).toLocaleString()}) does not match the entered amount ($${(analysis.amount_typed||0).toLocaleString()}). Approve and roll the DOCUMENT's line items into the SOV anyway?`);
+      if (!ok) { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } await loadAllData(); return; }
+    }
+    // 4. Now flip to approved (trigger passes: signed=true is persisted) and roll in.
+    const { error: apErr } = await sb.from('change_orders')
+      .update({ status: 'approved', approved_at: prior?.approved_at || new Date().toISOString() })
+      .eq('id', savedId);
+    if (apErr) { handleSbError(apErr, 'Approve CO'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } await loadAllData(); return; }
+    try {
+      rolledVer = await rollCoIntoSov(STATE.activeProjectId, savedId, data, analysis.line_items);
     } catch (e) {
       handleSbError(e, 'Roll CO into SOV');
       if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
@@ -4034,16 +4076,43 @@ async function saveCo(id) {
   }
 
   await loadAllData();
-  toast(rolledVer ? `CO approved — added to SOV as v${rolledVer}` : (id ? 'Change order updated' : 'Change order created'));
+  toast(rolledVer ? `✅ Signed CO approved — ${'' + ((DATA.changeOrders.find(c=>c.id===savedId)?.analysis?.line_items?.length)||0)} line item(s) added to SOV v${rolledVer}` : (id ? 'Change order updated' : 'Change order created'));
   closeModal();
   render();
 }
 window.saveCo = saveCo;
 
+// Calls the analyze-co edge function (owner-only, server-side LLM). Returns
+// { signed, signature_summary, line_items:[{description,amount}], total, amount_typed, reconciles, confidence }.
+async function analyzeCoDocument(coId) {
+  if (!(await ensureFreshPrivilegedSession())) throw new Error('Session expired — sign in again.');
+  const res = await fetch(ANALYZE_CO_FN_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'apikey': SUPABASE_KEY,
+      'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+    },
+    body: JSON.stringify({ co_id: coId }),
+  });
+  let j = {};
+  try { j = await res.json(); } catch {}
+  if (!res.ok || j?.error) {
+    const map = {
+      analyzer_not_configured: 'Document analyzer not configured (missing CO_LLM_API_KEY).',
+      no_document: 'Upload the executed change order document first.',
+      forbidden_owner_only: 'Only the owner can approve change orders.',
+    };
+    throw new Error(map[j?.error] || j?.message || j?.error || ('HTTP ' + res.status));
+  }
+  return j;
+}
+window.analyzeCoDocument = analyzeCoDocument;
+
 // Clone current SOV -> new version, carry forward base + prior CO lines, append
 // this CO as a new line. Returns the new version number. Does NOT touch
 // projects.contract_value (CO already counts via approvedCoTotal -> G702 line 2).
-async function rollCoIntoSov(projectId, coId, coData) {
+async function rollCoIntoSov(projectId, coId, coData, lineItems) {
   const proj = getProject(projectId);
   const curVer = currentSovVersion(projectId);   // 0 if none published yet
   const newVer = curVer + 1;
@@ -4068,23 +4137,50 @@ async function rollCoIntoSov(projectId, coId, coData) {
     co_id: s.co_id || null,
   }));
 
-  // Append the CO as a new billable line.
   const coLabel = `CO-${String(coData.co_number).padStart(3, '0')}`;
-  rows.push({
-    project_id: projectId,
-    version: newVer,
-    item_no: coLabel,
-    description: `${coLabel}: ${coData.description}`,
-    quantity: null,
-    unit: 'LS',
-    unit_price: null,
-    scheduled_value: Number(coData.amount) || 0,
-    sort_order: rows.length,
-    locked: true,
-    is_alternate: false,
-    source: 'change_order',
-    co_id: coId,
-  });
+  // Use the line items extracted from the executed document. Filter out zero/blank
+  // rows; only itemize when there are 2+ real lines, otherwise keep a single line.
+  const items = (Array.isArray(lineItems) ? lineItems : [])
+    .map(li => ({ description: String(li?.description || '').trim(), amount: Number(li?.amount) || 0 }))
+    .filter(li => li.description && Math.abs(li.amount) > 0.005);
+
+  if (items.length >= 2) {
+    // Itemized: one SOV sub-line per extracted document line (CO-001.1, .2, ...).
+    items.forEach((li, i) => {
+      rows.push({
+        project_id: projectId,
+        version: newVer,
+        item_no: `${coLabel}.${i + 1}`,
+        description: `${coLabel}: ${li.description}`,
+        quantity: null,
+        unit: 'LS',
+        unit_price: null,
+        scheduled_value: li.amount,
+        sort_order: rows.length,
+        locked: true,
+        is_alternate: false,
+        source: 'change_order',
+        co_id: coId,
+      });
+    });
+  } else {
+    // Single line fallback: use the one extracted item, else the typed amount.
+    rows.push({
+      project_id: projectId,
+      version: newVer,
+      item_no: coLabel,
+      description: `${coLabel}: ${items[0]?.description || coData.description}`,
+      quantity: null,
+      unit: 'LS',
+      unit_price: null,
+      scheduled_value: items[0]?.amount || Number(coData.amount) || 0,
+      sort_order: rows.length,
+      locked: true,
+      is_alternate: false,
+      source: 'change_order',
+      co_id: coId,
+    });
+  }
 
   const { error } = await sb.from('sov_items').insert(rows);
   if (error) throw error;
@@ -5138,6 +5234,7 @@ const NOTIFY_FN_URL = SUPABASE_URL + '/functions/v1/notify-task';
 const ROUTE_FN_URL    = SUPABASE_URL + '/functions/v1/notify-route';
 const FINALIZE_FN_URL = SUPABASE_URL + '/functions/v1/finalize-report';
 const QB_FN_URL       = SUPABASE_URL + '/functions/v1/qb-billing';
+const ANALYZE_CO_FN_URL = SUPABASE_URL + '/functions/v1/analyze-co';
 
 function myProfile() {
   if (!isNative() || !AUTH?.userId) return null;
