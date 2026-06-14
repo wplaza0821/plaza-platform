@@ -24,7 +24,12 @@ const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
 const NOTIFY_SECRET = Deno.env.get("NOTIFY_TRIGGER_SECRET") || "";
 const APP_URL = "https://plazacore.plazaandassociates.com";
-const FROM = "Plaza & Associates <info@plazaandassociates.com>";
+// NOTE: must send from the Resend-VERIFIED domain. Resend was set up on the
+// `send.` subdomain (SES SPF + feedback MX + DKIM live there). Sending from the
+// bare root (info@plazaandassociates.com) fails SPF (root SPF is Proofpoint/
+// GoDaddy with -all and does NOT include Resend/SES), so recipients silently
+// junked/dropped the mail even though Resend's API returned 2xx ("sent").
+const FROM = Deno.env.get("NOTIFY_FROM") || "Plaza & Associates <info@plazaandassociates.com>";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -93,8 +98,13 @@ async function sendEmail(to: string, subject: string, html: string): Promise<str
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({ from: FROM, to: [to], subject, html }),
     });
-    return r.ok ? "sent" : "failed";
-  } catch (_e) { return "failed"; }
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      console.log("RESEND_FAIL", r.status, detail.slice(0, 400));
+      return "failed";
+    }
+    return "sent";
+  } catch (_e) { console.log("RESEND_EXC", String(_e).slice(0,200)); return "failed"; }
 }
 
 async function sendSms(to: string, body: string): Promise<string> {
@@ -110,8 +120,9 @@ async function sendSms(to: string, body: string): Promise<string> {
       headers: { Authorization: "Basic " + btoa(`${sid}:${auth}`), "content-type": "application/x-www-form-urlencoded" },
       body: form.toString(),
     });
-    return r.ok ? "sent" : "failed";
-  } catch (_e) { return "failed"; }
+    if (!r.ok) { const t = await r.text().catch(() => ""); console.log("TWILIO_FAIL", r.status, t.slice(0,300)); return "failed"; }
+    return "sent";
+  } catch (_e) { console.log("TWILIO_EXC", String(_e).slice(0,200)); return "failed"; }
 }
 
 Deno.serve(async (req) => {

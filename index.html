@@ -7645,13 +7645,19 @@ const DEF_SEVERITY_META = {
   minor:    { label: 'Minor',    dot: '⚪', cls: 'badge-gray' },
 };
 const DEF_STATUS_META = {
-  open:      { label: 'Open',       cls: 'badge-red' },
-  in_repair: { label: 'In Repair',  cls: 'badge-yellow' },
-  repaired:  { label: 'Repaired',   cls: 'badge-blue' },
-  verified:  { label: 'Verified',   cls: 'badge-green' },
-  closed:    { label: 'Closed',     cls: 'badge-gray' },
-  rejected:  { label: 'Rejected',   cls: 'badge-purple' },
+  open:      { label: 'Open',            cls: 'badge-red' },
+  in_repair: { label: 'In Repair',       cls: 'badge-yellow' },
+  repaired:  { label: 'Repaired',        cls: 'badge-blue' },
+  verified:  { label: 'Verified / Closed', cls: 'badge-green' },
+  closed:    { label: 'Verified / Closed', cls: 'badge-green' }, // legacy alias -> same as verified
+  rejected:  { label: 'Rejected',        cls: 'badge-purple' },
 };
+// Linear one-click chase, mirroring Tasks' inline advance.
+//   open -> in_repair -> repaired -> verified(=closed/done)
+// 'repaired' also offers a Reject path back to in_repair (failed re-inspection).
+const DEF_ADVANCE_NEXT  = { open: 'in_repair', in_repair: 'repaired', repaired: 'verified' };
+const DEF_ADVANCE_LABEL = { in_repair: 'Start Repair', repaired: 'Mark Repaired', verified: '✓ Verify & Close' };
+const DEF_TERMINAL = new Set(['verified', 'closed']);
 
 // A deficiency "needs follow-up" when it's still active (not closed/verified)
 // and either has no scheduled follow-up date or that date is due/overdue.
@@ -7690,6 +7696,49 @@ function defStatusBadge(s) {
   const m = DEF_STATUS_META[s] || DEF_STATUS_META.open;
   return `<span class="badge ${m.cls} badge-dot">${escapeHtml(m.label)}</span>`;
 }
+
+// Inline one-click row actions, mirroring Tasks. Primary = advance to next state;
+// 'repaired' also gets a Reject ghost (failed re-inspection -> back to in_repair);
+// terminal (verified/closed) gets a Reopen ghost.
+function defRowActions(d) {
+  const status = d.status || 'open';
+  if (DEF_TERMINAL.has(status)) {
+    return `<button class="btn btn-ghost btn-sm" onclick="advanceDeficiency('${d.id}','in_repair')">Reopen</button>`;
+  }
+  const next = DEF_ADVANCE_NEXT[status];
+  let html = '';
+  if (next) {
+    const label = DEF_ADVANCE_LABEL[next] || 'Advance';
+    const cls = next === 'verified' ? 'btn-success' : 'btn-primary';
+    html += `<button class="btn ${cls} btn-sm" onclick="advanceDeficiency('${d.id}','${next}')">${label}</button>`;
+  }
+  if (status === 'repaired') {
+    html += `<button class="btn btn-ghost btn-sm" onclick="advanceDeficiency('${d.id}','rejected')">Reject</button>`;
+  }
+  return html;
+}
+window.defRowActions = defRowActions;
+
+// One-click status advance from the row (no modal). Fires the matching notify-route
+// event so the assignee/PM get pinged. 'verified' is treated as resolved/closeout.
+async function advanceDeficiency(id, next) {
+  const d = DATA.deficiencies.find(x => x.id === id);
+  if (!d) { toast('Deficiency not found'); return; }
+  if (!['open','in_repair','repaired','verified','rejected'].includes(next)) { toast('Invalid status'); return; }
+  const patch = { status: next, updated_at: new Date().toISOString() };
+  // Reaching a terminal/closeout state stops follow-up flagging.
+  if (next === 'verified') patch.next_follow_up_date = null;
+  // A rejected repair re-enters the chase; surface it for follow-up again.
+  if (next === 'rejected') patch.status = 'in_repair';
+  const { error } = await sb.from('deficiencies').update(patch).eq('id', id);
+  if (error) { handleSbError(error, 'Advance deficiency'); return; }
+  // Notify: verify => resolved; everything else => status_change.
+  notifyRoute('deficiencies', id, next === 'verified' ? 'resolved' : 'status_change');
+  await loadAllData();
+  toast(next === 'verified' ? 'Deficiency verified & closed' : (next === 'rejected' ? 'Repair rejected — back to In Repair' : 'Status updated'));
+  render();
+}
+window.advanceDeficiency = advanceDeficiency;
 
 function renderDeficiencies() {
   const proj = activeProject();
@@ -7775,6 +7824,7 @@ function renderDeficiencies() {
         <td>${defStatusBadge(d.status || 'open')}</td>
         <td>
           <div class="row-actions">
+            ${defRowActions(d)}
             <button class="btn btn-ghost btn-sm" onclick="openDeficiencyModal('${d.id}')">Open</button>
           </div>
         </td>
@@ -7816,9 +7866,25 @@ function openDeficiencyModal(id) {
   const sevOpts = Object.keys(DEF_SEVERITY_META).map(k =>
     `<option value="${k}" ${(editing?.severity || 'moderate') === k ? 'selected' : ''}>${DEF_SEVERITY_META[k].label}</option>`
   ).join('');
-  const statusOpts = Object.keys(DEF_STATUS_META).map(k =>
-    `<option value="${k}" ${(editing?.status || 'open') === k ? 'selected' : ''}>${DEF_STATUS_META[k].label}</option>`
+  // Collapse legacy 'closed' to 'verified' in the dropdown (same meaning now).
+  const DEF_STATUS_CHOICES = ['open','in_repair','repaired','verified','rejected'];
+  const curStatus = (editing?.status === 'closed') ? 'verified' : (editing?.status || 'open');
+  const statusOpts = DEF_STATUS_CHOICES.map(k =>
+    `<option value="${k}" ${curStatus === k ? 'selected' : ''}>${DEF_STATUS_META[k].label}</option>`
   ).join('');
+
+  // Assignee picker (profile uuid) — same component Tasks use.
+  const assignChoices = assigneeProfilesForProject(STATE.activeProjectId)
+    .slice().sort((a, b) => profileLabel(a).localeCompare(profileLabel(b)));
+  const curAssignee = editing?.assigned_to || '';
+  let assigneeOptions = `<option value="">— Unassigned —</option>`;
+  assigneeOptions += assignChoices.map(p =>
+    `<option value="${escapeHtml(p.id)}" ${p.id === curAssignee ? 'selected' : ''}>${escapeHtml(profileLabel(p))}</option>`
+  ).join('');
+  if (curAssignee && !assignChoices.some(p => p.id === curAssignee)) {
+    const lbl = isUuid(curAssignee) ? `${resolveAssignee(curAssignee)} (unlisted)` : `${curAssignee} (legacy)`;
+    assigneeOptions += `<option value="${escapeHtml(curAssignee)}" selected>${escapeHtml(lbl)}</option>`;
+  }
 
   const frOpts = DATA.field_reports
     .filter(r => r.project_id === STATE.activeProjectId)
@@ -7835,9 +7901,10 @@ function openDeficiencyModal(id) {
       <div class="form-row"><label class="form-label">Location</label><input id="d-loc" type="text" value="${escapeHtml(editing?.location || '')}" placeholder="Level 12, Unit 1204, North Balcony" /></div>
       <div class="form-row"><label class="form-label">Description <span style="color:var(--red);">*</span></label><textarea id="d-desc" rows="3">${escapeHtml(editing?.description || '')}</textarea></div>
       <div class="form-row two-col">
-        <div><label class="form-label">Responsible Party</label><input id="d-resp" type="text" value="${escapeHtml(editing?.responsible_party || '')}" /></div>
+        <div><label class="form-label">Assignee (notified)</label><select id="d-assigned">${assigneeOptions}</select><div class="text-sm text-muted" style="margin-top:4px;">Gets in-app + SMS alerts on assign / status change / follow-up.</div></div>
         <div><label class="form-label">Due Date</label><input id="d-due" type="date" value="${editing?.due_date || ''}" /></div>
       </div>
+      <div class="form-row"><label class="form-label">Responsible Firm / Label</label><input id="d-resp" type="text" value="${escapeHtml(editing?.responsible_party || '')}" placeholder="e.g. ABM - Waterproofing (display only)" /></div>
       <div class="form-row two-col">
         <div><label class="form-label">Status</label><select id="d-status">${statusOpts}</select></div>
         <div><label class="form-label">Linked Field Report</label>
@@ -7899,6 +7966,7 @@ async function saveDeficiency(id) {
     description: desc,
     severity: document.getElementById('d-sev').value,
     responsible_party: document.getElementById('d-resp').value.trim() || null,
+    assigned_to: (document.getElementById('d-assigned')?.value || '').trim() || null,
     due_date: document.getElementById('d-due').value || null,
     status: document.getElementById('d-status').value,
     field_report_id: document.getElementById('d-fr').value || null,
@@ -7907,12 +7975,17 @@ async function saveDeficiency(id) {
     updated_at: new Date().toISOString(),
   };
   let res, newId = id;
+  const prevAssignee = id ? (DATA.deficiencies.find(d => d.id === id)?.assigned_to || null) : null;
   if (id) res = await sb.from('deficiencies').update(data).eq('id', id);
   else {
     res = await queueableInsert('deficiencies', data, { select: 'id' });
     if (!res.error && res.data && !res.queued) { newId = res.data.id; notifyRoute('deficiencies', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save deficiency'); return; }
+  // Existing item whose assignee changed -> ping the new assignee.
+  if (id && !res.error && data.assigned_to && data.assigned_to !== prevAssignee) {
+    notifyRoute('deficiencies', id, 'reassigned');
+  }
   if (!res.queued) { await loadAllData(); toast(id ? 'Deficiency updated' : 'Deficiency logged'); }
   closeModal();
   render();

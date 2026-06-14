@@ -41,7 +41,7 @@ function corsFor(origin: string | null) {
 const cors = corsFor(null);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_TABLES = new Set(["rfis", "submittals", "deficiencies"]);
-const ALLOWED_EVENTS = new Set(["created", "ball_in_court_change", "due_reminder", "overdue"]);
+const ALLOWED_EVENTS = new Set(["created", "ball_in_court_change", "due_reminder", "overdue", "reassigned", "status_change", "followed_up", "resolved"]);
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
@@ -126,11 +126,16 @@ Deno.serve(async (req) => {
   const titleStr = proj.title(rec as any).slice(0, 140);
   const dueStr = (rec as any).due_date ? String((rec as any).due_date) : "n/a";
   const bic = (rec as any).ball_in_court ? String((rec as any).ball_in_court) : "";
+  const statusStr = (rec as any).status ? String((rec as any).status) : "";
   const eventLabel: Record<string, string> = {
     created: "New item assigned to you",
     ball_in_court_change: `Ball in your court${bic ? ` (${bic})` : ""}`,
     due_reminder: "Item due soon",
     overdue: "OVERDUE item",
+    reassigned: "Reassigned to you",
+    status_change: `Status updated${statusStr ? ` → ${statusStr}` : ""}`,
+    followed_up: "Follow-up reminder",
+    resolved: "Marked resolved",
   };
 
   // 5. Insert in-app notification (service role; also de-dupes daily reminders)
