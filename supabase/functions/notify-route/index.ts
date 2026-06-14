@@ -26,7 +26,30 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
+// Must send from the Resend-VERIFIED domain (root plazaandassociates.com).
+const FROM = Deno.env.get("NOTIFY_FROM") || "Plaza & Associates <info@plazaandassociates.com>";
 const APP_URL = "https://plazacore.plazaandassociates.com";
+
+// Which routing events should also send the assignee an email.
+const EMAIL_EVENTS = new Set(["created", "reassigned", "status_change", "resolved"]);
+
+async function sendEmail(to: string, subject: string, html: string): Promise<string> {
+  if (!RESEND_API_KEY) return "skipped";
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ from: FROM, to: [to], subject, html }),
+    });
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      console.log("RESEND_FAIL", r.status, detail.slice(0, 400));
+      return "failed";
+    }
+    return "sent";
+  } catch (_e) { console.log("RESEND_EXC", String(_e).slice(0, 200)); return "failed"; }
+}
 // Allow prod + staging origins (echo the caller's origin when allowed).
 const ALLOWED_ORIGINS = [APP_URL, "https://wplaza0821.github.io"];
 function corsFor(origin: string | null) {
@@ -109,7 +132,7 @@ Deno.serve(async (req) => {
 
   // 4. Load assignee profile + project name
   const { data: assignee, error: profErr } = await admin
-    .from("profiles").select("id, full_name, phone, active").eq("id", assignedTo).maybeSingle();
+    .from("profiles").select("id, full_name, phone, email, active").eq("id", assignedTo).maybeSingle();
   if (profErr) return json({ error: "profile_lookup_failed" }, 500);
   if (!assignee) return json({ ok: true, skipped: "no assignee" });
 
@@ -122,6 +145,9 @@ Deno.serve(async (req) => {
 
   const phone = assignee.phone ? String(assignee.phone).trim() : "";
   const willSms = !!phone && /^\+[1-9]\d{6,14}$/.test(phone) && assignee.active !== false;
+  const email = (assignee as any).email ? String((assignee as any).email).trim() : "";
+  const willEmail = !!email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+    && assignee.active !== false && EMAIL_EVENTS.has(event);
 
   const titleStr = proj.title(rec as any).slice(0, 140);
   const dueStr = (rec as any).due_date ? String((rec as any).due_date) : "n/a";
@@ -159,8 +185,8 @@ Deno.serve(async (req) => {
     ref_id: refId,
     sms_to: willSms ? phone : null,
     sms_status: willSms ? "pending" : "skipped",
-    email_to: null,
-    email_status: "skipped",
+    email_to: willEmail ? email : null,
+    email_status: willEmail ? "pending" : "skipped",
   }).select("id").single();
   if (insErr || !inserted) return json({ error: "notification_insert_failed" }, 500);
 
@@ -197,5 +223,20 @@ Deno.serve(async (req) => {
     try { await admin.from("notifications").update({ sms_status: smsStatus }).eq("id", inserted.id); } catch (_e) {}
   }
 
-  return json({ ok: true, notification_id: inserted.id, sms_status: smsStatus });
+  // 7. Email (best-effort) for assign/reassign/status_change/resolved.
+  let emailStatus = willEmail ? "pending" : "skipped";
+  if (willEmail) {
+    const subject = `Plazacore: ${eventLabel[event]} — ${titleStr}`;
+    const html =
+      `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">` +
+      `<p><strong>${eventLabel[event]}</strong></p>` +
+      `<p>${titleStr}</p>` +
+      `<p style="color:#555;">Project: ${projectName}<br/>Due: ${dueStr}</p>` +
+      `<p><a href="${APP_URL}${proj.link}" style="color:#1a73e8;">Open in Plazacore</a></p>` +
+      `</div>`;
+    emailStatus = await sendEmail(email, subject, html);
+    try { await admin.from("notifications").update({ email_status: emailStatus }).eq("id", inserted.id); } catch (_e) {}
+  }
+
+  return json({ ok: true, notification_id: inserted.id, sms_status: smsStatus, email_status: emailStatus });
 });
