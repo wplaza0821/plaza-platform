@@ -658,6 +658,39 @@
   body.perm-no-edit-deficiencies  .perm-edit-deficiencies  { display: none !important; }
   body.perm-no-edit-daily         .perm-edit-daily         { display: none !important; }
   body.perm-no-edit-milestones    .perm-edit-milestones    { display: none !important; }
+  body.perm-no-edit-schedule      .perm-edit-schedule      { display: none !important; }
+
+  /* Gantt chart */
+  .gantt-scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; max-height: 70vh; overflow-y: auto; }
+  .gantt-row { display: grid; grid-template-columns: var(--gantt-label-w, 280px) 1fr; align-items: center;
+    border-bottom: 1px solid var(--gray-100); min-height: 30px; }
+  .gantt-row:hover { background: var(--gray-50); }
+  .gantt-row.is-summary { font-weight: 700; background: var(--gray-50); }
+  .gantt-row.is-milestone .gantt-label { font-style: italic; }
+  .gantt-label { padding: 4px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    border-right: 1px solid var(--gray-200); position: sticky; left: 0; background: inherit; z-index: 2; }
+  .gantt-label .wbs { color: var(--gray-400); font-weight: 400; margin-right: 6px; font-variant-numeric: tabular-nums; }
+  .gantt-track { position: relative; height: 30px; }
+  .gantt-grid-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--gray-100); }
+  .gantt-grid-line.month { background: var(--gray-200); }
+  .gantt-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--red); z-index: 3; }
+  .gantt-bar { position: absolute; top: 7px; height: 16px; border-radius: 4px; background: #2563eb;
+    overflow: hidden; min-width: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+  .gantt-bar.is-summary { background: #334155; height: 8px; top: 11px; border-radius: 2px; }
+  .gantt-bar.is-critical { background: #dc2626; }
+  .gantt-bar.is-done { background: #16a34a; }
+  .gantt-bar-fill { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(255,255,255,.45); }
+  .gantt-bar-pct { position: absolute; right: 4px; top: 0; bottom: 0; display: flex; align-items: center;
+    font-size: 10px; color: #fff; font-weight: 700; text-shadow: 0 0 2px rgba(0,0,0,.4); }
+  .gantt-milestone { position: absolute; top: 8px; width: 14px; height: 14px; background: #7c3aed;
+    transform: rotate(45deg); border-radius: 2px; z-index: 2; }
+  .gantt-axis { display: grid; grid-template-columns: var(--gantt-label-w, 280px) 1fr; position: sticky; top: 0;
+    background: #fff; z-index: 5; border-bottom: 2px solid var(--gray-200); }
+  .gantt-axis-label { padding: 6px 10px; font-weight: 700; border-right: 1px solid var(--gray-200);
+    position: sticky; left: 0; background: #fff; z-index: 6; }
+  .gantt-axis-track { position: relative; height: 30px; background: #fff; }
+  .gantt-axis-tick { position: absolute; top: 6px; font-size: 11px; color: var(--gray-500); white-space: nowrap;
+    font-weight: 600; }
 
   /* ── Document thumbnail grid ─────────────────────────────────── */
   .doc-grid-wrap { padding: 0 0 32px; }
@@ -1246,12 +1279,12 @@
       </div>
     </section>
 
-    <!-- ========== MILESTONES ========== -->
+    <!-- ========== SCHEDULE (Milestones + MS Project Gantt) ========== -->
     <section id="page-milestones" class="tab-page">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Project Milestones</h1>
-          <div class="page-subtitle">Schedule the journey from NTP to closeout</div>
+          <h1 class="page-title">Project Schedule</h1>
+          <div class="page-subtitle">Milestones &amp; Microsoft Project Gantt — contractor uploads, auto-analyzed</div>
           <div class="page-context-pill" id="ms-context"></div>
         </div>
         <div class="flex gap-8">
@@ -1260,17 +1293,57 @@
         </div>
       </div>
 
-      <div class="card mb-12">
-        <div class="card-body">
-          <div class="flex-between" style="margin-bottom:8px;">
-            <div class="sov-section-title">Overall Progress</div>
-            <div id="ms-progress-label" class="text-sm text-muted">0 of 0 complete</div>
+      <!-- View switch: Gantt | Milestones -->
+      <div class="toolbar" style="margin-bottom:12px;">
+        <div class="filter-bar" id="schedViewSwitch" style="margin:0;">
+          <span class="chip active" data-schedview="gantt">📊 Gantt</span>
+          <span class="chip" data-schedview="milestones">🎯 Milestones</span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-secondary btn-sm perm-edit-schedule" onclick="openScheduleUploadModal()">⤴ Upload Teams / MS Project Schedule</button>
+      </div>
+
+      <!-- GANTT VIEW -->
+      <div id="sched-gantt-view">
+        <div class="hint-banner">
+          📤 Contractors export their schedule from <strong>Microsoft Project</strong>, <strong>Project for the web</strong>, or <strong>Planner/Teams</strong>
+          (File → Export → Excel, CSV, or MS Project XML), upload it here, and Plazacore parses it into the Gantt automatically. PDF Gantt printouts also work.
+        </div>
+
+        <div class="card mb-12" id="sched-summary-card" style="display:none;">
+          <div class="card-body">
+            <div class="flex-between" style="flex-wrap:wrap; gap:10px;">
+              <div>
+                <div class="sov-section-title">Schedule Overview</div>
+                <div class="text-sm text-muted" id="sched-summary-meta"></div>
+              </div>
+              <div class="text-sm" id="sched-progress-label">—</div>
+            </div>
+            <div class="progress-bar" style="height:10px; margin-top:8px;"><div class="progress-fill" id="sched-progress-fill" style="width:0%"></div></div>
           </div>
-          <div class="progress-bar" style="height:10px;"><div class="progress-fill" id="ms-progress-fill" style="width:0%"></div></div>
+        </div>
+
+        <!-- imports awaiting review -->
+        <div id="sched-imports-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
+
+        <div class="card">
+          <div class="gantt-scroll" id="ganttScroll"><div id="ganttChart"></div></div>
         </div>
       </div>
 
-      <div id="msTimeline" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <!-- MILESTONES VIEW -->
+      <div id="sched-milestones-view" style="display:none;">
+        <div class="card mb-12">
+          <div class="card-body">
+            <div class="flex-between" style="margin-bottom:8px;">
+              <div class="sov-section-title">Overall Progress</div>
+              <div id="ms-progress-label" class="text-sm text-muted">0 of 0 complete</div>
+            </div>
+            <div class="progress-bar" style="height:10px;"><div class="progress-fill" id="ms-progress-fill" style="width:0%"></div></div>
+          </div>
+        </div>
+        <div id="msTimeline" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
     </section>
 
     <!-- ========== DOCUMENTS ========== -->
@@ -1600,6 +1673,7 @@ function canEdit(scope) {
   if (scope === 'submittals') return !!p.submittals;
   if (scope === 'payapps')    return !!p.payapps;
   if (scope === 'cos')        return !!p.cos;
+  if (scope === 'schedule')   return p.schedule !== false; // default-on for contractors
   return false;
 }
 function canView(scope) {
@@ -1612,7 +1686,7 @@ function canView(scope) {
   if (scope === 'plans')    return !!p.plans;
   if (scope === 'tasks')    return true;
   if (scope === 'photos' || scope === 'field_reports' || scope === 'deficiencies' ||
-      scope === 'daily'  || scope === 'milestones') return true;
+      scope === 'daily'  || scope === 'milestones' || scope === 'schedule') return true;
   return !!p[scope];
 }
 
@@ -1792,7 +1866,7 @@ function applyRoleBodyClasses() {
   body.classList.add(isNative() ? 'auth-native' : 'auth-legacy');
   const shell = document.getElementById('appShell');
   if (shell) shell.style.display = '';
-  ['payapps','cos','rfis','subs','docs','projects','tasks','photos','fieldreports','deficiencies','daily','milestones'].forEach(s => {
+  ['payapps','cos','rfis','subs','docs','projects','tasks','photos','fieldreports','deficiencies','daily','milestones','schedule'].forEach(s => {
     body.classList.remove('perm-no-edit-' + s);
     body.classList.remove('perm-no-view-' + s);
   });
@@ -1810,6 +1884,10 @@ function applyRoleBodyClasses() {
     body.classList.add('perm-no-edit-deficiencies');
     body.classList.add('perm-no-edit-daily');
     body.classList.add('perm-no-edit-milestones');
+    // Schedule: contractors MAY upload their MS Project/Teams schedule when granted
+    // the 'schedule' permission (RLS allows insert on schedule_imports). The owner
+    // reviews + applies. Hide the upload button only if the permission is off.
+    if (!canEdit('schedule')) body.classList.add('perm-no-edit-schedule');
     if (!canView('payapps'))    body.classList.add('perm-no-view-payapps');
     if (!canView('rfis'))       body.classList.add('perm-no-view-rfis');
     if (!canView('submittals')) body.classList.add('perm-no-view-subs');
@@ -1878,6 +1956,8 @@ const DATA = {
   deficiency_followups: [],
   daily_reports: [],
   milestones: [],
+  scheduleTasks: [],    // Phase 7: MS Project / Gantt task rows
+  scheduleImports: [],  // Phase 7: uploaded schedule files + AI analysis
   profiles: [],         // Phase B: native auth user profiles (RLS-scoped)
   users: [],            // Phase 4-07: owner-only directory (plz_users) w/ last_sign_in_at
   projectMembers: [],   // Phase 6: {user_id, project_id} multi-project membership
@@ -1894,6 +1974,7 @@ async function loadAllData() {
   const padP  = sb.from('pay_app_documents').select('*').order('uploaded_at', { ascending: false });
   const rfP   = sb.from('rfis').select('*').order('rfi_number', { ascending: false });
   const subP  = sb.from('submittals').select('*').order('created_at', { ascending: false });
+  const sfP   = sb.from('submittal_files').select('*').order('uploaded_at', { ascending: false });
   const coP   = sb.from('change_orders').select('*').order('co_number', { ascending: false });
   const docP  = sb.from('documents').select('*').order('uploaded_at', { ascending: false });
   const tkP   = sb.from('tasks').select('*').order('created_at', { ascending: false });
@@ -1903,6 +1984,8 @@ async function loadAllData() {
   const dfuP  = sb.from('deficiency_followups').select('*').order('created_at', { ascending: false });
   const dlP   = sb.from('daily_reports').select('*').order('report_date', { ascending: false });
   const msP   = sb.from('milestones').select('*').order('sort_order', { ascending: true });
+  const stP   = sb.from('schedule_tasks').select('*').order('sort_order', { ascending: true });
+  const siP   = sb.from('schedule_imports').select('*').order('uploaded_at', { ascending: false });
   // Phase B: profiles. RLS returns own row to anyone; owner/staff get the full
   // list (for the invite admin + assignee pickers). Table may not exist yet.
   const prfP  = sb.from('profiles').select('*').order('created_at', { ascending: false });
@@ -1915,8 +1998,8 @@ async function loadAllData() {
   // Phase 6: per-user project memberships (owner reads all; others read own).
   const pmP = sb.from('project_members').select('user_id, project_id');
 
-  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, prf, dash, tpl, usr, pm] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, prfP, dashP, tplP, usersP, pmP
+  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, st, si, prf, dash, tpl, usr, pm, sf] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, stP, siP, prfP, dashP, tplP, usersP, pmP, sfP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -1926,6 +2009,7 @@ async function loadAllData() {
   if (lw.error)   handleSbError(lw.error, 'Loading waivers');
   if (rf.error)   handleSbError(rf.error, 'Loading RFIs');
   if (sub.error)  handleSbError(sub.error, 'Loading submittals');
+  softErr(sf, 'Loading submittal files');
   if (co.error)   handleSbError(co.error, 'Loading change orders');
   if (doc.error)  handleSbError(doc.error, 'Loading documents');
   if (tk.error && tk.error.code !== 'PGRST205') handleSbError(tk.error, 'Loading tasks');
@@ -1937,6 +2021,8 @@ async function loadAllData() {
   softErr(dfu, 'Loading deficiency follow-ups');
   softErr(dl, 'Loading daily reports');
   softErr(ms, 'Loading milestones');
+  softErr(st, 'Loading schedule tasks');
+  softErr(si, 'Loading schedule imports');
 
   DATA.projects     = proj.data || [];
   DATA.contractors  = con.data  || [];
@@ -1947,7 +2033,8 @@ async function loadAllData() {
   softErr(pad, 'Loading pay app documents');
   DATA.payAppDocs   = pad.data  || [];
   DATA.rfis         = rf.data   || [];
-  DATA.submittals   = sub.data  || [];
+  DATA.submittals      = sub.data  || [];
+  DATA.submittalFiles  = sf.data   || [];
   DATA.changeOrders = co.data   || [];
   DATA.documents    = doc.data  || [];
   DATA.tasks        = tk.data   || [];
@@ -1957,6 +2044,8 @@ async function loadAllData() {
   DATA.deficiency_followups = dfu.data || [];
   DATA.daily_reports = dl.data || [];
   DATA.milestones    = ms.data || [];
+  DATA.scheduleTasks   = st.data || [];
+  DATA.scheduleImports = si.data || [];
   softErr(prf, 'Loading profiles');
   DATA.profiles      = prf.data || [];
   // Phase 4 caches (silent if not yet deployed)
@@ -3735,9 +3824,11 @@ function renderSubmittals() {
     body.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📤</div><div class="empty-title">No submittals</div><div class="empty-sub">Add a product data sheet, shop drawing, or sample.</div></div></td></tr>`;
     return;
   }
-  body.innerHTML = list.map(s => `
+  body.innerHTML = list.map(s => {
+    const sfCount = (DATA.submittalFiles || []).filter(f => f.submittal_id === s.id).length;
+    return `
     <tr>
-      <td style="font-weight:600;">${escapeHtml(s.submittal_number)}</td>
+      <td style="font-weight:600;">${escapeHtml(s.submittal_number)}${sfCount ? ` <span title="${sfCount} file${sfCount > 1 ? 's' : ''} attached">📎</span>` : ''}</td>
       <td class="text-sm">${escapeHtml(s.spec_section || '—')}</td>
       <td>
         <div style="font-weight:500;">${escapeHtml(s.description || '')}</div>
@@ -3750,7 +3841,8 @@ function renderSubmittals() {
       <td><span class="badge ${s.ball_in_court === 'engineer' ? 'badge-yellow' : s.ball_in_court === 'owner' ? 'badge-purple' : 'badge-blue'}">${escapeHtml(lbl(s.ball_in_court))}</span></td>
       <td><div class="row-actions"><button class="btn btn-ghost btn-sm" onclick="openSubmittalModal('${s.id}')">View</button></div></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 document.getElementById('subFilters').addEventListener('click', e => {
   const chip = e.target.closest('.chip');
@@ -3811,6 +3903,32 @@ function openSubmittalModal(id) {
         </select>
       </div>
       <div class="form-row"><label class="form-label">Notes</label><textarea id="sb-notes" rows="3" ${!canEditFully?'readonly':''}>${escapeHtml(editing?.notes || '')}</textarea></div>
+      ${editing ? (() => {
+        const files = (DATA.submittalFiles || []).filter(f => f.submittal_id === editing.id);
+        const fileList = files.length ? files.map(f => {
+          const descPart = f.description ? ' &mdash; <span class="text-muted">' + escapeHtml(f.description) + '</span>' : '';
+          const sizePart = f.file_size ? (f.file_size > 1048576 ? (f.file_size/1048576).toFixed(1)+'MB' : Math.round(f.file_size/1024)+'KB') : '';
+          return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">'
+            + '<span style="flex:1;font-size:13px;">&#128196; <strong>' + escapeHtml(f.file_name || 'Untitled') + '</strong>' + descPart + '</span>'
+            + '<span class="text-muted" style="font-size:12px;">' + sizePart + '</span>'
+            + '<button type="button" class="btn btn-ghost btn-sm" onclick="viewSubmittalFile(\'' + f.id + '\')">&#128065; View</button>'
+            + '<button type="button" class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteSubmittalFile(\'' + f.id + '\',\'' + editing.id + '\');">&#128465;</button>'
+            + '</div>';
+        }).join('') : '<div class="text-muted" style="font-size:13px;padding:8px 0;">No files uploaded yet.</div>';
+        return `<div class="form-row">
+          <label class="form-label">&#128206; Attachments (Data Sheets / Shop Drawings)</label>
+          <div id="sb-file-list" style="margin-bottom:8px;">${fileList}</div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div style="flex:1;min-width:180px;">
+              <input type="file" id="sb-file-input" accept=".pdf,image/jpeg,image/png" style="width:100%;" />
+            </div>
+            <div style="flex:1;min-width:150px;">
+              <input id="sb-file-desc" placeholder="Label (e.g. HILTI ESA-3437)" style="width:100%;" />
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="sb-upload-btn" onclick="uploadSubmittalFile('${editing.id}')">&#128206; Upload PDF</button>
+          </div>
+        </div>`;
+      })() : '<div class="form-row"><div class="text-muted" style="font-size:13px;">&#128221; Save the submittal first, then attach files.</div></div>'}
     `,
     footer: editing
       ? `${canEditFully ? `<button class="btn btn-danger" onclick="deleteSubmittal('${editing.id}')">Delete</button>` : ''}<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="saveSubmittal('${editing.id}')">Save</button>`
@@ -3865,6 +3983,76 @@ async function deleteSubmittal(id) {
   render();
 }
 window.deleteSubmittal = deleteSubmittal;
+
+/* =========================================================================
+   SUBMITTAL FILE ATTACHMENTS
+   ========================================================================= */
+async function uploadSubmittalFile(submittalId) {
+  const fileEl = document.getElementById('sb-file-input');
+  const file = fileEl?.files?.[0];
+  if (!file) { toast('Choose a file first', 'error'); return; }
+  if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
+  const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
+  if (!allowed.includes(file.type)) { toast('Only PDF / JPG / PNG allowed', 'error'); return; }
+  const desc = (document.getElementById('sb-file-desc')?.value || '').trim() || null;
+
+  const btn = document.getElementById('sb-upload-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
+
+  const sub = DATA.submittals.find(s => s.id === submittalId);
+  const proj = sub ? getProject(sub.project_id) : null;
+  const codePrefix = proj?.code || (sub?.project_id || submittalId);
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${codePrefix}/submittals/${submittalId}/${Date.now()}_${safeName}`;
+
+  const { error: upErr } = await sb.storage.from('submittals').upload(path, file, { upsert: false });
+  if (upErr) {
+    handleSbError(upErr, 'Upload submittal file');
+    if (btn) { btn.disabled = false; btn.textContent = '📒 Upload PDF'; }
+    return;
+  }
+
+  const { error: insErr } = await sb.from('submittal_files').insert({
+    submittal_id: submittalId,
+    project_id: sub?.project_id || null,
+    file_path: path,
+    file_name: file.name,
+    file_size: file.size,
+    file_type: file.type === 'application/pdf' ? 'data_sheet' : 'other',
+    description: desc,
+    uploaded_by: AUTH.name,
+  });
+  if (insErr) {
+    handleSbError(insErr, 'Record submittal file');
+    if (btn) { btn.disabled = false; btn.textContent = '📒 Upload PDF'; }
+    return;
+  }
+
+  await loadAllData();
+  toast('File uploaded');
+  openSubmittalModal(submittalId);
+}
+window.uploadSubmittalFile = uploadSubmittalFile;
+
+async function viewSubmittalFile(fileId) {
+  const f = (DATA.submittalFiles || []).find(x => x.id === fileId);
+  if (!f?.file_path) { toast('File not found', 'error'); return; }
+  const { data, error } = await sb.storage.from('submittals').createSignedUrl(f.file_path, 3600);
+  if (error) { handleSbError(error, 'Get file URL'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+window.viewSubmittalFile = viewSubmittalFile;
+
+async function deleteSubmittalFile(fileId, submittalId) {
+  if (!confirm('Remove this attachment?')) return;
+  const f = (DATA.submittalFiles || []).find(x => x.id === fileId);
+  if (f?.file_path) await sb.storage.from('submittals').remove([f.file_path]).catch(() => {});
+  await sb.from('submittal_files').delete().eq('id', fileId);
+  await loadAllData();
+  toast('Attachment removed');
+  openSubmittalModal(submittalId);
+}
+window.deleteSubmittalFile = deleteSubmittalFile;
 
 /* =========================================================================
    CHANGE ORDERS
@@ -5744,8 +5932,8 @@ function refreshCounts() {
   setCnt('cnt-deficiencies', defOpen || '');
   const dailyN = DATA.daily_reports.filter(d => d.project_id === pid).length;
   setCnt('cnt-daily', dailyN || '');
-  const msOpen = DATA.milestones.filter(m => m.project_id === pid && m.status !== 'completed' && m.status !== 'cancelled').length;
-  setCnt('cnt-milestones', msOpen || '');
+  const pendingImports = (DATA.scheduleImports || []).filter(i => i.project_id === pid && i.status === 'analyzed').length;
+  setCnt('cnt-milestones', pendingImports || '');
 }
 
 /* =========================================================================
@@ -5770,7 +5958,7 @@ function render() {
     else if (tab === 'field_reports') renderFieldReports();
     else if (tab === 'deficiencies')  renderDeficiencies();
     else if (tab === 'daily')         renderDailyReports();
-    else if (tab === 'milestones')    renderMilestones();
+    else if (tab === 'milestones')    renderSchedule();
     else if (tab === 'docs')       renderDocs();
     else if (tab === 'users')      renderUsers();
     else if (tab === 'profile')    renderProfile();
