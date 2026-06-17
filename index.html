@@ -2011,12 +2011,12 @@ async function loadAllData() {
   if (lw.error)   handleSbError(lw.error, 'Loading waivers');
   if (rf.error)   handleSbError(rf.error, 'Loading RFIs');
   if (sub.error)  handleSbError(sub.error, 'Loading submittals');
-  softErr(sf, 'Loading submittal files');
   if (co.error)   handleSbError(co.error, 'Loading change orders');
   if (doc.error)  handleSbError(doc.error, 'Loading documents');
   if (tk.error && tk.error.code !== 'PGRST205') handleSbError(tk.error, 'Loading tasks');
   // New modules — tables may not exist yet; silently treat PGRST205 as empty
   const softErr = (res, label) => { if (res.error && res.error.code !== 'PGRST205' && res.error.code !== '42P01') handleSbError(res.error, label); };
+  softErr(sf, 'Loading submittal files');
   softErr(ph, 'Loading photos');
   softErr(fr, 'Loading field reports');
   softErr(df, 'Loading deficiencies');
