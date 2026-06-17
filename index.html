@@ -153,6 +153,8 @@
   .bell-item.read .bell-item-title { font-weight: 500; color: var(--gray-500); }
   .bell-item-sub { font-size: 11.5px; color: var(--gray-500); margin-top: 2px; line-height: 1.35; word-break: break-word; }
   .bell-item-time { font-size: 10px; color: var(--gray-400); margin-top: 3px; letter-spacing: 0.3px; }
+  .bell-item-arrow { flex: 0 0 auto; font-size: 11px; color: var(--gray-300); align-self: center; margin-left: 2px; }
+  .bell-item:hover .bell-item-arrow { color: var(--gray-500); }
   .bell-empty { padding: 26px 14px; text-align: center; color: var(--gray-400); font-size: 12px; }
   .project-select {
     background: #FFFFFF; color: var(--black);
@@ -6212,13 +6214,16 @@ function renderNotifList() {
   if (mk) mk.disabled = unreadNotifCount() === 0;
   list.innerHTML = items.map(nf => {
     const read = !!nf.read_at;
-    return `<div class="bell-item ${read ? 'read' : ''}" onclick="openNotification('${nf.id}')">
+    // Determine if this notification has a route (show arrow indicator).
+    const hasRoute = !!(nf.ref_table && NOTIF_ROUTE_MAP[nf.ref_table]) || !!(nf.link && NOTIF_ROUTE_MAP[nf.link]);
+    return `<div class="bell-item ${read ? 'read' : ''}" onclick="openNotification('${nf.id}')" title="${hasRoute ? 'Click to open' : ''}">
       <span class="bell-dot"></span>
       <div class="bell-item-body">
         <div class="bell-item-title">${escapeHtml(nf.title || '')}</div>
         ${nf.body ? `<div class="bell-item-sub">${escapeHtml(nf.body)}</div>` : ''}
         <div class="bell-item-time">${escapeHtml(relTime(nf.created_at))}</div>
       </div>
+      ${hasRoute ? '<span class="bell-item-arrow">›</span>' : ''}
     </div>`;
   }).join('');
 }
@@ -6257,13 +6262,53 @@ async function markNotificationRead(id) {
 }
 window.markNotificationRead = markNotificationRead;
 
+// Map ref_table / link hash → { tab, opener(id) }
+const NOTIF_ROUTE_MAP = {
+  rfis:         { tab: 'rfis',         open: (id) => { if (id) setTimeout(() => openRfiModal(id), 220); } },
+  submittals:   { tab: 'submittals',   open: (id) => { if (id) setTimeout(() => openSubmittalModal(id), 220); } },
+  deficiencies: { tab: 'deficiencies', open: (id) => { if (id) setTimeout(() => openDeficiencyModal(id), 220); } },
+  tasks:        { tab: 'tasks',        open: (id) => { if (id) setTimeout(() => openTaskModal(id), 220); } },
+  pay_apps:     { tab: 'payapps',      open: (id) => { if (id) setTimeout(() => openPayAppModal(id), 220); } },
+  change_orders:{ tab: 'cos',          open: (id) => { if (id) setTimeout(() => openCoModal(id), 220); } },
+  // link-hash fallback (no modal, just switch tab)
+  '#rfis':          { tab: 'rfis',         open: null },
+  '#submittals':    { tab: 'submittals',   open: null },
+  '#deficiencies':  { tab: 'deficiencies', open: null },
+  '#tasks':         { tab: 'tasks',        open: null },
+  '#payapps':       { tab: 'payapps',      open: null },
+  '#cos':           { tab: 'cos',          open: null },
+  '#documents':     { tab: 'documents',    open: null },
+  '#field_reports': { tab: 'field_reports',open: null },
+  '#daily':         { tab: 'daily',        open: null },
+  '#milestones':    { tab: 'milestones',   open: null },
+  '#photos':        { tab: 'photos',       open: null },
+};
+
 async function openNotification(id) {
   const nf = (DATA.notifications || []).find(x => x.id === id);
   await markNotificationRead(id);
   closeNotifPanel();
-  if (nf && nf.link === '#tasks') {
-    switchTab('tasks');
+  if (!nf) return;
+
+  // Resolve route: prefer ref_table (deep-link to modal), then link hash (tab only).
+  const route = (nf.ref_table && NOTIF_ROUTE_MAP[nf.ref_table])
+    ? NOTIF_ROUTE_MAP[nf.ref_table]
+    : (nf.link && NOTIF_ROUTE_MAP[nf.link])
+      ? NOTIF_ROUTE_MAP[nf.link]
+      : null;
+
+  if (!route) return; // unknown link — just close panel
+
+  // If the notification carries a project_id and it differs from the active one, switch first.
+  if (nf.project_id && nf.project_id !== STATE.activeProjectId) {
+    STATE.activeProjectId = nf.project_id;
+    const sel = document.getElementById('projectSelect');
+    if (sel) sel.value = nf.project_id;
+    render();
   }
+
+  switchTab(route.tab);
+  if (route.open) route.open(nf.ref_id || null);
 }
 window.openNotification = openNotification;
 
