@@ -847,7 +847,21 @@
       <input id="nativePassword" class="login-input" type="password" placeholder="Password" autocomplete="current-password" style="margin-top:8px;" />
       <button type="submit" class="login-btn" style="margin-top:10px;">Sign in</button>
       <div class="login-error" id="nativeLoginError"></div>
+      <div style="text-align:center;margin-top:10px;">
+        <a href="#" id="forgotPwLink" onclick="showForgotPassword(event)" style="font-size:12px;color:var(--gray-400,#aaa);text-decoration:underline;cursor:pointer;">Forgot password?</a>
+      </div>
     </form>
+
+    <!-- Forgot password panel -->
+    <div id="forgotPwPanel" style="display:none;">
+      <div style="font-size:13px;color:var(--gray-600,#666);margin-bottom:10px;line-height:1.4;">Enter your email and we'll send a reset link.</div>
+      <input id="forgotPwEmail" class="login-input" type="email" placeholder="Email" autocomplete="username" />
+      <button type="button" class="login-btn" style="margin-top:10px;" onclick="sendPasswordReset()">Send reset link</button>
+      <div class="login-error" id="forgotPwError"></div>
+      <div style="text-align:center;margin-top:10px;">
+        <a href="#" onclick="hideForgotPassword(event)" style="font-size:12px;color:var(--gray-400,#aaa);text-decoration:underline;cursor:pointer;">← Back to sign in</a>
+      </div>
+    </div>
 
     <!-- Invite / password-reset: set a new password (shown after invite link) -->
     <form id="setPasswordForm" autocomplete="on" style="display:none;">
@@ -6159,7 +6173,13 @@ async function showSetPassword() {
     if (emailEl) emailEl.value = session?.user?.email || '';
     const nameEl = document.getElementById('setPwWelcome');
     const fn = session?.user?.user_metadata?.full_name;
-    if (nameEl && fn) nameEl.textContent = `Welcome, ${fn}! Set a password to finish creating your account.`;
+    if (nameEl) {
+      if (_authCallback.type === 'recovery') {
+        nameEl.textContent = 'Choose a new password for your account.';
+      } else if (fn) {
+        nameEl.textContent = `Welcome, ${fn}! Set a password to finish creating your account.`;
+      }
+    }
   } catch (e) {}
   setTimeout(() => { const n = document.getElementById('setPwNew'); if (n) n.focus(); }, 60);
 }
@@ -6266,6 +6286,54 @@ document.getElementById('nativeLoginForm')?.addEventListener('submit', async (e)
     if (pwEl) { pwEl.value = ''; pwEl.focus(); }
   }
 });
+
+// ── Forgot password ──────────────────────────────────────────────────────────
+function showForgotPassword(e) {
+  if (e) e.preventDefault();
+  document.getElementById('nativeLoginForm').style.display = 'none';
+  document.getElementById('forgotPwPanel').style.display = '';
+  const em = document.getElementById('nativeEmail');
+  const fe = document.getElementById('forgotPwEmail');
+  if (em && fe) fe.value = em.value; // pre-fill if they already typed their email
+  fe?.focus();
+}
+window.showForgotPassword = showForgotPassword;
+
+function hideForgotPassword(e) {
+  if (e) e.preventDefault();
+  document.getElementById('forgotPwPanel').style.display = 'none';
+  document.getElementById('nativeLoginForm').style.display = '';
+  document.getElementById('forgotPwError').textContent = '';
+  document.getElementById('nativePassword')?.focus();
+}
+window.hideForgotPassword = hideForgotPassword;
+
+async function sendPasswordReset() {
+  const emailEl = document.getElementById('forgotPwEmail');
+  const errEl   = document.getElementById('forgotPwError');
+  const btn     = document.querySelector('#forgotPwPanel button[type="button"]');
+  errEl.textContent = '';
+  const email = (emailEl?.value || '').trim().toLowerCase();
+  if (!email) { errEl.textContent = 'Enter your email address'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + window.location.pathname,
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Send reset link'; }
+  if (error) {
+    errEl.textContent = error.message || 'Failed to send reset email';
+  } else {
+    // Show confirmation inline — replace panel content
+    document.getElementById('forgotPwPanel').innerHTML =
+      `<div style="text-align:center;padding:8px 0;">
+        <div style="font-size:28px;margin-bottom:10px;">📬</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Check your inbox</div>
+        <div style="font-size:13px;color:var(--gray-500,#888);margin-bottom:16px;">Reset link sent to <b>${escapeHtml(email)}</b>.<br>Click it to set a new password.</div>
+        <a href="#" onclick="location.reload()" style="font-size:12px;color:var(--gray-400,#aaa);text-decoration:underline;">← Back to sign in</a>
+      </div>`;
+  }
+}
+window.sendPasswordReset = sendPasswordReset;
 
 // Toggle between native email/password and legacy access-code login.
 document.getElementById('toggleLoginMode')?.addEventListener('click', (e) => {
