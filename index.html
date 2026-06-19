@@ -316,6 +316,44 @@
     border-radius: var(--radius); border: 1px solid var(--gray-200);
     background: #fff; box-shadow: var(--shadow-sm);
   }
+  /* ── Repair Quantities ──────────────────────────────── */
+  .rq-stack-card {
+    background:#fff; border:1px solid var(--gray-200); border-radius:var(--radius);
+    margin-bottom:12px; box-shadow:var(--shadow-sm); overflow:hidden;
+  }
+  .rq-stack-header {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 16px; background:var(--gray-50); border-bottom:1px solid var(--gray-200);
+  }
+  .rq-stack-name  { font-weight:700; font-size:15px; }
+  .rq-stack-meta  { font-size:12px; color:var(--text-muted); }
+  .rq-type-list   { padding:10px 16px; display:flex; flex-wrap:wrap; gap:8px; }
+  .rq-type-row    {
+    display:flex; align-items:center; gap:6px;
+    background:var(--gray-50); border:1px solid var(--gray-200);
+    border-radius:20px; padding:4px 12px; font-size:13px;
+  }
+  .rq-type-icon   { font-size:14px; }
+  .rq-type-label  { color:var(--text-muted); }
+  .rq-type-qty    { font-weight:700; color:var(--primary); }
+  .rq-type-count  { font-size:11px; color:var(--text-muted); }
+  .rq-totals-row  {
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+    background:var(--primary); border-radius:var(--radius); padding:10px 16px;
+  }
+  .rq-totals-label { font-weight:700; font-size:11px; letter-spacing:1px; color:#fff; margin-right:4px; }
+  .rq-total-chip  {
+    display:flex; align-items:center; gap:5px;
+    background:rgba(255,255,255,.15); border-radius:20px;
+    padding:3px 12px; font-size:13px; color:#fff;
+  }
+  .rq-total-icon  { font-size:14px; }
+  .rq-total-label { opacity:.85; }
+  .rq-total-val   { font-weight:700; }
+  .status-badge {
+    display:inline-block; padding:2px 8px; border-radius:12px;
+    font-size:11px; font-weight:600; letter-spacing:.3px; text-transform:capitalize;
+  }
   table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
   table.data th {
     background: var(--gray-50); color: var(--gray-500);
@@ -330,6 +368,13 @@
   table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
   table.data th.num { text-align: right; }
   table.data .row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+  /* data-table alias (used by Quantities detail view) */
+  table.data-table { width:100%; border-collapse:collapse; font-size:13px; }
+  table.data-table th { background:var(--gray-50); color:var(--gray-500); text-align:left; padding:10px 12px; font-weight:600; font-size:11px; letter-spacing:.4px; text-transform:uppercase; border-bottom:1px solid var(--gray-200); white-space:nowrap; }
+  table.data-table td { padding:11px 12px; border-bottom:1px solid var(--gray-100); vertical-align:middle; }
+  table.data-table tbody tr:hover { background:var(--gray-50); }
+  table.data-table tbody tr:last-child td { border-bottom:none; }
+  table.data-table .row-actions { display:flex; gap:4px; justify-content:flex-end; }
 
   table.data input.cell-input, table.data select.cell-input {
     width: 100%; background: transparent; border: 1px solid transparent;
@@ -869,6 +914,7 @@
     <button class="tab" data-tab="deficiencies"><span>⚠️</span> Deficiencies <span class="count" id="cnt-deficiencies">0</span></button>
     <button class="tab" data-tab="daily"><span>📅</span> Daily Log <span class="count" id="cnt-daily">0</span></button>
     <button class="tab" data-tab="milestones"><span>🎯</span> Schedule <span class="count" id="cnt-milestones">0</span></button>
+    <button class="tab" data-tab="quantities"><span>📐</span> Quantities</button>
     <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
     <button class="tab" data-tab="users" data-role-show="owner"><span>👥</span> Users</button>
     <button class="tab" data-tab="profile"><span>👤</span> Profile</button>
@@ -1349,6 +1395,49 @@
     </section>
 
     <!-- ========== DOCUMENTS ========== -->
+    <!-- ═══════════════════════════════════════════════════════ QUANTITIES TAB ══ -->
+    <section id="page-quantities" class="tab-page">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Repair Quantities</h1>
+          <div class="page-subtitle">Field measurements by stack · inches in, SF/LF/CF out</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn-secondary" onclick="rqExport()" id="rqExportBtn">⬇ Export</button>
+          <button class="btn-primary" onclick="rqOpenForm()" id="rqAddBtn">+ Add Entry</button>
+        </div>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <select id="rqFilterStack" onchange="renderQuantities()" style="min-width:130px;">
+          <option value="">All Stacks</option>
+        </select>
+        <select id="rqFilterType" onchange="renderQuantities()">
+          <option value="">All Types</option>
+        </select>
+        <select id="rqFilterStatus" onchange="renderQuantities()">
+          <option value="">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="complete">Complete</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <input id="rqSearch" type="text" placeholder="Search description…" oninput="renderQuantities()" style="flex:1;min-width:160px;">
+        <button class="btn-secondary" onclick="rqToggleView()" id="rqViewBtn" title="Toggle summary/detail">⊞ Summary</button>
+      </div>
+
+      <!-- Summary cards (per-stack rollup) -->
+      <div id="rqSummaryPanel"></div>
+
+      <!-- Detail table -->
+      <div id="rqDetailPanel"></div>
+
+      <!-- Project totals bar -->
+      <div id="rqTotalsBar" style="margin-top:16px;"></div>
+    </section>
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+
     <section id="page-docs" class="tab-page">
       <div class="page-header">
         <div>
@@ -6021,7 +6110,8 @@ function render() {
     else if (tab === 'deficiencies')  renderDeficiencies();
     else if (tab === 'daily')         renderDailyReports();
     else if (tab === 'milestones')    renderSchedule();
-    else if (tab === 'docs')       renderDocs();
+    else if (tab === 'docs')          renderDocs();
+    else if (tab === 'quantities')    loadQuantities();
     else if (tab === 'users')      renderUsers();
     else if (tab === 'profile')    renderProfile();
   } catch (e) {
@@ -8702,6 +8792,585 @@ async function moveMilestone(id, direction) {
   render();
 }
 window.moveMilestone = moveMilestone;
+
+// ═════════════════════════════════════════════════════════════════════
+// REPAIR QUANTITIES
+// ═════════════════════════════════════════════════════════════════════
+
+const RQ_TYPES = [
+  { key: 'concrete_repair',    label: 'Concrete Repair',       unit: 'area',   icon: '🧱' },
+  { key: 'spall_repair',       label: 'Spall Repair',          unit: 'area',   icon: '🧱' },
+  { key: 'rebar_treatment',    label: 'Rebar Treatment',       unit: 'area',   icon: '🔩' },
+  { key: 'stucco_patch',       label: 'Stucco Patch',          unit: 'area',   icon: '🏠' },
+  { key: 'tuck_point',         label: 'Tuck Point',            unit: 'linear', icon: '🧲' },
+  { key: 'pt_pocket',          label: 'PT Pocket',             unit: 'count',  icon: '□'  },
+  { key: 'window_sealant',     label: 'Window Sealant',        unit: 'linear', icon: '🪟' },
+  { key: 'weep_hole',          label: 'Weep Hole',             unit: 'count',  icon: '🕳'  },
+  { key: 'waterproof_membrane',label: 'Waterproofing Membrane',unit: 'area',   icon: '💧' },
+  { key: 'other',              label: 'Other',                 unit: 'area',   icon: '📌' },
+];
+const RQ_TYPE_MAP = Object.fromEntries(RQ_TYPES.map(t => [t.key, t]));
+
+const RQ_STATUS_META = {
+  pending:     { label: 'Pending',     color: '#f59e0b' },
+  in_progress: { label: 'In Progress', color: '#3b82f6' },
+  complete:    { label: 'Complete',    color: '#10b981' },
+  rejected:    { label: 'Rejected',    color: '#ef4444' },
+};
+
+let RQ_VIEW = 'summary';  // 'summary' | 'detail'
+let DATA_stacks = [];     // repair_stacks for active project
+let DATA_rqi    = [];     // repair_quantity_items for active project
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function rqInToFt(inches) {
+  if (inches == null || inches === '') return '';
+  const ft = parseFloat(inches) / 12;
+  return ft.toFixed(2) + ' ft';
+}
+
+function rqCalcArea(w, h)  { return (w && h)  ? +((w * h) / 144).toFixed(4)  : null; }
+function rqCalcLf(len)      { return len        ? +(len / 12).toFixed(4)        : null; }
+function rqCalcVol(w, h, d) { return (w && h && d) ? +((w * h * d) / 1728).toFixed(4) : null; }
+
+function rqUnitLabel(type) {
+  const t = RQ_TYPE_MAP[type];
+  if (!t) return 'SF';
+  return t.unit === 'linear' ? 'LF' : t.unit === 'count' ? 'EA' : 'SF';
+}
+
+function rqItemQty(item) {
+  const t = RQ_TYPE_MAP[item.repair_type];
+  if (!t) return { val: item.area_sf || 0, unit: 'SF' };
+  if (t.unit === 'linear') return { val: item.lf   || rqCalcLf(item.length_in) || 0, unit: 'LF' };
+  if (t.unit === 'count')  return { val: 1, unit: 'EA' };
+  return { val: item.area_sf || rqCalcArea(item.length_in, item.height_in) || 0, unit: 'SF' };
+}
+
+// ── Load ─────────────────────────────────────────────────────────────────────
+
+async function loadQuantities() {
+  const pid = STATE.activeProjectId;
+  if (!pid) return;
+  const [sr, ir] = await Promise.all([
+    sb.from('repair_stacks').select('*').eq('project_id', pid).order('sort_order'),
+    sb.from('repair_quantity_items').select('*').eq('project_id', pid).order('created_at', { ascending: false }),
+  ]);
+  if (sr.error) { softErr(sr, 'Loading stacks'); return; }
+  if (ir.error) { softErr(ir, 'Loading quantities'); return; }
+  DATA_stacks = sr.data || [];
+  DATA_rqi    = ir.data || [];
+  renderQuantities();
+}
+window.loadQuantities = loadQuantities;
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function renderQuantities() {
+  const pid = STATE.activeProjectId;
+  if (!pid) return;
+
+  // Populate filter dropdowns
+  const stackSel  = document.getElementById('rqFilterStack');
+  const typeSel   = document.getElementById('rqFilterType');
+  if (stackSel && stackSel.options.length <= 1) {
+    DATA_stacks.forEach(s => {
+      const o = document.createElement('option'); o.value = s.id; o.textContent = s.label;
+      stackSel.appendChild(o);
+    });
+  }
+  if (typeSel && typeSel.options.length <= 1) {
+    RQ_TYPES.forEach(t => {
+      const o = document.createElement('option'); o.value = t.key; o.textContent = t.label;
+      typeSel.appendChild(o);
+    });
+  }
+
+  // Filter items
+  const fStack  = stackSel?.value || '';
+  const fType   = typeSel?.value  || '';
+  const fStatus = document.getElementById('rqFilterStatus')?.value || '';
+  const fSearch = (document.getElementById('rqSearch')?.value || '').toLowerCase();
+
+  const items = DATA_rqi.filter(i =>
+    i.project_id === pid &&
+    (!fStack  || i.stack_id === fStack) &&
+    (!fType   || i.repair_type === fType) &&
+    (!fStatus || i.status === fStatus) &&
+    (!fSearch || (i.description || '').toLowerCase().includes(fSearch) ||
+                 (i.stack_label || '').toLowerCase().includes(fSearch) ||
+                 (i.floor_level || '').toLowerCase().includes(fSearch))
+  );
+
+  document.getElementById('rqViewBtn').textContent =
+    RQ_VIEW === 'summary' ? '⊞ Summary' : '☰ Detail';
+
+  if (RQ_VIEW === 'summary') {
+    renderRqSummary(items);
+    document.getElementById('rqDetailPanel').innerHTML = '';
+  } else {
+    renderRqDetail(items);
+    document.getElementById('rqSummaryPanel').innerHTML = '';
+  }
+  renderRqTotals(items);
+}
+window.renderQuantities = renderQuantities;
+
+// ── Summary view (cards per stack) ───────────────────────────────────────────
+
+function renderRqSummary(items) {
+  const panel = document.getElementById('rqSummaryPanel');
+  if (!panel) return;
+
+  // Group by stack
+  const byStack = {};
+  DATA_stacks.forEach(s => { byStack[s.id] = { stack: s, items: [] }; });
+  // Unstacked bucket
+  const unstacked = { stack: { id: null, label: 'Unassigned' }, items: [] };
+  items.forEach(i => {
+    if (i.stack_id && byStack[i.stack_id]) byStack[i.stack_id].items.push(i);
+    else unstacked.items.push(i);
+  });
+
+  const groups = Object.values(byStack).filter(g => g.items.length > 0);
+  if (unstacked.items.length > 0) groups.push(unstacked);
+
+  if (!groups.length) {
+    panel.innerHTML = '<div class="empty-state"><p>No repair entries yet.</p><p>Click <b>+ Add Entry</b> to log the first measurement.</p></div>';
+    return;
+  }
+
+  panel.innerHTML = groups.map(g => {
+    // Aggregate by type
+    const typeTotals = {};
+    g.items.forEach(item => {
+      const q = rqItemQty(item);
+      if (!typeTotals[item.repair_type]) typeTotals[item.repair_type] = { val: 0, unit: q.unit, count: 0 };
+      typeTotals[item.repair_type].val   += q.val;
+      typeTotals[item.repair_type].count += 1;
+    });
+    const typeRows = Object.entries(typeTotals).map(([type, tot]) => {
+      const t = RQ_TYPE_MAP[type] || { label: type, icon: '📌' };
+      return `<div class="rq-type-row">
+        <span class="rq-type-icon">${t.icon}</span>
+        <span class="rq-type-label">${escapeHtml(t.label)}</span>
+        <span class="rq-type-qty">${tot.val.toFixed(2)} ${tot.unit}</span>
+        <span class="rq-type-count">(${tot.count} item${tot.count !== 1 ? 's' : ''})</span>
+      </div>`;
+    }).join('');
+
+    const pending  = g.items.filter(i => i.status === 'pending').length;
+    const complete = g.items.filter(i => i.status === 'complete').length;
+
+    return `<div class="rq-stack-card">
+      <div class="rq-stack-header">
+        <span class="rq-stack-name">🏗 ${escapeHtml(g.stack.label)}</span>
+        <span class="rq-stack-meta">${g.items.length} item${g.items.length !== 1 ? 's' : ''} · ${complete} complete · ${pending} pending</span>
+        <button class="btn-ghost" onclick="rqDrillStack('${g.stack.id || ''}')" style="margin-left:auto;font-size:12px;">View items →</button>
+      </div>
+      <div class="rq-type-list">${typeRows}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Detail view (full line-item table) ────────────────────────────────────────
+
+function renderRqDetail(items) {
+  const panel = document.getElementById('rqDetailPanel');
+  if (!panel) return;
+  if (!items.length) {
+    panel.innerHTML = '<div class="empty-state"><p>No entries match your filters.</p></div>';
+    return;
+  }
+
+  const canEdit = isOwner() || isStaff();
+  const rows = items.map(item => {
+    const t    = RQ_TYPE_MAP[item.repair_type] || { label: item.repair_type, icon: '📌' };
+    const sm   = RQ_STATUS_META[item.status]   || { label: item.status, color: '#888' };
+    const q    = rqItemQty(item);
+    // Dimension display
+    let dimStr = '';
+    if (item.length_in != null) dimStr += item.length_in + '"';
+    if (item.height_in != null) dimStr += ' × ' + item.height_in + '"';
+    if (item.depth_in  != null) dimStr += ' × ' + item.depth_in  + '"';
+    // Ft equivalent
+    let ftStr = '';
+    if (item.length_in != null && item.height_in != null) {
+      ftStr = `${(item.length_in/12).toFixed(2)}' × ${(item.height_in/12).toFixed(2)}'`;
+    } else if (item.length_in != null) {
+      ftStr = (item.length_in/12).toFixed(2) + "'";
+    }
+    const editBtn = canEdit
+      ? `<button class="btn-icon" onclick="rqOpenForm('${item.id}')" title="Edit">✏️</button>
+         <button class="btn-icon danger" onclick="rqDelete('${item.id}')" title="Delete">🗑</button>`
+      : '';
+    return `<tr>
+      <td>${escapeHtml(item.stack_label || '—')}</td>
+      <td>${escapeHtml(item.floor_level || '—')}</td>
+      <td>${t.icon} ${escapeHtml(t.label)}</td>
+      <td style="font-family:monospace;font-size:12px;">${escapeHtml(dimStr)}<br><span style="color:#888;font-size:11px;">${escapeHtml(ftStr)}</span></td>
+      <td style="font-weight:600;">${q.val.toFixed(2)} ${q.unit}</td>
+      <td>${escapeHtml(item.description || '—')}</td>
+      <td><span class="status-badge" style="background:${sm.color}20;color:${sm.color};border:1px solid ${sm.color}40;">${sm.label}</span></td>
+      <td>${item.date_observed ? fmtDate(item.date_observed) : '—'}</td>
+      <td>${item.date_repaired ? fmtDate(item.date_repaired) : '—'}</td>
+      <td>${escapeHtml(item.si_report_ref || '—')}</td>
+      <td class="row-actions">${editBtn}</td>
+    </tr>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr>
+        <th>Stack</th><th>Floor</th><th>Type</th><th>Dimensions</th>
+        <th>Qty</th><th>Description</th><th>Status</th>
+        <th>Observed</th><th>Repaired</th><th>SI Ref</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>`;
+}
+
+// ── Totals bar ────────────────────────────────────────────────────────────────
+
+function renderRqTotals(items) {
+  const bar = document.getElementById('rqTotalsBar');
+  if (!bar || !items.length) { if(bar) bar.innerHTML=''; return; }
+
+  // Aggregate all types
+  const totals = {};
+  items.forEach(item => {
+    const q = rqItemQty(item);
+    const key = item.repair_type + '|' + q.unit;
+    if (!totals[key]) totals[key] = { type: item.repair_type, unit: q.unit, val: 0 };
+    totals[key].val += q.val;
+  });
+
+  const chips = Object.values(totals).map(t => {
+    const meta = RQ_TYPE_MAP[t.type] || { label: t.type, icon: '📌' };
+    return `<div class="rq-total-chip">
+      <span class="rq-total-icon">${meta.icon}</span>
+      <span class="rq-total-label">${escapeHtml(meta.label)}</span>
+      <span class="rq-total-val">${t.val.toFixed(2)} ${t.unit}</span>
+    </div>`;
+  }).join('');
+
+  bar.innerHTML = `<div class="rq-totals-row"><span class="rq-totals-label">PROJECT TOTALS</span>${chips}</div>`;
+}
+
+// ── Drill into a stack (filter detail to one stack) ───────────────────────────
+
+function rqDrillStack(stackId) {
+  RQ_VIEW = 'detail';
+  const sel = document.getElementById('rqFilterStack');
+  if (sel) sel.value = stackId || '';
+  renderQuantities();
+}
+window.rqDrillStack = rqDrillStack;
+
+// ── Toggle view ───────────────────────────────────────────────────────────────
+
+function rqToggleView() {
+  RQ_VIEW = RQ_VIEW === 'summary' ? 'detail' : 'summary';
+  renderQuantities();
+}
+window.rqToggleView = rqToggleView;
+
+// ── Live inch→ft preview while typing in form ────────────────────────────────
+
+function rqUpdatePreview() {
+  const w = parseFloat(document.getElementById('rqW')?.value);
+  const h = parseFloat(document.getElementById('rqH')?.value);
+  const d = parseFloat(document.getElementById('rqD')?.value);
+  const type = document.getElementById('rqType')?.value;
+  const t = RQ_TYPE_MAP[type] || RQ_TYPE_MAP.concrete_repair;
+
+  let preview = '';
+  if (t.unit === 'count') {
+    preview = 'Counted as 1 EA per entry';
+  } else if (t.unit === 'linear') {
+    if (!isNaN(w)) {
+      const lf = rqCalcLf(w);
+      preview = `Length: ${w}" = <b>${(w/12).toFixed(2)} ft</b> → <b>${lf} LF</b>`;
+    }
+  } else {
+    // area
+    const parts = [];
+    if (!isNaN(w)) parts.push(`W: ${w}" = ${(w/12).toFixed(2)} ft`);
+    if (!isNaN(h)) parts.push(`H: ${h}" = ${(h/12).toFixed(2)} ft`);
+    if (!isNaN(w) && !isNaN(h)) {
+      const sf = rqCalcArea(w, h);
+      parts.push(`<b>Area: ${sf} SF</b>`);
+      if (!isNaN(d)) {
+        const cf = rqCalcVol(w, h, d);
+        parts.push(`D: ${d}" = ${(d/12).toFixed(2)} ft → <b>Vol: ${cf} CF</b>`);
+      }
+    }
+    preview = parts.join(' &nbsp;|&nbsp; ');
+  }
+
+  const el = document.getElementById('rqPreview');
+  if (el) el.innerHTML = preview || '<span style="color:#999">Enter measurements to see conversion</span>';
+
+  // Toggle depth field visibility
+  const depthRow = document.getElementById('rqDepthRow');
+  if (depthRow) depthRow.style.display = (t.unit === 'area') ? '' : 'none';
+}
+window.rqUpdatePreview = rqUpdatePreview;
+
+// ── Entry form ────────────────────────────────────────────────────────────────
+
+async function rqOpenForm(id) {
+  const isEdit = !!id;
+  const item = isEdit ? DATA_rqi.find(x => x.id === id) : null;
+
+  const pid = STATE.activeProjectId;
+  const stackOpts = DATA_stacks.map(s =>
+    `<option value="${s.id}" ${item?.stack_id === s.id ? 'selected' : ''}>${escapeHtml(s.label)}</option>`
+  ).join('');
+  const typeOpts = RQ_TYPES.map(t =>
+    `<option value="${t.key}" ${(item?.repair_type || 'concrete_repair') === t.key ? 'selected' : ''}>${t.icon} ${escapeHtml(t.label)}</option>`
+  ).join('');
+  const statusOpts = Object.entries(RQ_STATUS_META).map(([k,v]) =>
+    `<option value="${k}" ${(item?.status || 'pending') === k ? 'selected' : ''}>${v.label}</option>`
+  ).join('');
+
+  const body = `
+  <form id="rqForm" onsubmit="rqSubmit(event,'${id||''}')">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Stack</label>
+        <select id="rqStack" required>
+          <option value="">Select stack…</option>${stackOpts}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Floor / Level</label>
+        <input id="rqFloor" type="text" placeholder="e.g. 1F, 7F, PH" value="${escapeHtml(item?.floor_level||'')}">
+      </div>
+      <div class="form-group">
+        <label>Repair Type</label>
+        <select id="rqType" onchange="rqUpdatePreview()" required>
+          ${typeOpts}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Description / Location</label>
+        <input id="rqDesc" type="text" placeholder="e.g. NE balcony slab soffit" value="${escapeHtml(item?.description||'')}">
+      </div>
+    </div>
+
+    <div style="margin:12px 0 4px;font-weight:600;font-size:13px;">Measurements (enter in <b>inches</b>)</div>
+    <div class="form-grid" style="grid-template-columns:repeat(3,1fr);">
+      <div class="form-group">
+        <label>Width / Length (in)</label>
+        <input id="rqW" type="number" step="0.001" min="0" placeholder="e.g. 18.5" oninput="rqUpdatePreview()" value="${item?.length_in??''}">
+      </div>
+      <div class="form-group">
+        <label>Height (in)</label>
+        <input id="rqH" type="number" step="0.001" min="0" placeholder="e.g. 12" oninput="rqUpdatePreview()" value="${item?.height_in??''}">
+      </div>
+      <div class="form-group" id="rqDepthRow">
+        <label>Depth (in) <span style="color:#888;font-size:11px;">optional</span></label>
+        <input id="rqD" type="number" step="0.001" min="0" placeholder="e.g. 2" oninput="rqUpdatePreview()" value="${item?.depth_in??''}">
+      </div>
+    </div>
+
+    <!-- Live conversion preview -->
+    <div id="rqPreview" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:10px 14px;font-size:13px;margin-bottom:12px;min-height:36px;">
+      <span style="color:#999">Enter measurements to see conversion</span>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Status</label>
+        <select id="rqStatus">${statusOpts}</select>
+      </div>
+      <div class="form-group">
+        <label>SI Report Ref</label>
+        <input id="rqSiRef" type="text" placeholder="e.g. SI-003" value="${escapeHtml(item?.si_report_ref||'')}">
+      </div>
+      <div class="form-group">
+        <label>Date Observed</label>
+        <input id="rqDateObs" type="date" value="${item?.date_observed||''}">
+      </div>
+      <div class="form-group">
+        <label>Date Repaired</label>
+        <input id="rqDateRep" type="date" value="${item?.date_repaired||''}">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea id="rqNotes" rows="2" placeholder="Additional notes…">${escapeHtml(item?.notes||'')}</textarea>
+    </div>
+    <div class="modal-footer">
+      ${isEdit ? '<button type="button" class="btn-danger" onclick="rqDelete(\'' + id + '\')">🗑 Delete</button>' : ''}
+      <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn-primary">${isEdit ? 'Save Changes' : 'Add Entry'}</button>
+    </div>
+  </form>`;
+
+  openModal(isEdit ? 'Edit Repair Entry' : 'Add Repair Entry', body, 'wide');
+  setTimeout(() => rqUpdatePreview(), 50);
+}
+window.rqOpenForm = rqOpenForm;
+
+async function rqSubmit(e, id) {
+  e.preventDefault();
+  const btn = e.target.querySelector('[type=submit]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const stackId  = document.getElementById('rqStack').value;
+  const stack    = DATA_stacks.find(s => s.id === stackId);
+  const type     = document.getElementById('rqType').value;
+  const t        = RQ_TYPE_MAP[type];
+  const w        = parseFloat(document.getElementById('rqW').value) || null;
+  const h        = parseFloat(document.getElementById('rqH').value) || null;
+  const d        = parseFloat(document.getElementById('rqD').value) || null;
+
+  const data = {
+    project_id:    STATE.activeProjectId,
+    stack_id:      stackId || null,
+    stack_label:   stack?.label || null,
+    floor_level:   document.getElementById('rqFloor').value.trim() || null,
+    repair_type:   type,
+    description:   document.getElementById('rqDesc').value.trim()  || null,
+    length_in:     w,
+    height_in:     t?.unit === 'area' || t?.unit === 'linear' ? h : null,
+    depth_in:      t?.unit === 'area' ? d : null,
+    status:        document.getElementById('rqStatus').value,
+    si_report_ref: document.getElementById('rqSiRef').value.trim() || null,
+    date_observed: document.getElementById('rqDateObs').value || null,
+    date_repaired: document.getElementById('rqDateRep').value || null,
+    notes:         document.getElementById('rqNotes').value.trim()  || null,
+    created_by:    AUTH?.userId || null,
+    updated_at:    new Date().toISOString(),
+  };
+
+  let res;
+  if (id) {
+    res = await sb.from('repair_quantity_items').update(data).eq('id', id);
+  } else {
+    res = await sb.from('repair_quantity_items').insert(data);
+  }
+  if (res.error) { handleSbError(res.error, id ? 'Update entry' : 'Add entry'); if(btn){btn.disabled=false;btn.textContent=id?'Save Changes':'Add Entry';} return; }
+  closeModal();
+  toast(id ? 'Entry updated' : 'Entry added', 'success');
+  await loadQuantities();
+}
+window.rqSubmit = rqSubmit;
+
+async function rqDelete(id) {
+  if (!confirm('Delete this repair entry?')) return;
+  const res = await sb.from('repair_quantity_items').delete().eq('id', id);
+  if (res.error) { handleSbError(res.error, 'Delete entry'); return; }
+  closeModal();
+  toast('Entry deleted');
+  await loadQuantities();
+}
+window.rqDelete = rqDelete;
+
+// ── Export (printable HTML by stack) ──────────────────────────────────────────
+
+function rqExport() {
+  const pid = STATE.activeProjectId;
+  const proj = DATA.projects.find(p => p.id === pid);
+  const items = DATA_rqi.filter(i => i.project_id === pid);
+  if (!items.length) { toast('No entries to export', 'error'); return; }
+
+  const groups = {};
+  DATA_stacks.forEach(s => { groups[s.id] = { label: s.label, items: [] }; });
+  const unassigned = { label: 'Unassigned', items: [] };
+  items.forEach(i => {
+    if (i.stack_id && groups[i.stack_id]) groups[i.stack_id].items.push(i);
+    else unassigned.items.push(i);
+  });
+  const allGroups = [...Object.values(groups).filter(g => g.items.length), ...(unassigned.items.length ? [unassigned] : [])];
+
+  const stackSections = allGroups.map(g => {
+    const rows = g.items.map(item => {
+      const t = RQ_TYPE_MAP[item.repair_type] || { label: item.repair_type };
+      const q = rqItemQty(item);
+      let dim = '';
+      if (item.length_in != null) dim += item.length_in + '"';
+      if (item.height_in != null) dim += ' × ' + item.height_in + '"';
+      if (item.depth_in  != null) dim += ' × ' + item.depth_in  + '"';
+      let ft = '';
+      if (item.length_in != null && item.height_in != null)
+        ft = `${(item.length_in/12).toFixed(2)}' × ${(item.height_in/12).toFixed(2)}'`;
+      else if (item.length_in != null) ft = (item.length_in/12).toFixed(2)+"'";
+      return `<tr><td>${escapeHtml(item.floor_level||'—')}</td><td>${escapeHtml(t.label)}</td>
+        <td>${escapeHtml(item.description||'—')}</td>
+        <td>${escapeHtml(dim)}</td><td>${escapeHtml(ft)}</td>
+        <td><b>${q.val.toFixed(2)} ${q.unit}</b></td>
+        <td>${escapeHtml(item.status)}</td>
+        <td>${item.date_repaired ? fmtDate(item.date_repaired) : '—'}</td></tr>`;
+    }).join('');
+    const typeTotals = {};
+    g.items.forEach(i => {
+      const q = rqItemQty(i);
+      const key = i.repair_type;
+      if (!typeTotals[key]) typeTotals[key] = { label: (RQ_TYPE_MAP[key]||{label:key}).label, val: 0, unit: q.unit };
+      typeTotals[key].val += q.val;
+    });
+    const subtotalRow = Object.values(typeTotals).map(t =>
+      `${t.label}: <b>${t.val.toFixed(2)} ${t.unit}</b>`).join(' &nbsp;|&nbsp; ');
+    return `<h3 style="margin-top:28px;border-bottom:2px solid #000;padding-bottom:4px;">🏗 ${escapeHtml(g.label)}</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px;">
+        <thead style="background:#f5f5f5;"><tr>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Floor</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Type</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Description</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">In</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Ft</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Qty</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Status</th>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Repaired</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="font-size:12px;padding:4px 0 8px;"><b>Stack Totals:</b> ${subtotalRow}</div>`;
+  }).join('');
+
+  const grandTotals = {};
+  items.forEach(i => {
+    const q = rqItemQty(i);
+    const key = i.repair_type;
+    if (!grandTotals[key]) grandTotals[key] = { label: (RQ_TYPE_MAP[key]||{label:key}).label, val: 0, unit: q.unit };
+    grandTotals[key].val += q.val;
+  });
+  const grandRow = Object.values(grandTotals).map(t =>
+    `<tr><td style="padding:4px 8px;border:1px solid #ddd;">${t.label}</td><td style="padding:4px 8px;border:1px solid #ddd;font-weight:bold;">${t.val.toFixed(2)} ${t.unit}</td></tr>`).join('');
+
+  const html = `<!doctype html><html><head><meta charset="utf-8">
+    <title>Repair Quantities — ${escapeHtml(proj?.name||'')}</title>
+    <style>body{font-family:'Times New Roman',serif;padding:40px;max-width:900px;margin:0 auto;}
+    .hdr{border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:20px;}
+    @media print{body{padding:20px;}}</style></head><body>
+    <div class="hdr">
+      <h1 style="margin:0;font-size:20px;letter-spacing:2px;">PLAZA &amp; ASSOCIATES</h1>
+      <div style="font-size:11px;color:#666;letter-spacing:2px;text-transform:uppercase;">Consulting Engineering · Coral Gables, FL</div>
+    </div>
+    <h2 style="margin-bottom:4px;">Repair Quantity Log</h2>
+    <div style="font-size:13px;margin-bottom:4px;"><b>Project:</b> ${escapeHtml(proj?.name||'')} (${escapeHtml(proj?.code||'')})</div>
+    <div style="font-size:12px;color:#666;margin-bottom:20px;">Generated: ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div>
+    ${stackSections}
+    <h3 style="margin-top:32px;border-bottom:2px solid #000;padding-bottom:4px;">PROJECT GRAND TOTALS</h3>
+    <table style="border-collapse:collapse;font-size:13px;">
+      <thead><tr><th style="padding:4px 8px;border:1px solid #ddd;background:#f5f5f5;">Repair Type</th><th style="padding:4px 8px;border:1px solid #ddd;background:#f5f5f5;">Total</th></tr></thead>
+      <tbody>${grandRow}</tbody>
+    </table>
+  </body></html>`;
+
+  const w = window.open('', '_blank', 'width=960,height=900');
+  if (!w) { toast('Popup blocked', 'error'); return; }
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => w.print(), 500);
+}
+window.rqExport = rqExport;
 
 </script>
 </body>
