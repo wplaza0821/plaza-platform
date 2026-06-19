@@ -1778,6 +1778,26 @@ async function tryBootAuth() {
   try {
     let { data: { session } } = await sb.auth.getSession();
     if (session && session.access_token) {
+      // Self-heal stale sessions: a cached session whose refresh token was
+      // invalidated server-side (e.g. after an admin password reset) will still
+      // sit in localStorage and attach a dead JWT. Probe getUser() to confirm
+      // the server actually accepts this token; if not, force a clean sign-out
+      // and fall through to the login screen instead of running the app with a
+      // broken token (which surfaced as RLS/"Loading documents" errors).
+      try {
+        const { data: probe, error: probeErr } = await sb.auth.getUser();
+        if (probeErr || !probe || !probe.user) {
+          try { await sb.auth.signOut(); } catch (e) {}
+          clearSbAuth();
+          session = null;
+        }
+      } catch (e) {
+        try { await sb.auth.signOut(); } catch (e2) {}
+        clearSbAuth();
+        session = null;
+      }
+    }
+    if (session && session.access_token) {
       // Pull fresh claims if the profile changed since this token was minted.
       session = await reconcileNativeClaims(session);
       setSbAuth(session.access_token);
