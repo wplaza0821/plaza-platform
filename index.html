@@ -8765,6 +8765,129 @@ function openMilestoneModal(id) {
 }
 window.openMilestoneModal = openMilestoneModal;
 
+// ── Schedule Upload Modal ─────────────────────────────────────────────────────
+
+function openScheduleUploadModal() {
+  const pid = STATE.activeProjectId;
+  if (!pid) { toast('Select a project first', 'error'); return; }
+
+  const existing = (DATA.scheduleImports || []).filter(i => i.project_id === pid);
+  const historyRows = existing.length
+    ? existing.slice(0, 5).map(i => {
+        const statusColor = { pending:'#f59e0b', analyzed:'#3b82f6', applied:'#10b981', rejected:'#ef4444' }[i.status] || '#888';
+        return `<tr>
+          <td style="padding:6px 8px;font-size:12px;">${escapeHtml(i.file_name)}</td>
+          <td style="padding:6px 8px;font-size:12px;">${fmtDate(i.uploaded_at?.slice(0,10)||'')}</td>
+          <td style="padding:6px 8px;"><span class="status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40;">${i.status}</span></td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="3" style="padding:10px 8px;font-size:12px;color:#888;text-align:center;">No uploads yet</td></tr>';
+
+  const body = `
+  <div style="margin-bottom:16px;">
+    <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.6;">
+      📄 <b>Accepted formats:</b> Excel (.xlsx), CSV, MS Project XML (.xml), PDF Gantt printout<br>
+      📄 <b>How to export from MS Project:</b> File → Export → Save Project as File → Excel or XML<br>
+      📄 <b>From Teams/Planner:</b> Export to Excel from the Grid view
+    </div>
+  </div>
+
+  <form id="schedUploadForm" onsubmit="schedUploadSubmit(event)">
+    <div class="form-group">
+      <label>Schedule file</label>
+      <input id="schedFile" type="file" accept=".xlsx,.xls,.csv,.xml,.pdf,.mpp"
+        style="display:block;width:100%;padding:8px;border:1px solid var(--gray-200);border-radius:6px;font-size:13px;"
+        onchange="schedFileChanged(this)" required>
+      <div id="schedFileHint" style="font-size:11px;color:#888;margin-top:4px;"></div>
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="color:#888;font-size:11px;">(optional — e.g. "Week 3 updated baseline")</span></label>
+      <input id="schedNotes" type="text" placeholder="e.g. Revised schedule after RFI-004 response">
+    </div>
+
+    <div style="margin:16px 0 8px;font-weight:600;font-size:12px;color:var(--gray-500);letter-spacing:.4px;text-transform:uppercase;">Previous uploads</div>
+    <div class="table-wrap" style="max-height:160px;overflow-y:auto;">
+      <table class="data-table" style="font-size:12px;">
+        <thead><tr><th>File</th><th>Date</th><th>Status</th></tr></thead>
+        <tbody>${historyRows}</tbody>
+      </table>
+    </div>
+
+    <div class="modal-footer" style="margin-top:16px;">
+      <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn-primary" id="schedUploadBtn">⬆ Upload Schedule</button>
+    </div>
+  </form>`;
+
+  openModal('Upload Schedule', body, 'wide');
+}
+window.openScheduleUploadModal = openScheduleUploadModal;
+
+function schedFileChanged(input) {
+  const hint = document.getElementById('schedFileHint');
+  if (!hint) return;
+  const f = input.files[0];
+  if (!f) { hint.textContent = ''; return; }
+  const mb = (f.size / 1024 / 1024).toFixed(1);
+  hint.textContent = `${f.name} · ${mb} MB`;
+}
+window.schedFileChanged = schedFileChanged;
+
+async function schedUploadSubmit(e) {
+  e.preventDefault();
+  const btn  = document.getElementById('schedUploadBtn');
+  const file = document.getElementById('schedFile').files[0];
+  const notes = document.getElementById('schedNotes')?.value.trim() || null;
+  const pid  = STATE.activeProjectId;
+  if (!file || !pid) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+
+  // Determine file type
+  const ext = file.name.split('.').pop().toLowerCase();
+  const allowedExts = ['xlsx','xls','csv','xml','pdf','mpp'];
+  if (!allowedExts.includes(ext)) {
+    toast('Unsupported file type. Use Excel, CSV, XML, or PDF.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload Schedule'; }
+    return;
+  }
+
+  // Upload to Supabase Storage under plans-specs bucket (schedule/ prefix)
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${pid}/schedule/${Date.now()}_${safeName}`;
+  const { error: upErr } = await sb.storage.from('plans-specs').upload(storagePath, file, {
+    cacheControl: '3600', upsert: false,
+  });
+  if (upErr) {
+    toast('Upload failed: ' + (upErr.message || upErr), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload Schedule'; }
+    return;
+  }
+
+  // Insert record in schedule_imports
+  const { error: dbErr } = await sb.from('schedule_imports').insert({
+    project_id:  pid,
+    file_name:   file.name,
+    file_path:   storagePath,
+    file_type:   ext,
+    status:      'pending',
+    uploaded_by: AUTH?.email || null,
+    notes,
+  });
+  if (dbErr) {
+    toast('File uploaded but record failed: ' + dbErr.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload Schedule'; }
+    return;
+  }
+
+  closeModal();
+  toast('Schedule uploaded — William will review and apply it.', 'success');
+  // Reload data so history panel updates
+  await loadAllData();
+  render();
+}
+window.schedUploadSubmit = schedUploadSubmit;
+
 function openMilestoneTemplateModal() {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
   showModal({
