@@ -4759,7 +4759,8 @@ async function openPlanViewer(doc, startPage) {
     '</div>';
   document.body.style.overflow = 'hidden';
   try {
-    const url = await signedUrl('plans-specs', doc.file_path);
+    const bucket = doc._bucket || 'plans-specs';
+    const url = await signedUrl(bucket, doc.file_path);
     const pdfjsLib = await getPdfJs();
     PV.pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
     PV.numPages = PV.pdf.numPages;
@@ -5114,7 +5115,7 @@ async function pvSave(){
 }
 window.pvSave = pvSave;
 async function pvDownload(){
-  try { window.open(await signedUrl('plans-specs', PV.doc.file_path), '_blank'); }
+  try { window.open(await signedUrl(PV.doc._bucket || 'plans-specs', PV.doc.file_path), '_blank'); }
   catch(e){ toast('Could not open file','error'); }
 }
 window.pvDownload = pvDownload;
@@ -7617,9 +7618,19 @@ window.renderFieldReports = renderFieldReports;
 async function viewFieldReportPDF(id) {
   const r = DATA.field_reports.find(x => x.id === id);
   if (!r || !r.file_path) { toast('No PDF on file for this report'); return; }
-  try {
-    window.open(await signedUrl('field-reports', r.file_path), '_blank');
-  } catch(e) { toast('Could not load PDF — ' + e.message); }
+  // Open via plan viewer so the tab title shows the report number (file name),
+  // not the PDF's embedded metadata (which can contain unrelated author/title fields).
+  const proj = DATA.projects.find(p => p.id === r.project_id);
+  const docName = r.report_number || r.file_name || 'Field Report';
+  const fakeDoc = {
+    id: r.id,
+    project_id: r.project_id,
+    name: docName,
+    file_path: r.file_path,
+    page_count: 1,
+    _bucket: 'field-reports',
+  };
+  openPlanViewer(fakeDoc);
 }
 window.viewFieldReportPDF = viewFieldReportPDF;
 
