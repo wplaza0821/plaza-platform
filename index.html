@@ -4447,17 +4447,47 @@ const _thumbCache = {};      // "docId:page" → objectURL or 'error'
 const _docPageCounts = {};   // docId → number of PDF pages (Fieldwire-style per-sheet split)
 const _pdfDocCache = {};      // docId → loaded pdf.js doc (reused across page thumbs)
 
+// Concurrency limiter for PDF.js getDocument() calls — large permit drawing PDFs
+// (some 85–93 MB) would crash the browser tab if loaded 100+ simultaneously.
+// Cap at 3 concurrent PDF.js loads; all others queue behind them.
+const _pdfSem = { n: 3, active: 0, queue: [] };
+function _pdfAcquire() {
+  return new Promise(res => {
+    if (_pdfSem.active < _pdfSem.n) { _pdfSem.active++; res(); }
+    else _pdfSem.queue.push(res);
+  });
+}
+function _pdfRelease() {
+  const next = _pdfSem.queue.shift();
+  if (next) next(); else _pdfSem.active--;
+}
+
 // Lazily resolve (and cache) the page count for a PDF document, then re-render
 // the documents grid so each page becomes its own thumbnail tile.
+// Priority: use page_count from DB (no download needed) → fall back to PDF.js.
 async function getDocPageCount(doc) {
   if (_docPageCounts[doc.id] != null) return _docPageCounts[doc.id];
+  // Fast path: page_count stored in DB by the upload flow → no download needed.
+  if (doc.page_count && doc.page_count > 0) {
+    _docPageCounts[doc.id] = doc.page_count;
+    return doc.page_count;
+  }
+  // Slow path: load via PDF.js — rate-limited to avoid browser OOM on large sets.
   try {
-    const url = await signedUrl('plans-specs', doc.file_path);
-    const pdfjsLib = await getPdfJs();
-    const pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
-    _pdfDocCache[doc.id] = pdf;
-    _docPageCounts[doc.id] = pdf.numPages;
-    return pdf.numPages;
+    await _pdfAcquire();
+    try {
+      const url = await signedUrl('plans-specs', doc.file_path);
+      const pdfjsLib = await getPdfJs();
+      const pdf = await pdfjsLib.getDocument({ url, withCredentials: false }).promise;
+      _pdfDocCache[doc.id] = pdf;
+      _docPageCounts[doc.id] = pdf.numPages;
+      // Persist page_count to DB so next load is instant (best-effort, no await).
+      sb.from('documents').update({ page_count: pdf.numPages }).eq('id', doc.id)
+        .then(r => { if (r.error) console.warn('page_count persist:', r.error.message); });
+      return pdf.numPages;
+    } finally {
+      _pdfRelease();
+    }
   } catch(e) {
     _docPageCounts[doc.id] = 1; // fall back to single tile
     return 1;
@@ -5166,6 +5196,15 @@ async function saveDoc(id) {
     if (upErr) { handleSbError(upErr, 'Upload file'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
     data.file_path = path;
     data.file_size = file.size;
+    // Count PDF pages at upload time so the grid renders instantly without a full re-download.
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      try {
+        const pdfjsLib = await getPdfJs();
+        const ab = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+        data.page_count = pdf.numPages;
+      } catch (e) { /* non-blocking */ }
+    }
   }
 
   let res;
