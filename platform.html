@@ -1227,9 +1227,10 @@
       <div class="page-header">
         <div>
           <h1 class="page-title">Field Reports</h1>
-          <div class="page-subtitle">Issued reports - view only. Files synced automatically from Dropbox.</div>
+          <div class="page-subtitle">Field observation, special inspection &amp; daily reports</div>
           <div class="page-context-pill" id="fr-context"></div>
         </div>
+        <button class="btn btn-primary perm-edit-fieldreports" onclick="openFieldReportModal()">+ New Field Report</button>
       </div>
 
       <div class="toolbar">
@@ -1515,6 +1516,32 @@
           </thead>
           <tbody id="usersBody"></tbody>
         </table>
+      </div>
+
+      <!-- Contractor Access Links (legacy token-based, owner-only) -->
+      <div id="contractorAccessSection" data-role-show="owner" style="margin-top:28px;">
+        <div class="page-header" style="margin-bottom:12px;">
+          <div>
+            <h2 class="page-title" style="font-size:16px;">Contractor Access Links</h2>
+            <div class="page-subtitle">Token-based URLs that scope a contractor to one project and selected modules.</div>
+          </div>
+          <button class="btn btn-primary" onclick="openAccessModal()">+ New Access Link</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data" id="accessTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Project</th>
+                <th>Modules</th>
+                <th>Created</th>
+                <th>Token</th>
+                <th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="accessBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -2321,7 +2348,7 @@ function projectProgress(p) {
     return p.progress_override;
   }
   // Otherwise derive from approved pay apps
-  const payapps = DATA.payApps.filter(pa => pa.projectId === p.id || pa.project_id === p.id);
+  const payapps = DATA.payApps.filter(pa => pa.project_id === p.id);
   const last = payapps.filter(pa => pa.status === 'approved' || pa.status === 'paid' || pa.status === 'approved_as_noted')
                       .sort((a,b) => b.pay_app_number - a.pay_app_number)[0];
   if (last && p.contract_value > 0) {
@@ -3502,10 +3529,12 @@ window.uploadWaiver = uploadWaiver;
 async function viewWaiver(waiverId) {
   const w = DATA.lienWaivers.find(x => x.id === waiverId);
   if (!w) return;
-  const { data: { signedUrl: su }, error } = await sb.storage.from('lien-waivers').createSignedUrl(w.file_path.replace(/^lien-waivers\//, ''), 3600);  // eslint-disable-line
-  const data = { signedUrl: su };  // compat
-  if (error) { handleSbError(error, 'Get waiver URL'); return; }
-  window.open(data.signedUrl, '_blank');
+  try {
+    const url = await signedUrl('lien-waivers', w.file_path);
+    window.open(url, '_blank');
+  } catch (e) {
+    handleSbError(e, 'Get waiver URL');
+  }
 }
 window.viewWaiver = viewWaiver;
 
@@ -5518,7 +5547,7 @@ async function generateAccessLink(contractorId) {
       title: 'Share This Link',
       body: `
         <p style="margin:0 0 12px; color:var(--ink); font-size:13px;">
-          Send this URL to <strong>${escapeHtml(name)}</strong>. It scopes them to one project and the modules you selected. Revoke any time from the Access tab.
+          Send this URL to <strong>${escapeHtml(name)}</strong>. It scopes them to one project and the modules you selected. Revoke any time from the <strong>Users tab → Contractor Access Links</strong>.
         </p>
         <div class="form-row">
           <label class="form-label">Share Link</label>
@@ -5727,6 +5756,9 @@ function renderUsers() {
         <td class="text-sm" style="text-align:right;"><div class="row-actions">${acts.join(' ')}</div></td>
       </tr>`;
   }).join('');
+
+  // Also render contractor access links in the same Users tab
+  renderAccess();
 }
 
 // ── Phase 4-07: user status management via manage-user edge fn ───────────────
@@ -8501,9 +8533,7 @@ async function viewCloseoutPhoto(defId) {
   if (!def?.closeout_photo_path) { toast('No close-out photo on file'); return; }
   // Determine which bucket was used.
   const bucket = def.closeout_photo_path.startsWith('deficiency-closeout/') ? 'photos' : 'deficiency-photos';
-  const filePath = def.closeout_photo_path.startsWith('deficiency-closeout/')
-    ? def.closeout_photo_path
-    : def.closeout_photo_path;
+  const filePath = def.closeout_photo_path;
   try {
     const url = await signedUrl(bucket, filePath);
     window.open(url, '_blank');
@@ -8827,7 +8857,7 @@ function renderScheduleImportsList(proj) {
   listEl.innerHTML = imports.slice(0,5).map(i => {
     const statusColor = { pending:'#f59e0b', analyzed:'#3b82f6', applied:'#10b981', rejected:'#ef4444' }[i.status] || '#888';
     const actions = isOwner() || isStaff()
-      ? `<button class="btn btn-ghost btn-sm" onclick="schedApplyImport('${i.id}')">Apply to Gantt</button>
+      ? `<button class="btn btn-ghost btn-sm" onclick="schedApplyImport('${i.id}')" disabled title="Coming soon — contact William to manually import tasks">Apply to Gantt</button>
          <button class="btn btn-ghost btn-sm danger" onclick="schedDeleteImport('${i.id}')">Delete</button>`
       : '';
     return `<div class="card" style="padding:10px 14px;display:flex;align-items:center;gap:12px;">
