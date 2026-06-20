@@ -8379,26 +8379,18 @@ function openDeficiencyModal(id) {
         <div><label class="form-label">Next Follow-up Date</label><input id="d-nextfu" type="date" value="${editing?.next_follow_up_date || ''}" /><div class="text-sm text-muted" style="margin-top:4px;">Leave blank on an open item and it will flag as "Needs Follow-up."</div></div>
         <div><label class="form-label">Responsible / Notes</label><textarea id="d-notes" rows="2">${escapeHtml(editing?.notes || '')}</textarea></div>
       </div>
-      <div class="form-row" id="d-closeout-row" style="${['repaired','verified','closed'].includes(curStatus) ? '' : 'display:none;'}">
-        <label class="form-label">📷 Close-out Photo <span class="text-muted" style="font-weight:400;">(required to verify)</span></label>
-        ${editing?.closeout_photo_name ? `<div class="text-sm" style="margin-bottom:6px;">Current: <strong>${escapeHtml(editing.closeout_photo_name)}</strong> — <a href="#" onclick="viewCloseoutPhoto('${editing.id}'); return false;">View</a></div>` : ''}
+      ${editing ? `<div class="form-row" id="d-closeout-row">
+        <label class="form-label">📷 Close-out Photo <span class="text-muted" style="font-weight:400;">(attach repaired-condition photo)</span></label>
+        ${editing.closeout_photo_name ? `<div class="text-sm" style="margin-bottom:6px;">Current: <strong>${escapeHtml(editing.closeout_photo_name)}</strong> — <a href="#" onclick="viewCloseoutPhoto('${editing.id}'); return false;">View</a></div>` : ''}
         <input type="file" id="d-closeout-file" accept="image/*,.pdf" />
         <div class="text-sm text-muted" style="margin-top:4px;">Photo or PDF documenting the completed repair. Max 25 MB.</div>
-      </div>
+      </div>` : ''}
       ${editing ? defFollowUpThreadHtml(editing) : '<div class="hint-banner" style="margin-top:4px;">🔔 Save this deficiency first, then log follow-ups (calls, re-inspections, escalations) to build its history.</div>'}
     `,
     footer: editing
       ? `<button class="btn btn-danger" onclick="deleteDeficiency('${editing.id}')">Delete</button><div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDeficiency('${editing.id}')">Save</button>`
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveDeficiency()">Create</button>`
   });
-  // Show/hide close-out photo row when status changes.
-  const statusEl = document.getElementById('d-status');
-  const closeoutRow = document.getElementById('d-closeout-row');
-  if (statusEl && closeoutRow) {
-    statusEl.addEventListener('change', () => {
-      closeoutRow.style.display = ['repaired', 'verified', 'closed'].includes(statusEl.value) ? '' : 'none';
-    });
-  }
 }
 
 // Renders the threaded follow-up log + "add follow-up" composer inside the modal.
