@@ -8308,9 +8308,10 @@ function renderDeficiencies() {
     } else {
       fuCell = `<span class="text-sm" style="color:var(--green,#16a34a); font-weight:600;">${fmtDate(d.next_follow_up_date)}</span>${fuCount ? ` <span class="text-sm text-muted">(${fuCount})</span>` : ''}`;
     }
+    const isPending = d.id && String(d.id).startsWith('local_');
     return `
-      <tr style="${rowStyle}">
-        <td style="font-weight:600;">${escapeHtml(d.deficiency_no || '-')}</td>
+      <tr style="${rowStyle}${isPending ? 'opacity:0.7;' : ''}">
+        <td style="font-weight:600;">${escapeHtml(d.deficiency_no || '—')}${isPending ? ' <span class="badge badge-gray" title="Saved offline — not yet synced to server">⏳ Pending</span>' : ''}</td>
         <td>${escapeHtml(d.location || '-')}</td>
         <td>${escapeHtml((d.description || '').slice(0, 100))}${(d.description || '').length > 100 ? '...' : ''}</td>
         <td>${defSeverityBadge(d.severity || 'moderate')}</td>
@@ -8416,7 +8417,7 @@ function openDeficiencyModal(id) {
       </div>
       ${editing ? `<div class="form-row" id="d-closeout-row">
         <label class="form-label">📷 Close-out Photo <span class="text-muted" style="font-weight:400;">(attach repaired-condition photo)</span></label>
-        ${editing.closeout_photo_name ? `<div class="text-sm" style="margin-bottom:6px;">Current: <strong>${escapeHtml(editing.closeout_photo_name)}</strong> — <a href="#" onclick="viewCloseoutPhoto('${editing.id}'); return false;">View</a></div>` : ''}
+        ${editing.closeout_photo_name ? `<div class="text-sm" style="margin-bottom:6px;">Current: <strong>${escapeHtml(editing.closeout_photo_name)}</strong> - <a href="#" onclick="viewCloseoutPhoto('${editing.id}'); return false;">View</a></div>` : ''}
         <input type="file" id="d-closeout-file" accept="image/*,.pdf" />
         <div class="text-sm text-muted" style="margin-top:4px;">Photo or PDF documenting the completed repair. Max 25 MB.</div>
       </div>` : ''}
@@ -8489,7 +8490,7 @@ async function saveDeficiency(id) {
     const path = `${codePrefix}/closeout/${Date.now()}_${safe}`;
     const { error: upErr } = await sb.storage.from('deficiency-photos').upload(path, closeoutFile, { upsert: false });
     if (upErr) {
-      // Bucket may not exist yet — try the photos bucket as fallback.
+      // Bucket may not exist yet - try the photos bucket as fallback.
       const { error: upErr2 } = await sb.storage.from('photos').upload(`deficiency-closeout/${path}`, closeoutFile, { upsert: false });
       if (upErr2) { handleSbError(upErr2, 'Upload close-out photo'); return; }
       data.closeout_photo_path = `deficiency-closeout/${path}`;
@@ -8510,19 +8511,24 @@ async function saveDeficiency(id) {
     }
   }
 
-  let res, newId = id;
-  const prevAssignee = id ? (DATA.deficiencies.find(d => d.id === id)?.assigned_to || null) : null;
-  if (id) res = await sb.from('deficiencies').update(data).eq('id', id);
+  // If editing a pending/offline item (local_ id), remove old queue entry and re-insert fresh.
+  const isPendingId = id && String(id).startsWith('local_');
+  const effectiveId = isPendingId ? null : id;
+  if (isPendingId) { try { await outboxDel(id); } catch {} }
+
+  let res, newId = effectiveId;
+  const prevAssignee = effectiveId ? (DATA.deficiencies.find(d => d.id === effectiveId)?.assigned_to || null) : null;
+  if (effectiveId) res = await sb.from('deficiencies').update(data).eq('id', effectiveId);
   else {
     res = await queueableInsert('deficiencies', data, { select: 'id' });
     if (!res.error && res.data && !res.queued) { newId = res.data.id; notifyRoute('deficiencies', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save deficiency'); return; }
   // Existing item whose assignee changed -> ping the new assignee.
-  if (id && !res.error && data.assigned_to && data.assigned_to !== prevAssignee) {
-    notifyRoute('deficiencies', id, 'reassigned');
+  if (effectiveId && !res.error && data.assigned_to && data.assigned_to !== prevAssignee) {
+    notifyRoute('deficiencies', effectiveId, 'reassigned');
   }
-  if (!res.queued) { await loadAllData(); toast(id ? 'Deficiency updated' : 'Deficiency logged'); }
+  if (!res.queued) { await loadAllData(); toast(effectiveId ? 'Deficiency updated' : 'Deficiency logged'); }
   closeModal();
   render();
 }
@@ -8546,8 +8552,26 @@ window.saveDeficiency = saveDeficiency;
 
 async function deleteDeficiency(id) {
   if (!confirm('Delete this deficiency?')) return;
+  // If this is a pending/offline item (local_ id), remove from outbox only.
+  if (id && String(id).startsWith('local_')) {
+    try { await outboxDel(id); } catch {}
+    DATA.deficiencies = DATA.deficiencies.filter(d => d.id !== id);
+    toast('Pending deficiency removed');
+    closeModal();
+    render();
+    return;
+  }
   const { error } = await sb.from('deficiencies').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete deficiency'); return; }
+  // Also clear any stale outbox entry for this id (belt-and-suspenders).
+  try {
+    const all = await outboxAll();
+    for (const entry of all) {
+      if (entry.table === 'deficiencies' && (entry.row?.id === id || entry.localId === id)) {
+        await outboxDel(entry.localId);
+      }
+    }
+  } catch {}
   await loadAllData();
   toast('Deficiency deleted');
   closeModal();
@@ -8857,7 +8881,7 @@ function renderScheduleImportsList(proj) {
   listEl.innerHTML = imports.slice(0,5).map(i => {
     const statusColor = { pending:'#f59e0b', analyzed:'#3b82f6', applied:'#10b981', rejected:'#ef4444' }[i.status] || '#888';
     const actions = isOwner() || isStaff()
-      ? `<button class="btn btn-ghost btn-sm" onclick="schedApplyImport('${i.id}')" disabled title="Coming soon — contact William to manually import tasks">Apply to Gantt</button>
+      ? `<button class="btn btn-ghost btn-sm" onclick="schedApplyImport('${i.id}')" disabled title="Coming soon - contact William to manually import tasks">Apply to Gantt</button>
          <button class="btn btn-ghost btn-sm danger" onclick="schedDeleteImport('${i.id}')">Delete</button>`
       : '';
     return `<div class="card" style="padding:10px 14px;display:flex;align-items:center;gap:12px;">
