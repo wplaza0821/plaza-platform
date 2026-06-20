@@ -597,6 +597,102 @@
   }
   .print-header { display: none; }
 
+  /* =========================================================================
+     CLIENT PORTAL STYLES
+     ========================================================================= */
+  .client-portal {
+    display: none;
+    min-height: 100vh;
+    background: var(--gray-50);
+    flex-direction: column;
+  }
+  .client-portal.active {
+    display: flex;
+  }
+  .cp-topbar {
+    background: #fff;
+    border-bottom: 1px solid var(--gray-200);
+    padding: 16px 26px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    padding-top: max(16px, env(safe-area-inset-top));
+  }
+  .cp-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .cp-brand-logo { width: 110px; height: auto; }
+  .cp-brand-logo svg { display: block; width: 100%; height: auto; }
+  .cp-brand-divider { width: 1px; height: 28px; background: var(--gray-200); }
+  .cp-brand-meta { display: flex; flex-direction: column; gap: 2px; }
+  .cp-project-name { font-size: 14px; font-weight: 600; color: var(--black); letter-spacing: 0.3px; }
+  .cp-project-code { font-size: 10px; color: var(--gray-400); font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; }
+  .cp-portal-label {
+    display: inline-flex; align-items: center;
+    background: var(--accent-bg); color: var(--accent);
+    padding: 4px 10px; border-radius: 2px;
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .cp-top-actions { display: flex; gap: 10px; align-items: center; }
+  .cp-body {
+    flex: 1;
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 24px 26px;
+  }
+  .cp-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--gray-200);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .cp-tab {
+    flex: 0 0 auto;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--gray-500);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+  .cp-tab:hover { color: var(--black); }
+  .cp-tab.active {
+    color: var(--black);
+    border-bottom-color: var(--black);
+    font-weight: 600;
+  }
+  .cp-panel { display: none; }
+  .cp-panel.active { display: block; animation: fadeIn 0.2s ease; }
+  .cp-footer {
+    text-align: center;
+    padding: 24px 26px;
+    font-size: 11px;
+    color: var(--gray-400);
+    letter-spacing: 1px;
+    border-top: 1px solid var(--gray-200);
+    background: #fff;
+  }
+  @media (max-width: 768px) {
+    .cp-topbar { padding: 12px 14px; flex-wrap: wrap; }
+    .cp-brand-logo { width: 90px; }
+    .cp-body { padding: 14px; }
+  }
+
   .flex { display: flex; }
   .flex-between { display: flex; justify-content: space-between; align-items: center; }
   .gap-8 { gap: 8px; }
@@ -1493,7 +1589,10 @@
           <h1 class="page-title">Users &amp; Invites</h1>
           <div class="page-subtitle">Invite-only. Each user signs in with their own email &amp; password and gets a scoped role.</div>
         </div>
-        <button class="btn btn-primary" onclick="openInviteModal()">+ Invite User</button>
+        <div class="flex gap-8">
+          <button class="btn btn-secondary" onclick="openInviteClientModal()">🔗 Invite Client</button>
+          <button class="btn btn-primary" onclick="openInviteModal()">+ Invite User</button>
+        </div>
       </div>
 
       <div class="hint-banner" style="background:var(--gray-100); border-color:var(--gray-200); color:var(--ink);">
@@ -1559,6 +1658,186 @@
 
   <footer class="app-footer">
     Plaza &amp; Associates, LLC · Consulting Engineering · Coral Gables, FL
+  </footer>
+</div>
+
+<!-- CLIENT PORTAL (shown instead of the main app for role=client) -->
+<div id="clientPortal" class="client-portal">
+  <header class="cp-topbar">
+    <div class="cp-brand">
+      <div class="cp-brand-logo" id="cpBrandLogo"></div>
+      <div class="cp-brand-divider"></div>
+      <div class="cp-brand-meta">
+        <div class="cp-project-name" id="cpProjectName">Loading...</div>
+        <div class="cp-project-code" id="cpProjectCode"></div>
+      </div>
+    </div>
+    <div class="cp-top-actions">
+      <span class="cp-portal-label">Client Portal</span>
+      <button type="button" class="btn-logout" onclick="logout()">Logout</button>
+    </div>
+  </header>
+
+  <div class="cp-body">
+    <nav class="cp-tabs" id="cpTabs">
+      <button class="cp-tab active" data-cptab="reports" onclick="switchClientTab('reports')">📋 Reports</button>
+      <button class="cp-tab" data-cptab="deficiencies" onclick="switchClientTab('deficiencies')">⚠️ Deficiencies</button>
+      <button class="cp-tab" data-cptab="rfis" onclick="switchClientTab('rfis')">❓ RFIs</button>
+      <button class="cp-tab" data-cptab="submittals" onclick="switchClientTab('submittals')">📤 Submittals</button>
+      <button class="cp-tab" data-cptab="cos" onclick="switchClientTab('cos')">🔁 Change Orders</button>
+      <button class="cp-tab" data-cptab="sov" onclick="switchClientTab('sov')">💰 Schedule of Values</button>
+    </nav>
+
+    <!-- Reports panel -->
+    <div id="cp-panel-reports" class="cp-panel active">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Field Reports</h1>
+          <div class="page-subtitle">Read-only view of reports for your project</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="cpReportsTable">
+          <thead>
+            <tr>
+              <th style="width:100px;">Report #</th>
+              <th>File Name</th>
+              <th style="width:120px;">Date</th>
+              <th style="width:160px;">Type</th>
+              <th style="width:120px;"></th>
+            </tr>
+          </thead>
+          <tbody id="cpReportsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Deficiencies panel -->
+    <div id="cp-panel-deficiencies" class="cp-panel">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Deficiency Log</h1>
+          <div class="page-subtitle">Read-only view of deficiencies for your project</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="cpDefTable">
+          <thead>
+            <tr>
+              <th style="width:80px;">#</th>
+              <th>Location</th>
+              <th>Description</th>
+              <th>Severity</th>
+              <th>Responsible</th>
+              <th>Due</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="cpDefBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RFIs panel -->
+    <div id="cp-panel-rfis" class="cp-panel">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Requests for Information</h1>
+          <div class="page-subtitle">Read-only view of RFIs for your project</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="cpRfiTable">
+          <thead>
+            <tr>
+              <th style="width:60px;">#</th>
+              <th>Subject</th>
+              <th>Status</th>
+              <th>Due</th>
+              <th>Ball-in-Court</th>
+            </tr>
+          </thead>
+          <tbody id="cpRfiBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Submittals panel -->
+    <div id="cp-panel-submittals" class="cp-panel">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Submittals</h1>
+          <div class="page-subtitle">Read-only view of submittals for your project</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="cpSubTable">
+          <thead>
+            <tr>
+              <th style="width:80px;">#</th>
+              <th>Spec §</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Due</th>
+            </tr>
+          </thead>
+          <tbody id="cpSubBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Change Orders panel -->
+    <div id="cp-panel-cos" class="cp-panel">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Change Orders</h1>
+          <div class="page-subtitle">Read-only view of change orders for your project</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="cpCoTable">
+          <thead>
+            <tr>
+              <th style="width:80px;">#</th>
+              <th>Description</th>
+              <th class="num">Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="cpCoBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SOV panel -->
+    <div id="cp-panel-sov" class="cp-panel">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Schedule of Values</h1>
+          <div class="page-subtitle">Read-only view of the schedule of values for your project</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data" id="cpSovTable">
+          <thead>
+            <tr>
+              <th style="width:100px;">Item #</th>
+              <th>Description</th>
+              <th class="num">Scheduled Value</th>
+              <th class="num">Work Completed</th>
+              <th class="num">Balance to Finish</th>
+              <th class="num">% Complete</th>
+            </tr>
+          </thead>
+          <tbody id="cpSovBody"></tbody>
+          <tfoot id="cpSovFoot"></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer class="cp-footer">
+    Plaza &amp; Associates, LLC &middot; Consulting Engineering &middot; Coral Gables, FL
   </footer>
 </div>
 
@@ -1785,6 +2064,7 @@ function isOwner()      { return AUTH && AUTH.role === 'owner'; }
 function isStaff()      { return AUTH && AUTH.role === 'staff'; }
 function isMember()     { return AUTH && AUTH.role === 'member'; }
 function isContractor() { return AUTH && AUTH.role === 'contractor'; }
+function isClient()     { return AUTH && AUTH.role === 'client'; }
 // Per-user financial lockout (profiles.perms.no_financials) - mirrors the RLS
 // gate plz_no_financials() so the UI hides what the DB already refuses to serve.
 function noFinancials() { return !!(AUTH && AUTH.permissions && AUTH.permissions.no_financials); }
@@ -2013,7 +2293,7 @@ window.logout = logout;
 
 function applyRoleBodyClasses() {
   const body = document.body;
-  body.classList.remove('role-owner', 'role-contractor', 'role-staff', 'role-member', 'app-booting', 'auth-legacy', 'auth-native');
+  body.classList.remove('role-owner', 'role-contractor', 'role-staff', 'role-member', 'role-client', 'app-booting', 'auth-legacy', 'auth-native');
   body.classList.add('role-' + (AUTH ? AUTH.role : 'member'));
   body.classList.add(isNative() ? 'auth-native' : 'auth-legacy');
   const shell = document.getElementById('appShell');
@@ -2077,6 +2357,9 @@ function renderRoleIndicator() {
   } else if (isContractor()) {
     el.className = 'role-pill contractor';
     el.textContent = 'Contractor - ' + AUTH.name;
+  } else if (isClient()) {
+    el.className = 'role-pill contractor';
+    el.textContent = 'Client Portal - ' + (AUTH.name || 'Client');
   }
   const proj = document.getElementById('contractorProjectLabel');
   if (proj && (isContractor() || (isMember() && AUTH.projectId))) {
@@ -5608,7 +5891,7 @@ window.copyAccessLink = copyAccessLink;
 /* =========================================================================
    PHASE B - PROFILE (self, native users) + USERS (owner invite admin)
    ========================================================================= */
-const ROLE_LABELS = { owner: 'Owner', staff: 'Staff', member: 'Member', contractor: 'Contractor' };
+const ROLE_LABELS = { owner: 'Owner', staff: 'Staff', member: 'Member', contractor: 'Contractor', client: 'Client (Read-only)' };
 const INVITE_FN_URL = SUPABASE_URL + '/functions/v1/invite-user';
 const MANAGE_USER_FN_URL = SUPABASE_URL + '/functions/v1/manage-user';
 const NOTIFY_FN_URL = SUPABASE_URL + '/functions/v1/notify-task';
@@ -5807,7 +6090,7 @@ function openRoleModal(userId) {
   if (!isOwner()) { toast('Owner only', 'error'); return; }
   const u = (DATA.users||[]).find(x => x.id === userId) || (DATA.profiles||[]).find(x => x.id === userId);
   if (!u) { toast('User not found', 'error'); return; }
-  const roleOpts = ['owner','staff','member','contractor'].map(r =>
+  const roleOpts = ['owner','staff','member','contractor','client'].map(r =>
     `<option value="${r}" ${u.app_role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join('');
   const projOpts = '<option value="">All projects (owner/staff)</option>' +
     (DATA.projects||[]).map(p => `<option value="${p.id}" ${u.project_id===p.id?'selected':''}>${escapeHtml(p.code)} - ${escapeHtml(p.name)}</option>`).join('');
@@ -6257,8 +6540,17 @@ document.getElementById('setPasswordForm')?.addEventListener('submit', async (e)
         hideLogin();
         document.body.classList.remove('app-booting');
         await loadAllData();
-        render();
-        startNotifPolling();
+        // Route clients to the portal instead of the main app
+        if (isClient()) {
+          if (AUTH.projectId) STATE.activeProjectId = AUTH.projectId;
+          const appShell = document.getElementById('appShell');
+          if (appShell) appShell.style.display = 'none';
+          document.body.classList.add('role-client');
+          renderClientPortal();
+        } else {
+          render();
+          startNotifPolling();
+        }
         return;
       }
     }
@@ -6314,8 +6606,17 @@ document.getElementById('nativeLoginForm')?.addEventListener('submit', async (e)
     hideLogin();
     document.body.classList.remove('app-booting');
     await loadAllData();
-    render();
-    startNotifPolling();
+    // Route clients to the portal instead of the main app
+    if (isClient()) {
+      if (AUTH.projectId) STATE.activeProjectId = AUTH.projectId;
+      const appShell = document.getElementById('appShell');
+      if (appShell) appShell.style.display = 'none';
+      document.body.classList.add('role-client');
+      renderClientPortal();
+    } else {
+      render();
+      startNotifPolling();
+    }
   } else {
     if (errEl) errEl.textContent = res.error || 'Sign-in failed';
     if (pwEl) { pwEl.value = ''; pwEl.focus(); }
@@ -6647,6 +6948,19 @@ async function init() {
   document.body.classList.remove('app-booting');
   await loadAllData();
 
+  // CLIENT PORTAL: if the user has role=client, show the portal instead of the main app.
+  if (isClient()) {
+    // Pin the project from auth claims
+    if (AUTH.projectId) STATE.activeProjectId = AUTH.projectId;
+    // Hide the main app shell, show the client portal
+    const appShell = document.getElementById('appShell');
+    if (appShell) appShell.style.display = 'none';
+    document.body.classList.add('role-client');
+    renderClientPortal();
+    // No notification polling for clients
+    return;
+  }
+
   // For contractor or scoped member, pin the active project
   if ((isContractor() || isMember()) && AUTH.projectId) {
     STATE.activeProjectId = AUTH.projectId;
@@ -6863,6 +7177,316 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
+
+/* =========================================================================
+   CLIENT PORTAL
+   ========================================================================= */
+function renderClientPortal() {
+  const portal = document.getElementById('clientPortal');
+  if (!portal) return;
+  portal.classList.add('active');
+
+  // Inject logo
+  const logoEl = document.getElementById('cpBrandLogo');
+  if (logoEl && !logoEl.innerHTML.trim()) logoEl.innerHTML = PLAZA_LOGO_SVG;
+
+  // Set project name/code
+  const proj = AUTH.projectId ? DATA.projects.find(p => p.id === AUTH.projectId) : null;
+  const nameEl = document.getElementById('cpProjectName');
+  const codeEl = document.getElementById('cpProjectCode');
+  if (nameEl) nameEl.textContent = proj ? proj.name : 'Your Project';
+  if (codeEl) codeEl.textContent = proj ? ('#' + proj.code) : '';
+
+  // Render the active tab (default = reports)
+  const activeTab = document.querySelector('#cpTabs .cp-tab.active');
+  const tabName = activeTab ? activeTab.dataset.cptab : 'reports';
+  renderClientTab(tabName);
+}
+window.renderClientPortal = renderClientPortal;
+
+function switchClientTab(tab) {
+  document.querySelectorAll('#cpTabs .cp-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.cptab === tab));
+  renderClientTab(tab);
+}
+window.switchClientTab = switchClientTab;
+
+function renderClientTab(tab) {
+  document.querySelectorAll('.cp-panel').forEach(p =>
+    p.classList.toggle('active', p.id === 'cp-panel-' + tab));
+  if (tab === 'reports')      renderClientReports();
+  else if (tab === 'deficiencies') renderClientDeficiencies();
+  else if (tab === 'rfis')    renderClientRfis();
+  else if (tab === 'submittals') renderClientSubmittals();
+  else if (tab === 'cos')     renderClientCos();
+  else if (tab === 'sov')     renderClientSov();
+}
+
+function clientProjectId() {
+  return AUTH && AUTH.projectId ? AUTH.projectId : STATE.activeProjectId;
+}
+
+function renderClientReports() {
+  const body = document.getElementById('cpReportsBody');
+  if (!body) return;
+  const pid = clientProjectId();
+  if (!pid) { body.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-title">No project assigned</div></div></td></tr>'; return; }
+  const typeLabels = {
+    field_observation: 'Field Observation',
+    special_inspection: 'Special Inspection',
+    daily_report: 'Daily Log',
+  };
+  const list = (DATA.field_reports || []).filter(r => r.project_id === pid && r.file_path);
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No reports on file</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(r => `
+    <tr>
+      <td style="font-weight:600;white-space:nowrap;">${escapeHtml(r.report_number || '-')}</td>
+      <td style="font-weight:500;">${escapeHtml(r.file_name || '-')}</td>
+      <td>${fmtDate(r.visit_date)}</td>
+      <td>${escapeHtml(typeLabels[r.report_type] || r.report_type || '-')}</td>
+      <td><button class="btn btn-primary btn-sm" onclick="clientDownloadReport('${escapeHtml(r.id)}')">&#8595; Download</button></td>
+    </tr>`).join('');
+}
+window.renderClientReports = renderClientReports;
+
+async function clientDownloadReport(id) {
+  const r = (DATA.field_reports || []).find(x => x.id === id);
+  if (!r || !r.file_path) { toast('No file for this report', 'error'); return; }
+  try {
+    const url = await signedUrl('field-reports', r.file_path);
+    window.open(url, '_blank');
+  } catch (e) {
+    toast('Could not generate download link: ' + (e.message || e), 'error');
+  }
+}
+window.clientDownloadReport = clientDownloadReport;
+
+function renderClientDeficiencies() {
+  const body = document.getElementById('cpDefBody');
+  if (!body) return;
+  const pid = clientProjectId();
+  if (!pid) { body.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-title">No project assigned</div></div></td></tr>'; return; }
+  const list = (DATA.deficiencies || []).filter(d => d.project_id === pid);
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">No deficiencies on record</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(d => `
+    <tr>
+      <td style="font-weight:600;">${escapeHtml(d.deficiency_no || '-')}</td>
+      <td>${escapeHtml(d.location || '-')}</td>
+      <td>${escapeHtml(d.description || '-')}</td>
+      <td>${defSeverityBadge(d.severity || 'moderate')}</td>
+      <td>${escapeHtml(d.responsible_party || '-')}</td>
+      <td>${fmtDate(d.due_date)}</td>
+      <td>${defStatusBadge(d.status || 'open')}</td>
+    </tr>`).join('');
+}
+window.renderClientDeficiencies = renderClientDeficiencies;
+
+function renderClientRfis() {
+  const body = document.getElementById('cpRfiBody');
+  if (!body) return;
+  const pid = clientProjectId();
+  if (!pid) { body.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-title">No project assigned</div></div></td></tr>'; return; }
+  const list = (DATA.rfis || []).filter(r => r.project_id === pid);
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-icon">❓</div><div class="empty-title">No RFIs on record</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(r => `
+    <tr>
+      <td style="font-weight:600;">${escapeHtml(String(r.rfi_number || '-'))}</td>
+      <td>${escapeHtml(r.subject || '-')}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td>${fmtDate(r.due_date)}</td>
+      <td>${escapeHtml(r.ball_in_court || '-')}</td>
+    </tr>`).join('');
+}
+window.renderClientRfis = renderClientRfis;
+
+function renderClientSubmittals() {
+  const body = document.getElementById('cpSubBody');
+  if (!body) return;
+  const pid = clientProjectId();
+  if (!pid) { body.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-title">No project assigned</div></div></td></tr>'; return; }
+  const list = (DATA.submittals || []).filter(s => s.project_id === pid);
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-icon">📤</div><div class="empty-title">No submittals on record</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(s => `
+    <tr>
+      <td style="font-weight:600;">${escapeHtml(String(s.submittal_number || '-'))}</td>
+      <td>${escapeHtml(s.spec_section || '-')}</td>
+      <td>${escapeHtml(s.description || '-')}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td>${fmtDate(s.due_date)}</td>
+    </tr>`).join('');
+}
+window.renderClientSubmittals = renderClientSubmittals;
+
+function renderClientCos() {
+  const body = document.getElementById('cpCoBody');
+  if (!body) return;
+  const pid = clientProjectId();
+  if (!pid) { body.innerHTML = '<tr><td colspan="4"><div class="empty"><div class="empty-title">No project assigned</div></div></td></tr>'; return; }
+  const list = (DATA.changeOrders || []).filter(c => c.project_id === pid);
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="4"><div class="empty"><div class="empty-icon">🔁</div><div class="empty-title">No change orders on record</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(c => `
+    <tr>
+      <td style="font-weight:600;">${escapeHtml(String(c.co_number || '-'))}</td>
+      <td>${escapeHtml(c.description || '-')}</td>
+      <td class="num">${fmt$2(c.amount)}</td>
+      <td>${statusBadge(c.status)}</td>
+    </tr>`).join('');
+}
+window.renderClientCos = renderClientCos;
+
+function renderClientSov() {
+  const body = document.getElementById('cpSovBody');
+  const foot = document.getElementById('cpSovFoot');
+  if (!body) return;
+  const pid = clientProjectId();
+  if (!pid) { body.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-title">No project assigned</div></div></td></tr>'; return; }
+  // Get current (latest) version of SOV items for this project
+  const allItems = (DATA.sovItems || []).filter(i => i.project_id === pid);
+  const maxVersion = allItems.reduce((mx, i) => Math.max(mx, i.version || 0), 0);
+  const list = allItems.filter(i => (i.version || 0) === maxVersion);
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-icon">💰</div><div class="empty-title">No schedule of values on record</div></div></td></tr>';
+    if (foot) foot.innerHTML = '';
+    return;
+  }
+  let totSched = 0, totComp = 0, totBal = 0;
+  body.innerHTML = list.map(item => {
+    const sv   = Number(item.scheduled_value || 0);
+    const comp = Number(item.work_completed_to_date || 0);
+    const bal  = sv - comp;
+    const pct  = sv > 0 ? Math.round(comp / sv * 100) : 0;
+    totSched += sv; totComp += comp; totBal += bal;
+    return `<tr>
+      <td style="font-weight:600;white-space:nowrap;">${escapeHtml(item.item_no || '-')}</td>
+      <td>${escapeHtml(item.description || '-')}</td>
+      <td class="num">${fmt$2(sv)}</td>
+      <td class="num">${fmt$2(comp)}</td>
+      <td class="num">${fmt$2(bal)}</td>
+      <td class="num">${pct}%</td>
+    </tr>`;
+  }).join('');
+  const totPct = totSched > 0 ? Math.round(totComp / totSched * 100) : 0;
+  if (foot) foot.innerHTML = `<tr>
+    <td colspan="2" style="font-weight:700;">TOTALS</td>
+    <td class="num">${fmt$2(totSched)}</td>
+    <td class="num">${fmt$2(totComp)}</td>
+    <td class="num">${fmt$2(totBal)}</td>
+    <td class="num">${totPct}%</td>
+  </tr>`;
+}
+window.renderClientSov = renderClientSov;
+
+/* =========================================================================
+   INVITE CLIENT MODAL
+   ========================================================================= */
+function openInviteClientModal() {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const projects = DATA.projects || [];
+  const projectOptions = projects.map(p =>
+    `<option value="${p.id}">${escapeHtml(p.code)} - ${escapeHtml(p.name)}</option>`).join('');
+  showModal({
+    title: 'Invite Client',
+    body: `
+      <div class="hint-banner">
+        🔗 The client will receive a magic link by email and be taken directly to their read-only project portal.
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Full Name</label>
+          <input id="ic-name" type="text" placeholder="Jane Smith" /></div>
+        <div><label class="form-label">Email</label>
+          <input id="ic-email" type="email" placeholder="client@company.com" /></div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Project <span style="color:var(--red)">*</span></label>
+        <select id="ic-project" required>
+          <option value="">-- Select project --</option>
+          ${projectOptions}
+        </select>
+      </div>
+      <div class="login-error" id="ic-error"></div>`,
+    footer: `<div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="ic-submit" onclick="submitInviteClient()">Send Magic Link</button>`,
+  });
+}
+window.openInviteClientModal = openInviteClientModal;
+
+async function submitInviteClient() {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const errEl = document.getElementById('ic-error');
+  const btn   = document.getElementById('ic-submit');
+  if (errEl) errEl.textContent = '';
+  const name    = (document.getElementById('ic-name')?.value || '').trim();
+  const email   = (document.getElementById('ic-email')?.value || '').trim().toLowerCase();
+  const project = document.getElementById('ic-project')?.value || '';
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    if (errEl) errEl.textContent = 'Valid email required'; return;
+  }
+  if (!project) {
+    if (errEl) errEl.textContent = 'Please select a project'; return;
+  }
+  const payload = {
+    email,
+    full_name: name || email,
+    app_role: 'client',
+    project_id: project,
+  };
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+  try {
+    if (!(await ensureFreshPrivilegedSession())) {
+      if (errEl) errEl.textContent = 'Session expired - please sign in again, then retry.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Magic Link'; }
+      return;
+    }
+    const res = await fetch(INVITE_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+      },
+      body: JSON.stringify(payload),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out.error) {
+      const expired = res.status === 401 || /invalid_token|missing_authorization/.test(out.error || '');
+      if (expired) {
+        if (errEl) errEl.textContent = 'Session expired - please sign in again, then resend.';
+        toast('Your session expired - please sign in again.', 'error');
+        try { sessionStorage.removeItem(SESSION_AUTH_KEY); } catch (e) {}
+        clearSbAuth();
+        if (typeof showLogin === 'function') showLogin();
+      } else if (errEl) {
+        errEl.textContent = out.error || ('Invite failed (' + res.status + ')');
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Magic Link'; }
+      return;
+    }
+    toast('Magic link sent to ' + email);
+    closeModal();
+    await loadAllData();
+    renderUsers();
+  } catch (e) {
+    if (errEl) errEl.textContent = 'Network error: ' + (e.message || e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Magic Link'; }
+  }
+}
+window.submitInviteClient = submitInviteClient;
 
 /* =========================================================================
    TASKS MODULE
