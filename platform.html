@@ -6048,6 +6048,9 @@ function showModal({ title, body, footer, size }) {
   document.body.style.overflow = 'hidden';
 }
 window.showModal = showModal;
+// Compat shim: openModal(title, body, size) -> showModal({ title, body, size })
+function openModal(title, body, size) { showModal({ title, body, size }); }
+window.openModal = openModal;
 
 function closeModal() {
   const root = document.getElementById('modalRoot');
