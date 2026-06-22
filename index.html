@@ -8720,15 +8720,24 @@ function renderMilestones() {
   renderScheduleImportsList(proj);
 }
 
+// Derive a tower/group label for a set of tasks (and/or its import filename).
+// Terrazas has two towers (Park Tower, River Tower); other projects may have one.
+function _towerLabel(importFileName, sampleTaskName) {
+  const hay = ((importFileName || '') + ' ' + (sampleTaskName || '')).toLowerCase();
+  if (hay.includes('park'))  return 'Park Tower';
+  if (hay.includes('river')) return 'River Tower';
+  return null;
+}
+
 function renderGanttView(proj) {
   const chart = document.getElementById('ganttChart');
   if (!chart) return;
   if (!proj) { chart.innerHTML = ''; return; }
 
-  const tasks = (DATA.scheduleTasks || []).filter(t => t.project_id === proj.id)
+  const allTasks = (DATA.scheduleTasks || []).filter(t => t.project_id === proj.id)
     .sort((a,b) => (a.sort_order||0) - (b.sort_order||0));
 
-  if (!tasks.length) {
+  if (!allTasks.length) {
     chart.innerHTML = `<div class="empty-state" style="padding:40px 20px;text-align:center;">
       <div style="font-size:40px;margin-bottom:12px;">📊</div>
       <div style="font-weight:600;font-size:15px;margin-bottom:6px;">No schedule imported yet</div>
@@ -8737,16 +8746,40 @@ function renderGanttView(proj) {
     return;
   }
 
-  // Column-name shim: schedule_tasks uses name/start_date/finish_date/pct_complete,
-  // but older code referenced task_name/end_date/percent_complete. Read both.
+  // Map import_id -> filename so we can label each tower's chart.
+  const impById = {};
+  (DATA.scheduleImports || []).forEach(i => { impById[i.id] = i.file_name || ''; });
+
+  // Group tasks into separate Gantt charts, one per tower. Grouping key:
+  // the tower derived from the import filename / first task name; tasks that
+  // don't resolve to a tower fall back to grouping by import_id (or 'Schedule').
+  const groups = new Map(); // label -> { label, tasks:[] }
+  allTasks.forEach(t => {
+    const fn = impById[t.import_id];
+    const tower = _towerLabel(fn, (t.task_name || t.name));
+    const key = tower || (t.import_id ? ('import:' + t.import_id) : 'Schedule');
+    if (!groups.has(key)) groups.set(key, { label: tower || (fn ? fn.replace(/\.[^.]+$/, '') : 'Schedule'), tasks: [] });
+    groups.get(key).tasks.push(t);
+  });
+
+  // Render one chart block per group, stacked vertically.
+  const blocks = [...groups.values()].map(g => _renderGanttBlock(g.label, g.tasks)).filter(Boolean);
+  chart.innerHTML = blocks.length
+    ? blocks.join('<div style="height:22px;"></div>')
+    : '<div class="empty-state">No date data in imported tasks.</div>';
+}
+
+// Render a single titled Gantt chart for one tower/group of tasks.
+function _renderGanttBlock(title, tasks) {
+  // Column-name shim: schedule_tasks uses task_name/end_date/percent_complete;
+  // analysis-shaped rows may use name/finish_date/pct_complete. Read both.
   const tName  = t => t.name ?? t.task_name ?? '';
   const tStart = t => t.start_date ?? null;
   const tEnd   = t => t.finish_date ?? t.end_date ?? null;
   const tPct   = t => Number(t.pct_complete ?? t.percent_complete ?? 0);
 
-  // Simple CSS Gantt
   const dates = tasks.filter(t => tStart(t) && tEnd(t));
-  if (!dates.length) { chart.innerHTML = '<div class="empty-state">No date data in imported tasks.</div>'; return; }
+  if (!dates.length) return '';
   const minDate = new Date(Math.min(...dates.map(t => new Date(tStart(t)))));
   const maxDate = new Date(Math.max(...dates.map(t => new Date(tEnd(t)))));
   const totalDays = Math.max(1, (maxDate - minDate) / 86400000);
@@ -8788,9 +8821,14 @@ function renderGanttView(proj) {
       <div style="width:46px;min-width:46px;text-align:right;padding:0 6px;">%</div>
     </div>`;
 
-  chart.innerHTML = `
-    <div style="font-size:11px;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--gray-200);">📅 ${fmtDate(minDate.toISOString().slice(0,10))} — ${fmtDate(maxDate.toISOString().slice(0,10))} · ${tasks.length} tasks</div>
-    <div style="overflow-x:auto;"><div style="min-width:560px;">${header}${rows}</div></div>`;
+  const titleBar = title ? `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--primary,#2563eb);color:#fff;font-weight:700;font-size:13px;border-radius:8px 8px 0 0;">🏗️ ${escapeHtml(title)} <span style="font-weight:500;opacity:.85;font-size:11px;">· ${tasks.length} tasks</span></div>` : '';
+
+  return `
+    <div style="border:1px solid var(--gray-200);border-radius:8px;overflow:hidden;">
+      ${titleBar}
+      <div style="font-size:11px;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--gray-200);">📅 ${fmtDate(minDate.toISOString().slice(0,10))} — ${fmtDate(maxDate.toISOString().slice(0,10))}</div>
+      <div style="overflow-x:auto;"><div style="min-width:560px;">${header}${rows}</div></div>
+    </div>`;
 }
 
 function renderScheduleImportsList(proj) {
@@ -8984,14 +9022,31 @@ async function schedApproveImport(id) {
   if (!item || !item.analysis || !Array.isArray(item.analysis.tasks) || !item.analysis.tasks.length) {
     toast('Nothing to approve — analyze the file first', 'error'); return;
   }
-  if (!confirm(`Apply ${item.analysis.tasks.length} tasks to the Gantt for this project?\n\nThis replaces tasks from previous schedule imports (manually-added tasks are kept).`)) return;
   const pid = item.project_id;
+  // Which tower does this import belong to? Replace only that tower's prior tasks
+  // so the two towers (Park / River) coexist as separate Gantt charts.
+  const firstTaskName = (item.analysis.tasks[0] && (item.analysis.tasks[0].name || item.analysis.tasks[0].task_name)) || '';
+  const tower = _towerLabel(item.file_name, firstTaskName);
+  const scopeMsg = tower ? `the ${tower} chart` : 'this schedule';
+  if (!confirm(`Apply ${item.analysis.tasks.length} tasks to ${scopeMsg}?\n\nThis replaces the previous import for ${tower || 'this schedule'} (the other tower and any manually-added tasks are kept).`)) return;
   try {
-    // Remove prior import-sourced tasks for this project (keep manual ones).
-    // schedule_tasks has no 'source' column; import-origin rows carry a non-null import_id,
-    // manually-added rows have import_id = null, so we only clear the imported ones.
+    // Find prior import ids that belong to the SAME tower, so we only clear those.
+    let priorImportIds = [];
+    if (tower) {
+      priorImportIds = (DATA.scheduleImports || [])
+        .filter(i => i.project_id === pid && i.id !== id)
+        .filter(i => {
+          const fn0 = i.file_name;
+          const tn0 = i.analysis && Array.isArray(i.analysis.tasks) && i.analysis.tasks[0]
+            ? (i.analysis.tasks[0].name || i.analysis.tasks[0].task_name) : '';
+          return _towerLabel(fn0, tn0) === tower;
+        })
+        .map(i => i.id);
+    }
+    // Always also clear any rows already carrying THIS import's id (idempotent re-apply).
+    const idsToClear = [id, ...priorImportIds];
     const { error: delErr } = await sb.from('schedule_tasks')
-      .delete().eq('project_id', pid).not('import_id', 'is', null);
+      .delete().eq('project_id', pid).in('import_id', idsToClear);
     if (delErr) throw delErr;
     // Insert the new tasks. Map analysis fields -> the ACTUAL schedule_tasks columns:
     // (project_id, import_id, task_name, start_date, end_date, duration_days,
@@ -9030,7 +9085,7 @@ async function schedApproveImport(id) {
       sw.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.schedview === 'gantt'));
     }
     render();
-    toast(`Gantt updated — ${rows.length} tasks applied ✅`, 'success');
+    toast(`${tower || 'Gantt'} updated — ${rows.length} tasks applied ✅`, 'success');
   } catch (e) {
     toast('Approve failed: ' + (e.message || e), 'error');
   }
