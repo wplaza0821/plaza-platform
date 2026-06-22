@@ -681,6 +681,9 @@
   /* Access (contractor-token admin) is owner-only too. */
   body.role-staff  [data-role-hide="contractor"].tab,
   body.role-member [data-role-hide="contractor"].tab { display: none !important; }
+  /* Quantity reconciliation button: owner-only (financial-integrity tool). */
+  .rq-owner-only { display: none !important; }
+  body.role-owner .rq-owner-only { display: inline-flex !important; }
   body.perm-no-edit-payapps  .perm-edit-payapps  { display: none !important; }
   body.perm-no-edit-cos      .perm-edit-cos      { display: none !important; }
   body.perm-no-edit-rfis     .perm-edit-rfis     { display: none !important; }
@@ -1417,6 +1420,7 @@
           <div class="page-subtitle">Field measurements by stack · inches in, SF/LF/CF out</div>
         </div>
         <div class="page-actions">
+          <button class="btn-secondary rq-owner-only" onclick="rqOpenReconcile()" id="rqReconcileBtn" title="Cross-reference verified quantities vs contractor pay-app quantities">⚖️ Reconcile vs Pay Apps</button>
           <button class="btn-secondary" onclick="rqExport()" id="rqExportBtn">⬇ Export</button>
           <button class="btn-primary" onclick="rqOpenForm()" id="rqAddBtn">+ Add Entry</button>
         </div>
@@ -2114,6 +2118,8 @@ async function loadAllData() {
   const msP   = sb.from('milestones').select('*').order('sort_order', { ascending: true });
   const stP   = sb.from('schedule_tasks').select('*').order('sort_order', { ascending: true });
   const siP   = sb.from('schedule_imports').select('*').order('uploaded_at', { ascending: false });
+  // Quantity reconciliation mapping (repair_type -> SOV item_no). Soft if absent.
+  const qrmP  = sb.from('qty_recon_map').select('*');
   // Phase B: profiles. RLS returns own row to anyone; owner/staff get the full
   // list (for the invite admin + assignee pickers). Table may not exist yet.
   const prfP  = sb.from('profiles').select('*').order('created_at', { ascending: false });
@@ -2174,6 +2180,8 @@ async function loadAllData() {
   DATA.milestones    = ms.data || [];
   DATA.scheduleTasks   = st.data || [];
   DATA.scheduleImports = si.data || [];
+  const qrm = await qrmP; softErr(qrm, 'Loading qty reconciliation map');
+  DATA.qtyReconMap = (qrm && !qrm.error && Array.isArray(qrm.data)) ? qrm.data : [];
   softErr(prf, 'Loading profiles');
   DATA.profiles      = prf.data || [];
   // Phase 4 caches (silent if not yet deployed)
@@ -9468,6 +9476,199 @@ function rqItemQty(item) {
   if (t.unit === 'count')  return { val: 1, unit: 'EA' };
   return { val: item.area_sf || rqCalcArea(item.length_in, item.height_in) || 0, unit: 'SF' };
 }
+
+// ══ QUANTITY RECONCILIATION (verified vs contractor pay-app) ═══════════════════
+// Compares inspector-APPROVED (status='complete') repair quantities against the
+// quantities the contractor has billed to date through pay applications, per
+// repair_type. Contractor billed units = (total_completed_stored $) / unit_price,
+// summed across all SOV lines mapped to that repair_type (DATA.qtyReconMap).
+// Flags over-billing beyond a 5% tolerance.
+const RQ_RECON_TOLERANCE = 0.05; // 5% — differences within this band are not flagged
+
+function rqUnitFamily(repair_type) {
+  const t = RQ_TYPE_MAP[repair_type];
+  if (!t) return 'SF';
+  return t.unit === 'linear' ? 'LF' : (t.unit === 'count' ? 'EA' : 'SF');
+}
+
+// Approved (complete) verified quantity per repair_type for a project.
+function rqVerifiedByType(pid) {
+  const out = {}; // repair_type -> { val, unit }
+  DATA_rqi.filter(i => i.project_id === pid && i.status === 'complete').forEach(i => {
+    const q = rqItemQty(i);
+    const key = i.repair_type;
+    if (!out[key]) out[key] = { val: 0, unit: q.unit };
+    out[key].val += Number(q.val) || 0;
+  });
+  return out;
+}
+
+// Contractor billed-to-date units per repair_type, derived from a given pay app's
+// cumulative completed $ on each mapped SOV line. If payApp is null, uses the
+// latest cumulative across ALL pay apps (max total_completed_stored per line).
+function rqBilledByType(pid, payApp) {
+  // Map: repair_type -> Set(sov_item_no)
+  const map = (DATA.qtyReconMap || []).filter(m => m.project_id === pid);
+  // SOV lines for this project, indexed by item_no (use the version the pay app bills).
+  const ver = payApp ? (payApp.sov_version || 1) : null;
+  const sovByNo = {};
+  DATA.sovItems.filter(s => s.project_id === pid && (ver == null || (s.version||1) === ver))
+    .forEach(s => { sovByNo[s.item_no] = s; });
+  // Completed $ per sov_item_id.
+  const completed$ = {}; // sov_item_id -> $ billed to date
+  if (payApp) {
+    DATA.payAppLines.filter(l => l.pay_app_id === payApp.id).forEach(l => {
+      completed$[l.sov_item_id] = Number(l.total_completed_stored) || 0;
+    });
+  } else {
+    // Latest cumulative across all pay apps for the project.
+    const paIds = new Set(DATA.payApps.filter(p => p.project_id === pid).map(p => p.id));
+    DATA.payAppLines.filter(l => paIds.has(l.pay_app_id)).forEach(l => {
+      const v = Number(l.total_completed_stored) || 0;
+      if (completed$[l.sov_item_id] == null || v > completed$[l.sov_item_id]) completed$[l.sov_item_id] = v;
+    });
+  }
+  // SOV id by item_no -> need id; build item_no -> billed units.
+  const out = {}; // repair_type -> { val, unit, lines:[{item_no, units, $}] }
+  map.forEach(m => {
+    const sov = sovByNo[m.sov_item_no];
+    if (!sov) return;
+    const up = Number(sov.unit_price) || 0;
+    const dollars = Number(completed$[sov.id]) || 0;
+    const units = up > 0 ? dollars / up : 0;
+    const fam = rqUnitFamily(m.repair_type);
+    if (!out[m.repair_type]) out[m.repair_type] = { val: 0, unit: fam, lines: [] };
+    out[m.repair_type].val += units;
+    if (dollars > 0) out[m.repair_type].lines.push({ item_no: m.sov_item_no, desc: sov.description, units, dollars });
+  });
+  return out;
+}
+
+function rqOpenReconcile() {
+  if (!isOwner()) { toast('Reconciliation is owner-only', 'error'); return; }
+  const pid = STATE.activeProjectId;
+  const proj = getProject(pid);
+  const payApps = DATA.payApps.filter(p => p.project_id === pid)
+    .sort((a,b) => (b.pay_app_number||0) - (a.pay_app_number||0));
+  const sel = `<select id="rqReconPa" onchange="rqRenderReconcile()" style="min-width:220px;">
+      <option value="">All pay apps (latest cumulative)</option>
+      ${payApps.map(p => `<option value="${p.id}">Pay App #${p.pay_app_number} — ${escapeHtml((p.status||'').replace('_',' '))}</option>`).join('')}
+    </select>`;
+  const body = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <span style="font-size:13px;color:var(--text-muted);">Compare against:</span>
+      ${sel}
+      <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">Verified = inspector-approved (Complete) · tolerance ±${Math.round(RQ_RECON_TOLERANCE*100)}%</span>
+    </div>
+    <div id="rqReconBody"></div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+      Contractor-billed quantity is derived from each pay app’s cumulative completed value ÷ SOV unit price, summed over the SOV line items mapped to each repair type. Lump-sum (LS) lines and unmapped lines are excluded. Adjust the mapping with “Edit Mapping” if a category looks off.
+      <button class="btn btn-ghost btn-sm" onclick="rqOpenReconMap()" style="margin-left:8px;">⚙️ Edit Mapping</button>
+    </div>`;
+  openModal('⚖️ Quantity Reconciliation — Verified vs Contractor', body, 'wide');
+  setTimeout(rqRenderReconcile, 30);
+}
+window.rqOpenReconcile = rqOpenReconcile;
+
+function rqRenderReconcile() {
+  const pid = STATE.activeProjectId;
+  const paId = document.getElementById('rqReconPa')?.value || '';
+  const payApp = paId ? DATA.payApps.find(p => p.id === paId) : null;
+  const verified = rqVerifiedByType(pid);
+  const billed   = rqBilledByType(pid, payApp);
+  const types = [...new Set([...Object.keys(verified), ...Object.keys(billed)])]
+    .sort((a,b) => (RQ_TYPE_MAP[a]?.label||a).localeCompare(RQ_TYPE_MAP[b]?.label||b));
+
+  if (!types.length) {
+    document.getElementById('rqReconBody').innerHTML =
+      `<div class="empty"><div class="empty-icon">⚖️</div><div class="empty-title">Nothing to reconcile yet</div><div class="empty-sub">Approve some repair entries (mark Complete) and ensure the contractor has billed against mapped SOV lines.</div></div>`;
+    return;
+  }
+
+  let alerts = 0;
+  const rows = types.map(tp => {
+    const meta = RQ_TYPE_MAP[tp] || { label: tp, icon: '📌' };
+    const v = verified[tp]?.val || 0;
+    const b = billed[tp]?.val || 0;
+    const unit = (verified[tp]?.unit) || (billed[tp]?.unit) || rqUnitFamily(tp);
+    const diff = b - v;                       // + => contractor billed more than verified
+    const overBill = v > 0 ? (diff / v) : (b > 0 ? Infinity : 0);
+    const flagged = diff > 0 && (v === 0 ? b > 0 : overBill > RQ_RECON_TOLERANCE);
+    if (flagged) alerts++;
+    const diffColor = flagged ? '#dc2626' : (diff < 0 ? '#64748b' : '#16a34a');
+    const pctTxt = v > 0 ? `${(overBill*100>=0?'+':'')}${(overBill*100).toFixed(0)}%` : (b>0?'— no verified':'—');
+    const flag = flagged
+      ? `<span style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700;">⚠ OVER-BILLED</span>`
+      : (diff < 0 ? `<span style="color:#64748b;font-size:11px;">under billed</span>` : `<span style="color:#16a34a;font-size:11px;">✓ within tolerance</span>`);
+    return `<tr>
+      <td style="font-weight:600;">${meta.icon} ${escapeHtml(meta.label)}</td>
+      <td class="num">${v.toFixed(2)} ${unit}</td>
+      <td class="num">${b.toFixed(2)} ${unit}</td>
+      <td class="num" style="color:${diffColor};font-weight:700;">${diff>0?'+':''}${diff.toFixed(2)} ${unit}</td>
+      <td class="num" style="color:${diffColor};">${pctTxt}</td>
+      <td>${flag}</td>
+    </tr>`;
+  }).join('');
+
+  const banner = alerts > 0
+    ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:10px;color:#b91c1c;font-weight:700;font-size:13px;">⚠ ${alerts} repair ${alerts===1?'category':'categories'} where contractor billed more than verified (beyond ±${Math.round(RQ_RECON_TOLERANCE*100)}%). Review before certifying.</div>`
+    : `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:10px;color:#15803d;font-weight:600;font-size:13px;">✓ No over-billing detected beyond tolerance.</div>`;
+
+  document.getElementById('rqReconBody').innerHTML = banner + `
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr>
+        <th>Repair Type</th><th class="num">Verified (approved)</th><th class="num">Contractor billed</th>
+        <th class="num">Differential</th><th class="num">vs verified</th><th>Flag</th>
+      </tr></thead><tbody>${rows}</tbody>
+    </table></div>`;
+}
+window.rqRenderReconcile = rqRenderReconcile;
+
+// Mapping editor: repair_type -> SOV item_no(s). Owner-only.
+function rqOpenReconMap() {
+  if (!isOwner()) { toast('Owner-only', 'error'); return; }
+  const pid = STATE.activeProjectId;
+  const map = (DATA.qtyReconMap || []).filter(m => m.project_id === pid);
+  const sovLines = DATA.sovItems.filter(s => s.project_id === pid && s.unit && s.unit !== 'LS')
+    .reduce((acc,s)=>{ if(!acc.find(x=>x.item_no===s.item_no)) acc.push(s); return acc; },[])
+    .sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+  const byType = {};
+  map.forEach(m => { (byType[m.repair_type] ||= []).push(m.sov_item_no); });
+  const sections = RQ_TYPES.map(t => {
+    const mapped = byType[t.key] || [];
+    const opts = sovLines.map(s => {
+      const checked = mapped.includes(s.item_no) ? 'checked' : '';
+      return `<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin:2px 8px 2px 0;white-space:nowrap;"><input type="checkbox" data-type="${t.key}" data-item="${escapeHtml(s.item_no)}" ${checked}> ${escapeHtml(s.item_no)} <span style="color:#888;">(${s.unit})</span></label>`;
+    }).join('');
+    return `<details style="border:1px solid var(--gray-200);border-radius:6px;margin-bottom:6px;"><summary style="padding:8px 10px;font-weight:600;cursor:pointer;">${t.icon} ${escapeHtml(t.label)} <span style="color:#888;font-weight:400;">· ${mapped.length} mapped</span></summary><div style="padding:8px 10px;max-height:180px;overflow:auto;">${opts||'<span style="color:#888;font-size:12px;">No unit-based SOV lines</span>'}</div></details>`;
+  }).join('');
+  const body = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Tick the SOV line items that belong to each repair type. Used to sum the contractor’s billed quantity per category.</div>${sections}
+    <div class="modal-footer"><button class="btn-secondary" onclick="rqOpenReconcile()">← Back</button><button class="btn-primary" onclick="rqSaveReconMap()">Save Mapping</button></div>`;
+  openModal('⚙️ Edit Reconciliation Mapping', body, 'wide');
+}
+window.rqOpenReconMap = rqOpenReconMap;
+
+async function rqSaveReconMap() {
+  if (!isOwner()) { toast('Owner-only', 'error'); return; }
+  const pid = STATE.activeProjectId;
+  const boxes = [...document.querySelectorAll('.modal-body input[type=checkbox][data-type]')];
+  const desired = boxes.filter(b => b.checked).map(b => ({ project_id: pid, repair_type: b.dataset.type, sov_item_no: b.dataset.item }));
+  try {
+    // Replace the project's mapping wholesale.
+    const { error: delErr } = await sb.from('qty_recon_map').delete().eq('project_id', pid);
+    if (delErr) throw delErr;
+    if (desired.length) {
+      const { error: insErr } = await sb.from('qty_recon_map').insert(desired);
+      if (insErr) throw insErr;
+    }
+    DATA.qtyReconMap = desired.map(d => ({ ...d }));
+    toast('Mapping saved ✓', 'success');
+    rqOpenReconcile();
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), 'error');
+  }
+}
+window.rqSaveReconMap = rqSaveReconMap;
 
 // ── Load ─────────────────────────────────────────────────────────────────────
 
