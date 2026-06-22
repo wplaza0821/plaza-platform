@@ -6409,7 +6409,7 @@ function refreshCounts() {
 
   const photoN = DATA.photos.filter(p => p.project_id === pid).length;
   setCnt('cnt-photos', photoN || '');
-  const frN = DATA.field_reports.filter(r => r.project_id === pid && r.status !== 'approved').length;
+  const frN = DATA.field_reports.filter(r => r.project_id === pid && r.file_path).length;
   setCnt('cnt-fieldreports', frN || '');
   const defOpen = DATA.deficiencies.filter(d => d.project_id === pid && !['closed','verified'].includes(d.status)).length;
   setCnt('cnt-deficiencies', defOpen || '');
