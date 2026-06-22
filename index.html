@@ -8751,6 +8751,14 @@ function renderGanttView(proj) {
   const maxDate = new Date(Math.max(...dates.map(t => new Date(tEnd(t)))));
   const totalDays = Math.max(1, (maxDate - minDate) / 86400000);
 
+  // Compact date formatter for the per-row Start/Finish columns (e.g. "May 11 '26").
+  const shortDate = (d) => {
+    if (!d) return '—';
+    const dt = new Date(d);
+    if (isNaN(dt)) return '—';
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + " '" + String(dt.getFullYear()).slice(-2);
+  };
+
   const rows = tasks.map(t => {
     let bar = '';
     if (tStart(t) && tEnd(t)) {
@@ -8764,15 +8772,25 @@ function renderGanttView(proj) {
     }
     const indent = Math.max(0, ((parseInt(t.outline_level)||1) - 1)) * 12;
     return `<div style="display:flex;align-items:center;border-bottom:1px solid var(--gray-100);min-height:28px;${t.is_summary?'font-weight:700;':''}">
-      <div style="width:220px;min-width:220px;font-size:12px;padding:4px 8px;padding-left:${8+indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid var(--gray-200);">${t.is_milestone?'◆ ':''}${escapeHtml(tName(t))}</div>
-      <div style="flex:1;position:relative;height:26px;">${bar}</div>
-      <div style="width:50px;min-width:50px;font-size:11px;text-align:right;padding:0 6px;color:var(--text-muted);">${Math.round(tPct(t))}%</div>
+      <div style="width:200px;min-width:200px;font-size:12px;padding:4px 8px;padding-left:${8+indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid var(--gray-200);">${t.is_milestone?'◆ ':''}${escapeHtml(tName(t))}</div>
+      <div style="width:72px;min-width:72px;font-size:11px;padding:0 6px;color:var(--text-muted);text-align:center;border-right:1px solid var(--gray-100);">${shortDate(tStart(t))}</div>
+      <div style="width:72px;min-width:72px;font-size:11px;padding:0 6px;color:var(--text-muted);text-align:center;border-right:1px solid var(--gray-200);">${shortDate(tEnd(t))}</div>
+      <div style="flex:1;position:relative;height:26px;min-width:120px;">${bar}</div>
+      <div style="width:46px;min-width:46px;font-size:11px;text-align:right;padding:0 6px;color:var(--text-muted);">${Math.round(tPct(t))}%</div>
     </div>`;
   }).join('');
 
+  const header = `<div style="display:flex;align-items:center;border-bottom:2px solid var(--gray-200);min-height:26px;background:var(--gray-50,#f8fafc);font-weight:700;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;">
+      <div style="width:200px;min-width:200px;padding:4px 8px;border-right:1px solid var(--gray-200);">Task</div>
+      <div style="width:72px;min-width:72px;padding:0 6px;text-align:center;border-right:1px solid var(--gray-100);">Start</div>
+      <div style="width:72px;min-width:72px;padding:0 6px;text-align:center;border-right:1px solid var(--gray-200);">Finish</div>
+      <div style="flex:1;min-width:120px;padding:0 8px;">Timeline</div>
+      <div style="width:46px;min-width:46px;text-align:right;padding:0 6px;">%</div>
+    </div>`;
+
   chart.innerHTML = `
     <div style="font-size:11px;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--gray-200);">📅 ${fmtDate(minDate.toISOString().slice(0,10))} — ${fmtDate(maxDate.toISOString().slice(0,10))} · ${tasks.length} tasks</div>
-    ${rows}`;
+    <div style="overflow-x:auto;"><div style="min-width:560px;">${header}${rows}</div></div>`;
 }
 
 function renderScheduleImportsList(proj) {
