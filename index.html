@@ -8970,29 +8970,34 @@ async function schedApproveImport(id) {
   const pid = item.project_id;
   try {
     // Remove prior import-sourced tasks for this project (keep manual ones).
+    // schedule_tasks has no 'source' column; import-origin rows carry a non-null import_id,
+    // manually-added rows have import_id = null, so we only clear the imported ones.
     const { error: delErr } = await sb.from('schedule_tasks')
-      .delete().eq('project_id', pid).eq('source', 'import');
+      .delete().eq('project_id', pid).not('import_id', 'is', null);
     if (delErr) throw delErr;
-    // Insert the new tasks. Map analysis fields -> schedule_tasks columns.
-    const rows = item.analysis.tasks.map((t, idx) => ({
-      project_id: pid,
-      import_id: id,
-      uid: t.uid != null ? String(t.uid) : null,
-      wbs: t.wbs || null,
-      outline_level: Math.max(1, parseInt(t.outline_level) || 1),
-      is_summary: t.is_summary === true,
-      is_milestone: t.is_milestone === true,
-      name: String(t.name || '(unnamed)'),
-      start_date: t.start || null,
-      finish_date: t.finish || null,
-      duration_days: (t.duration_days != null && t.duration_days !== '') ? Number(t.duration_days) : null,
-      pct_complete: Math.max(0, Math.min(100, Number(t.pct_complete) || 0)),
-      predecessors: t.predecessors || null,
-      assigned_to: t.assigned_to || null,
-      notes: t.notes || null,
-      sort_order: Number.isFinite(Number(t.sort_order)) ? Number(t.sort_order) : idx,
-      source: 'import',
-    }));
+    // Insert the new tasks. Map analysis fields -> the ACTUAL schedule_tasks columns:
+    // (project_id, import_id, task_name, start_date, end_date, duration_days,
+    //  percent_complete, predecessors, assignee, notes, sort_order). No hierarchy cols,
+    // so summary/milestone/outline are folded into the task_name for readability.
+    const rows = item.analysis.tasks.map((t, idx) => {
+      const lvl = Math.max(1, parseInt(t.outline_level) || 1);
+      const indent = lvl > 1 ? '    '.repeat(lvl - 1) : '';
+      const mark = t.is_milestone === true ? '◆ ' : '';
+      const baseName = String(t.name || t.task_name || '(unnamed)');
+      return {
+        project_id: pid,
+        import_id: id,
+        task_name: (indent + mark + baseName).slice(0, 500),
+        start_date: t.start || t.start_date || null,
+        end_date: t.finish || t.finish_date || t.end_date || null,
+        duration_days: (t.duration_days != null && t.duration_days !== '') ? Math.round(Number(t.duration_days)) : null,
+        percent_complete: Math.max(0, Math.min(100, Number(t.pct_complete ?? t.percent_complete) || 0)),
+        predecessors: t.predecessors || null,
+        assignee: t.assigned_to || t.assignee || null,
+        notes: t.notes || null,
+        sort_order: Number.isFinite(Number(t.sort_order)) ? Number(t.sort_order) : idx,
+      };
+    });
     // chunked insert to stay well under payload limits
     for (let i = 0; i < rows.length; i += 200) {
       const { error: insErr } = await sb.from('schedule_tasks').insert(rows.slice(i, i + 200));
