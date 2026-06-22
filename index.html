@@ -8774,22 +8774,44 @@ function renderScheduleImportsList(proj) {
 
   listEl.innerHTML = imports.slice(0,5).map(i => {
     const statusColor = { pending:'#f59e0b', analyzed:'#3b82f6', applied:'#10b981', rejected:'#ef4444' }[i.status] || '#888';
-    const actions = isOwner() || isStaff()
+    // View/Download is available to EVERYONE (incl. contractor) so uploads are never a black hole.
+    const viewBtn = i.file_path
+      ? `<button class="btn btn-ghost btn-sm" onclick="schedViewImport('${i.id}')">👁 View</button>`
+      : '';
+    const adminActions = (isOwner() || isStaff())
       ? `<button class="btn btn-ghost btn-sm" onclick="schedApplyImport('${i.id}')">Apply to Gantt</button>
          <button class="btn btn-ghost btn-sm danger" onclick="schedDeleteImport('${i.id}')">Delete</button>`
       : '';
     return `<div class="card" style="padding:10px 14px;display:flex;align-items:center;gap:12px;">
       <span style="font-size:18px;">📄</span>
       <div style="flex:1;">
-        <div style="font-weight:600;font-size:13px;">${escapeHtml(i.file_name)}</div>
+        <div style="font-weight:600;font-size:13px;">
+          ${i.file_path
+            ? `<a href="#" onclick="event.preventDefault();schedViewImport('${i.id}')" style="color:var(--primary,#2563eb);text-decoration:none;">${escapeHtml(i.file_name)}</a>`
+            : escapeHtml(i.file_name)}
+        </div>
         <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(i.uploaded_by||'Contractor')} · ${fmtDate(i.uploaded_at?.slice(0,10)||'')}</div>
         ${i.notes ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(i.notes)}</div>` : ''}
       </div>
       <span class="status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40;">${i.status}</span>
-      <div style="display:flex;gap:6px;">${actions}</div>
+      <div style="display:flex;gap:6px;">${viewBtn}${adminActions}</div>
     </div>`;
   }).join('');
 }
+
+// Open an uploaded schedule file in a new tab via a short-lived signed URL.
+// Available to all roles (contractor included) so they can see what they sent.
+async function schedViewImport(id) {
+  const item = (DATA.scheduleImports || []).find(i => i.id === id);
+  if (!item || !item.file_path) { toast('No file attached to this upload', 'error'); return; }
+  try {
+    const url = await signedUrl('plans-specs', item.file_path);
+    window.open(url, '_blank', 'noopener');
+  } catch (e) {
+    toast('Could not open file: ' + (e.message || e), 'error');
+  }
+}
+window.schedViewImport = schedViewImport;
 
 async function schedDeleteImport(id) {
   if (!confirm('Delete this schedule upload?')) return;
@@ -8803,7 +8825,16 @@ async function schedDeleteImport(id) {
 window.schedDeleteImport = schedDeleteImport;
 
 async function schedApplyImport(id) {
-  toast('Apply feature coming soon — contact William to manually import tasks.', 'info');
+  // Auto-parsing of uploaded schedules into Gantt tasks is not built yet; for now
+  // staff open the file and enter/adjust tasks manually, then mark it applied.
+  const item = (DATA.scheduleImports || []).find(i => i.id === id);
+  if (item?.file_path) {
+    try {
+      const url = await signedUrl('plans-specs', item.file_path);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) { /* fall through to toast */ }
+  }
+  toast('Opened the uploaded file. Auto-import to Gantt is coming soon — for now, enter/adjust tasks manually from this file.', 'info');
 }
 window.schedApplyImport = schedApplyImport;
 
@@ -9012,7 +9043,7 @@ async function schedUploadSubmit(e) {
   }
 
   closeModal();
-  toast('Schedule uploaded — William will review and apply it.', 'success');
+  toast('Schedule uploaded ✓ You can reopen it anytime with “View” below. William will review and apply it to the Gantt.', 'success');
   // Reload data so history panel updates
   await loadAllData();
   render();
