@@ -8737,27 +8737,36 @@ function renderGanttView(proj) {
     return;
   }
 
+  // Column-name shim: schedule_tasks uses name/start_date/finish_date/pct_complete,
+  // but older code referenced task_name/end_date/percent_complete. Read both.
+  const tName  = t => t.name ?? t.task_name ?? '';
+  const tStart = t => t.start_date ?? null;
+  const tEnd   = t => t.finish_date ?? t.end_date ?? null;
+  const tPct   = t => Number(t.pct_complete ?? t.percent_complete ?? 0);
+
   // Simple CSS Gantt
-  const dates = tasks.filter(t => t.start_date && t.end_date);
+  const dates = tasks.filter(t => tStart(t) && tEnd(t));
   if (!dates.length) { chart.innerHTML = '<div class="empty-state">No date data in imported tasks.</div>'; return; }
-  const minDate = new Date(Math.min(...dates.map(t => new Date(t.start_date))));
-  const maxDate = new Date(Math.max(...dates.map(t => new Date(t.end_date))));
+  const minDate = new Date(Math.min(...dates.map(t => new Date(tStart(t)))));
+  const maxDate = new Date(Math.max(...dates.map(t => new Date(tEnd(t)))));
   const totalDays = Math.max(1, (maxDate - minDate) / 86400000);
 
   const rows = tasks.map(t => {
     let bar = '';
-    if (t.start_date && t.end_date) {
-      const left = ((new Date(t.start_date) - minDate) / 86400000 / totalDays * 100).toFixed(2);
-      const width = Math.max(0.5, ((new Date(t.end_date) - new Date(t.start_date)) / 86400000 / totalDays * 100)).toFixed(2);
-      const pct = Math.min(100, Math.max(0, parseFloat(t.percent_complete || 0)));
-      bar = `<div style="position:absolute;left:${left}%;width:${width}%;top:4px;height:18px;background:#3b82f620;border:1px solid #3b82f6;border-radius:3px;overflow:hidden;">
-        <div style="height:100%;width:${pct}%;background:#3b82f660;"></div>
+    if (tStart(t) && tEnd(t)) {
+      const left = ((new Date(tStart(t)) - minDate) / 86400000 / totalDays * 100).toFixed(2);
+      const width = Math.max(0.5, ((new Date(tEnd(t)) - new Date(tStart(t))) / 86400000 / totalDays * 100)).toFixed(2);
+      const pct = Math.min(100, Math.max(0, tPct(t)));
+      const barColor = t.is_milestone ? '#7c3aed' : (t.is_summary ? '#334155' : '#3b82f6');
+      bar = `<div style="position:absolute;left:${left}%;width:${width}%;top:4px;height:18px;background:${barColor}20;border:1px solid ${barColor};border-radius:3px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:${barColor}60;"></div>
       </div>`;
     }
-    return `<div style="display:flex;align-items:center;border-bottom:1px solid var(--gray-100);min-height:28px;">
-      <div style="width:220px;min-width:220px;font-size:12px;padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid var(--gray-200);">${escapeHtml(t.task_name)}</div>
+    const indent = Math.max(0, ((parseInt(t.outline_level)||1) - 1)) * 12;
+    return `<div style="display:flex;align-items:center;border-bottom:1px solid var(--gray-100);min-height:28px;${t.is_summary?'font-weight:700;':''}">
+      <div style="width:220px;min-width:220px;font-size:12px;padding:4px 8px;padding-left:${8+indent}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid var(--gray-200);">${t.is_milestone?'◆ ':''}${escapeHtml(tName(t))}</div>
       <div style="flex:1;position:relative;height:26px;">${bar}</div>
-      <div style="width:50px;min-width:50px;font-size:11px;text-align:right;padding:0 6px;color:var(--text-muted);">${Math.round(t.percent_complete||0)}%</div>
+      <div style="width:50px;min-width:50px;font-size:11px;text-align:right;padding:0 6px;color:var(--text-muted);">${Math.round(tPct(t))}%</div>
     </div>`;
   }).join('');
 
@@ -8773,15 +8782,31 @@ function renderScheduleImportsList(proj) {
   if (!imports.length) { listEl.innerHTML = ''; return; }
 
   listEl.innerHTML = imports.slice(0,5).map(i => {
-    const statusColor = { pending:'#f59e0b', analyzed:'#3b82f6', applied:'#10b981', rejected:'#ef4444' }[i.status] || '#888';
+    const statusColor = { pending:'#f59e0b', analyzing:'#6366f1', analyzed:'#3b82f6', applied:'#10b981', rejected:'#ef4444', failed:'#ef4444' }[i.status] || '#888';
     // View/Download is available to EVERYONE (incl. contractor) so uploads are never a black hole.
     const viewBtn = i.file_path
       ? `<button class="btn btn-ghost btn-sm" onclick="schedViewImport('${i.id}')">👁 View</button>`
       : '';
-    const adminActions = (isOwner() || isStaff())
-      ? `<button class="btn btn-ghost btn-sm" onclick="schedApplyImport('${i.id}')">Apply to Gantt</button>
-         <button class="btn btn-ghost btn-sm danger" onclick="schedDeleteImport('${i.id}')">Delete</button>`
-      : '';
+    let adminActions = '';
+    if (isOwner() || isStaff()) {
+      const tc = i.task_count ? ` (${i.task_count})` : '';
+      let primary = '';
+      if (i.status === 'pending' || i.status === 'failed') {
+        primary = `<button class="btn btn-primary btn-sm" onclick="schedAnalyzeImport('${i.id}')">✨ Analyze</button>`;
+      } else if (i.status === 'analyzing') {
+        primary = `<button class="btn btn-ghost btn-sm" disabled>Analyzing…</button>`;
+      } else if (i.status === 'analyzed') {
+        primary = `<button class="btn btn-ghost btn-sm" onclick="schedReviewImport('${i.id}')">Review${tc}</button>
+                   <button class="btn btn-primary btn-sm" onclick="schedApproveImport('${i.id}')">✅ Approve to Gantt</button>`;
+      } else if (i.status === 'applied') {
+        primary = `<button class="btn btn-ghost btn-sm" onclick="schedReviewImport('${i.id}')">View tasks${tc}</button>
+                   <button class="btn btn-ghost btn-sm" onclick="schedApproveImport('${i.id}')">Re-apply</button>`;
+      }
+      adminActions = primary +
+        `<button class="btn btn-ghost btn-sm danger" onclick="schedDeleteImport('${i.id}')">Delete</button>`;
+    }
+    const errLine = (i.status === 'failed' && i.error_detail)
+      ? `<div style="font-size:11px;color:var(--red,#dc2626);">⚠ ${escapeHtml(String(i.error_detail).slice(0,140))}</div>` : '';
     return `<div class="card" style="padding:10px 14px;display:flex;align-items:center;gap:12px;">
       <span style="font-size:18px;">📄</span>
       <div style="flex:1;">
@@ -8792,6 +8817,7 @@ function renderScheduleImportsList(proj) {
         </div>
         <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(i.uploaded_by||'Contractor')} · ${fmtDate(i.uploaded_at?.slice(0,10)||'')}</div>
         ${i.notes ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(i.notes)}</div>` : ''}
+        ${errLine}
       </div>
       <span class="status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40;">${i.status}</span>
       <div style="display:flex;gap:6px;">${viewBtn}${adminActions}</div>
@@ -8824,17 +8850,176 @@ async function schedDeleteImport(id) {
 }
 window.schedDeleteImport = schedDeleteImport;
 
-async function schedApplyImport(id) {
-  // Auto-parsing of uploaded schedules into Gantt tasks is not built yet; for now
-  // staff open the file and enter/adjust tasks manually, then mark it applied.
+// ── Schedule auto-import: Analyze → Review → Approve → Gantt ─────────────────
+const ANALYZE_SCHEDULE_FN_URL = SUPABASE_URL + '/functions/v1/analyze-schedule';
+
+// 1) ANALYZE: owner/staff trigger server-side parse (XLSX/CSV/MSP-XML/PDF -> task list).
+//    Result is stored on schedule_imports.analysis; status -> 'analyzed'.
+async function schedAnalyzeImport(id) {
+  if (!(isOwner() || isStaff())) { toast('Only staff can analyze schedules', 'error'); return; }
   const item = (DATA.scheduleImports || []).find(i => i.id === id);
-  if (item?.file_path) {
-    try {
-      const url = await signedUrl('plans-specs', item.file_path);
-      window.open(url, '_blank', 'noopener');
-    } catch (e) { /* fall through to toast */ }
+  if (!item) { toast('Import not found', 'error'); return; }
+  // .mpp (native MS Project binary) can't be parsed server-side. Guide the user to export.
+  const nm = (item.file_name || '').toLowerCase();
+  if (nm.endsWith('.mpp')) {
+    openModal('Export needed — .mpp not readable',
+      `<div style="font-size:13px;line-height:1.55;">
+        <p><b>${escapeHtml(item.file_name)}</b> is a native Microsoft Project file (<code>.mpp</code>), which can't be auto-read.</p>
+        <p>Ask the contractor to export the schedule in one of these formats and re-upload — then Analyze will work:</p>
+        <ul style="margin:6px 0 6px 18px;">
+          <li><b>MS Project XML</b> (best, lossless): File → Save As → <i>XML Format (*.xml)</i></li>
+          <li><b>Excel</b>: File → Export → Save as Excel Workbook</li>
+          <li><b>PDF</b>: a printed Gantt/timeline also works</li>
+        </ul>
+        <p style="color:var(--text-muted);">The file is still saved and viewable — you just can't auto-import a raw .mpp.</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+          <button class="btn btn-ghost" onclick="schedViewImport('${id}')">👁 View file</button>
+          <button class="btn btn-primary" onclick="closeModal&&closeModal()">Got it</button>
+        </div>
+      </div>`, 'wide');
+    return;
   }
-  toast('Opened the uploaded file. Auto-import to Gantt is coming soon — for now, enter/adjust tasks manually from this file.', 'info');
+  toast('Analyzing schedule… this can take 10–30s', 'info');
+  // optimistic UI
+  item.status = 'analyzing'; renderScheduleImportsList(activeProject());
+  try {
+    const res = await fetch(ANALYZE_SCHEDULE_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+      },
+      body: JSON.stringify({ import_id: id }),
+    });
+    let j = {}; try { j = await res.json(); } catch {}
+    if (!res.ok || j?.error) {
+      const map = {
+        analyzer_not_configured: 'Schedule analyzer not configured (missing LLM key).',
+        unsupported_format: 'Unsupported file type. Upload .xlsx, .csv, MS Project .xml, or a schedule PDF.',
+        no_file: 'No file attached to this upload.',
+        forbidden_owner_only: 'Only the owner/staff can analyze schedules.',
+        download_failed: 'Could not read the uploaded file from storage.',
+        parse_failed: 'Could not parse the schedule. ' + (j?.detail || ''),
+      };
+      throw new Error(map[j?.error] || j?.detail || j?.message || j?.error || ('HTTP ' + res.status));
+    }
+    await loadAllData();
+    renderScheduleImportsList(activeProject());
+    toast(`Parsed ${j.task_count} tasks — review, then Approve to Gantt`, 'success');
+    schedReviewImport(id);
+  } catch (e) {
+    await loadAllData(); renderScheduleImportsList(activeProject());
+    toast('Analyze failed: ' + (e.message || e), 'error');
+  }
+}
+window.schedAnalyzeImport = schedAnalyzeImport;
+
+// 2) REVIEW: show the parsed tasks before they hit the Gantt.
+function schedReviewImport(id) {
+  const item = (DATA.scheduleImports || []).find(i => i.id === id);
+  if (!item || !item.analysis || !Array.isArray(item.analysis.tasks)) {
+    toast('No analysis to review yet — click Analyze first', 'info'); return;
+  }
+  const a = item.analysis;
+  const tasks = a.tasks || [];
+  const rows = tasks.map(t => `
+    <tr>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);">${'&nbsp;'.repeat(Math.max(0,((t.outline_level||1)-1)*3))}${t.is_milestone?'◆ ':''}${escapeHtml(t.name||'')}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);white-space:nowrap;">${t.start?fmtDate(t.start):'—'}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);white-space:nowrap;">${t.finish?fmtDate(t.finish):'—'}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);text-align:right;">${Math.round(t.pct_complete||0)}%</td>
+    </tr>`).join('');
+  const warn = (a.warnings && a.warnings.length)
+    ? `<div style="font-size:12px;color:#b45309;margin-bottom:8px;">⚠ ${a.warnings.map(escapeHtml).join('; ')}</div>` : '';
+  const body = `
+    <div style="font-size:13px;margin-bottom:8px;">${escapeHtml(a.summary||'')}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+      ${tasks.length} tasks · ${a.project_start?fmtDate(a.project_start):'?'} → ${a.project_finish?fmtDate(a.project_finish):'?'}
+      · confidence ${(Math.round((a.confidence||0)*100))}%</div>
+    ${warn}
+    <div style="max-height:50vh;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="position:sticky;top:0;background:var(--gray-50);">
+          <th style="text-align:left;padding:6px 8px;">Task</th>
+          <th style="text-align:left;padding:6px 8px;">Start</th>
+          <th style="text-align:left;padding:6px 8px;">Finish</th>
+          <th style="text-align:right;padding:6px 8px;">%</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+      <button class="btn btn-ghost" onclick="closeModal&&closeModal()">Close</button>
+      ${(isOwner()||isStaff()) ? `<button class="btn btn-primary" onclick="schedApproveImport('${id}')">✅ Approve to Gantt</button>` : ''}
+    </div>`;
+  openModal('Review schedule — ' + (item.file_name || 'import'), body, 'wide');
+}
+window.schedReviewImport = schedReviewImport;
+
+// 3) APPROVE: materialize analysis.tasks into schedule_tasks for this project and
+//    flip the import to 'applied'. Replaces any prior import-sourced tasks so a
+//    re-upload cleanly supersedes the old Gantt (manual tasks are preserved).
+async function schedApproveImport(id) {
+  if (!(isOwner() || isStaff())) { toast('Only staff can approve schedules', 'error'); return; }
+  const item = (DATA.scheduleImports || []).find(i => i.id === id);
+  if (!item || !item.analysis || !Array.isArray(item.analysis.tasks) || !item.analysis.tasks.length) {
+    toast('Nothing to approve — analyze the file first', 'error'); return;
+  }
+  if (!confirm(`Apply ${item.analysis.tasks.length} tasks to the Gantt for this project?\n\nThis replaces tasks from previous schedule imports (manually-added tasks are kept).`)) return;
+  const pid = item.project_id;
+  try {
+    // Remove prior import-sourced tasks for this project (keep manual ones).
+    const { error: delErr } = await sb.from('schedule_tasks')
+      .delete().eq('project_id', pid).eq('source', 'import');
+    if (delErr) throw delErr;
+    // Insert the new tasks. Map analysis fields -> schedule_tasks columns.
+    const rows = item.analysis.tasks.map((t, idx) => ({
+      project_id: pid,
+      import_id: id,
+      uid: t.uid != null ? String(t.uid) : null,
+      wbs: t.wbs || null,
+      outline_level: Math.max(1, parseInt(t.outline_level) || 1),
+      is_summary: t.is_summary === true,
+      is_milestone: t.is_milestone === true,
+      name: String(t.name || '(unnamed)'),
+      start_date: t.start || null,
+      finish_date: t.finish || null,
+      duration_days: (t.duration_days != null && t.duration_days !== '') ? Number(t.duration_days) : null,
+      pct_complete: Math.max(0, Math.min(100, Number(t.pct_complete) || 0)),
+      predecessors: t.predecessors || null,
+      assigned_to: t.assigned_to || null,
+      notes: t.notes || null,
+      sort_order: Number.isFinite(Number(t.sort_order)) ? Number(t.sort_order) : idx,
+      source: 'import',
+    }));
+    // chunked insert to stay well under payload limits
+    for (let i = 0; i < rows.length; i += 200) {
+      const { error: insErr } = await sb.from('schedule_tasks').insert(rows.slice(i, i + 200));
+      if (insErr) throw insErr;
+    }
+    await sb.from('schedule_imports').update({ status: 'applied', applied_at: new Date().toISOString() }).eq('id', id);
+    if (typeof closeModal === 'function') closeModal();
+    await loadAllData();
+    // make sure the Gantt subview is the active chip so the result is visible
+    const sw = document.getElementById('schedViewSwitch');
+    if (sw) {
+      sw.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.schedview === 'gantt'));
+    }
+    render();
+    toast(`Gantt updated — ${rows.length} tasks applied ✅`, 'success');
+  } catch (e) {
+    toast('Approve failed: ' + (e.message || e), 'error');
+  }
+}
+window.schedApproveImport = schedApproveImport;
+
+// Back-compat: old button name now routes by status.
+async function schedApplyImport(id) {
+  const item = (DATA.scheduleImports || []).find(i => i.id === id);
+  if (!item) return;
+  if (item.status === 'analyzed' || item.status === 'applied') return schedApproveImport(id);
+  return schedAnalyzeImport(id);
 }
 window.schedApplyImport = schedApplyImport;
 

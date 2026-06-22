@@ -7,7 +7,7 @@
  *    not by the SW. Reads simply fail and the app shows cached DATA.
  *  - Navigation requests: serve cached index.html when offline (SPA shell).
  */
-const CACHE = 'plazacore-shell-v16';
+const CACHE = 'plazacore-shell-v17';
 const SHELL = [
   './',
   './index.html',
