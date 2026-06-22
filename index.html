@@ -93,6 +93,40 @@
     font-style: italic; line-height: 1.1; white-space: nowrap;
   }
   .top-actions { display: flex; gap: 10px; align-items: center; }
+  /* ---------- Global search ---------- */
+  .gsearch-wrap { position: relative; display: flex; align-items: center; }
+  .gsearch-input {
+    width: 230px; max-width: 40vw; padding: 7px 12px 7px 30px;
+    font-family: inherit; font-size: 12px; color: var(--black);
+    background: var(--gray-100) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") no-repeat 9px center;
+    border: 1px solid var(--gray-200); border-radius: 4px; transition: all 0.15s; outline: none;
+  }
+  .gsearch-input:focus { width: 320px; border-color: var(--accent); background-color: #fff; }
+  .gsearch-panel {
+    position: absolute; top: calc(100% + 6px); right: 0; width: 440px; max-width: 90vw;
+    max-height: 60vh; overflow-y: auto; background: #fff;
+    border: 1px solid var(--gray-200); border-radius: 6px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15); z-index: 9000; display: none;
+  }
+  .gsearch-panel.open { display: block; }
+  .gsearch-status { padding: 12px 14px; font-size: 12px; color: var(--gray-400); }
+  .gsearch-item {
+    display: block; width: 100%; text-align: left; padding: 10px 14px; cursor: pointer;
+    border: none; border-bottom: 1px solid var(--gray-100); background: #fff;
+    font-family: inherit; transition: background 0.1s;
+  }
+  .gsearch-item:hover { background: var(--gray-100); }
+  .gsearch-item .gs-head { display: flex; align-items: baseline; gap: 8px; }
+  .gsearch-item .gs-title { font-size: 13px; font-weight: 600; color: var(--black); }
+  .gsearch-item .gs-kind {
+    font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 3px; color: #fff; background: var(--accent);
+  }
+  .gsearch-item .gs-kind.document { background: var(--gray-400); }
+  .gsearch-item .gs-sub { font-size: 11px; color: var(--gray-400); margin: 2px 0; }
+  .gsearch-item .gs-snip { font-size: 11px; color: var(--gray-500); line-height: 1.4; }
+  .gsearch-item .gs-snip mark { background: #fff3a0; color: inherit; padding: 0 1px; }
+  @media (max-width: 820px) { .gsearch-input { width: 130px; } .gsearch-input:focus { width: 180px; } .gsearch-panel { width: 88vw; } }
   .role-pill {
     display: inline-flex; align-items: center; gap: 6px;
     background: var(--black); color: #FFFFFF;
@@ -902,6 +936,10 @@
       </div>
     </div>
     <div class="top-actions">
+      <div class="gsearch-wrap" id="gsearchWrap">
+        <input type="search" id="gsearchInput" class="gsearch-input" placeholder="Search reports &amp; documents…" autocomplete="off" aria-label="Global search" />
+        <div class="gsearch-panel" id="gsearchPanel" role="listbox" aria-label="Search results"></div>
+      </div>
       <select id="projectSelect" class="project-select" aria-label="Active project" data-role-hide="contractor"></select>
       <span id="contractorProjectLabel" class="role-pill contractor" data-role-hide="owner" style="display:none;"></span>
       <span class="bell-wrap" id="bellWrap" style="display:none;">
@@ -7808,6 +7846,103 @@ async function viewFieldReportPDF(id) {
   openPlanViewer(fakeDoc);
 }
 window.viewFieldReportPDF = viewFieldReportPDF;
+
+/* =========================================================================
+   GLOBAL SEARCH  (reports + documents, RLS-respecting via plz_global_search)
+   ========================================================================= */
+const GSEARCH = { timer: null, seq: 0, lastResults: [] };
+
+function _gsProjectCode(pid) {
+  const p = (DATA.projects || []).find(x => x.id === pid);
+  return p ? p.code : '';
+}
+
+async function runGlobalSearch(q) {
+  const panel = document.getElementById('gsearchPanel');
+  if (!panel) return;
+  q = (q || '').trim();
+  if (q.length < 2) { panel.classList.remove('open'); panel.innerHTML = ''; return; }
+  const mySeq = ++GSEARCH.seq;
+  panel.classList.add('open');
+  panel.innerHTML = '<div class="gsearch-status">Searching…</div>';
+  try {
+    const { data, error } = await sb.rpc('plz_global_search', { q });
+    if (mySeq !== GSEARCH.seq) return;            // a newer query superseded this one
+    if (error) throw error;
+    GSEARCH.lastResults = data || [];
+    if (!data || !data.length) {
+      panel.innerHTML = '<div class="gsearch-status">No matches for “' + escapeHtml(q) + '”</div>';
+      return;
+    }
+    panel.innerHTML = data.map((r, i) => {
+      const code = _gsProjectCode(r.project_id);
+      const sub = (code ? code + ' · ' : '') + (r.subtitle || '');
+      // snippet from RPC contains <mark> tags we WANT; strip any other tags for safety.
+      const safeSnip = String(r.snippet || '')
+        .replace(/<(?!\/?mark\b)[^>]*>/gi, '');
+      return '<button type="button" class="gsearch-item" data-idx="' + i + '">' +
+        '<span class="gs-head">' +
+          '<span class="gs-kind ' + (r.kind === 'document' ? 'document' : '') + '">' +
+             (r.kind === 'document' ? 'Doc' : 'Report') + '</span>' +
+          '<span class="gs-title">' + escapeHtml(r.title || '') + '</span>' +
+        '</span>' +
+        '<div class="gs-sub">' + escapeHtml(sub) + '</div>' +
+        (safeSnip ? '<div class="gs-snip">' + safeSnip + '</div>' : '') +
+      '</button>';
+    }).join('');
+    panel.querySelectorAll('.gsearch-item').forEach(btn => {
+      btn.addEventListener('click', () => openSearchResult(GSEARCH.lastResults[+btn.dataset.idx]));
+    });
+  } catch (e) {
+    if (mySeq !== GSEARCH.seq) return;
+    panel.innerHTML = '<div class="gsearch-status">Search error: ' + escapeHtml(e.message || String(e)) + '</div>';
+  }
+}
+
+async function openSearchResult(r) {
+  if (!r) return;
+  const panel = document.getElementById('gsearchPanel');
+  if (panel) panel.classList.remove('open');
+  // Switch the active project so the rest of the UI follows the result.
+  if (r.project_id && r.project_id !== STATE.activeProjectId &&
+      (DATA.projects || []).some(p => p.id === r.project_id)) {
+    STATE.activeProjectId = r.project_id;
+    const sel = document.getElementById('projectSelect');
+    if (sel) sel.value = r.project_id;
+  }
+  if (!r.file_path) { toast('No file on record for this result'); return; }
+  const bucket = r.kind === 'document' ? 'plans-specs' : 'field-reports';
+  try {
+    const fakeDoc = {
+      id: r.id, project_id: r.project_id, name: r.title || 'Document',
+      file_path: r.file_path, page_count: 1, _bucket: bucket,
+    };
+    await openPlanViewer(fakeDoc);
+  } catch (e) {
+    // Fallback: open the signed URL directly.
+    try { window.open(await signedUrl(bucket, r.file_path), '_blank'); }
+    catch (e2) { toast('Could not open file'); }
+  }
+}
+
+(function wireGlobalSearch() {
+  const input = document.getElementById('gsearchInput');
+  const panel = document.getElementById('gsearchPanel');
+  if (!input || !panel) return;
+  input.addEventListener('input', e => {
+    clearTimeout(GSEARCH.timer);
+    const v = e.target.value;
+    GSEARCH.timer = setTimeout(() => runGlobalSearch(v), 250);
+  });
+  input.addEventListener('focus', e => { if ((e.target.value || '').trim().length >= 2 && GSEARCH.lastResults.length) panel.classList.add('open'); });
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') { panel.classList.remove('open'); input.blur(); } });
+  // close when clicking outside
+  document.addEventListener('click', e => {
+    const wrap = document.getElementById('gsearchWrap');
+    if (wrap && !wrap.contains(e.target)) panel.classList.remove('open');
+  });
+})();
+window.runGlobalSearch = runGlobalSearch;
 
 document.getElementById('frSearch')?.addEventListener('input', e => {
   STATE.frSearch = e.target.value; renderFieldReports();
