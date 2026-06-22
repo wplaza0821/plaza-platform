@@ -9441,6 +9441,7 @@ const RQ_STATUS_META = {
 let RQ_VIEW = 'summary';  // 'summary' | 'detail'
 let DATA_stacks = [];     // repair_stacks for active project
 let DATA_rqi    = [];     // repair_quantity_items for active project
+let RQ_SELECTED = new Set(); // ids of repair items checked for bulk status change (detail view)
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -9651,6 +9652,10 @@ function renderRqDetail(items) {
   }
 
   const canEdit = isOwner() || isStaff();
+  // Prune any selections that are no longer in the visible/filtered set.
+  const visibleIds = new Set(items.map(i => i.id));
+  [...RQ_SELECTED].forEach(id => { if (!visibleIds.has(id)) RQ_SELECTED.delete(id); });
+
   const rows = items.map(item => {
     const t    = RQ_TYPE_MAP[item.repair_type] || { label: item.repair_type, icon: '📌' };
     const sm   = RQ_STATUS_META[item.status]   || { label: item.status, color: '#888' };
@@ -9671,7 +9676,11 @@ function renderRqDetail(items) {
       ? `<button class="btn-icon" onclick="rqOpenForm('${item.id}')" title="Edit">✏️</button>
          <button class="btn-icon danger" onclick="rqDelete('${item.id}')" title="Delete">🗑</button>`
       : '';
+    const checkCell = canEdit
+      ? `<td style="text-align:center;"><input type="checkbox" class="rq-row-check" data-id="${item.id}" onclick="rqToggleSelect('${item.id}', this.checked)" ${RQ_SELECTED.has(item.id) ? 'checked' : ''}></td>`
+      : '';
     return `<tr>
+      ${checkCell}
       <td>${escapeHtml(item.tower || '—')}</td>
       <td>${escapeHtml(item.stack_label || '—')}</td>
       <td>${escapeHtml(item.floor_level || '—')}</td>
@@ -9687,11 +9696,30 @@ function renderRqDetail(items) {
     </tr>`;
   }).join('');
 
+  const allChecked = items.length > 0 && items.every(i => RQ_SELECTED.has(i.id));
+  const headCheck = canEdit
+    ? `<th style="text-align:center;width:34px;"><input type="checkbox" onclick="rqToggleSelectAll(this.checked)" ${allChecked ? 'checked' : ''} title="Select all (visible)"></th>`
+    : '';
+
+  // Bulk action bar — appears when one or more rows are selected.
+  const n = RQ_SELECTED.size;
+  const bulkBar = (canEdit && n > 0) ? `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;margin-bottom:10px;">
+      <span style="font-weight:700;font-size:13px;color:#1e40af;">${n} selected</span>
+      <span style="font-size:12px;color:#475569;">Mark as:</span>
+      <button class="btn btn-sm" style="background:#10b981;color:#fff;" onclick="rqBulkSetStatus('complete')">✅ Complete</button>
+      <button class="btn btn-sm" style="background:#3b82f6;color:#fff;" onclick="rqBulkSetStatus('in_progress')">🔄 In Progress</button>
+      <button class="btn btn-sm" style="background:#f59e0b;color:#fff;" onclick="rqBulkSetStatus('pending')">⏳ Pending</button>
+      <button class="btn btn-sm" style="background:#ef4444;color:#fff;" onclick="rqBulkSetStatus('rejected')">✕ Rejected</button>
+      <button class="btn btn-ghost btn-sm" onclick="rqClearSelection()" style="margin-left:auto;">Clear</button>
+    </div>` : '';
+
   panel.innerHTML = `
+    ${bulkBar}
     <div class="table-wrap">
     <table class="data-table">
       <thead><tr>
-        <th>Tower</th><th>Stack</th><th>Floor</th><th>Type</th><th>Dimensions</th>
+        ${headCheck}<th>Tower</th><th>Stack</th><th>Floor</th><th>Type</th><th>Dimensions</th>
         <th>Qty</th><th>Description</th><th>Status</th>
         <th>Observed</th><th>Repaired</th><th>SI Ref</th><th></th>
       </tr></thead>
@@ -9699,6 +9727,79 @@ function renderRqDetail(items) {
     </table>
     </div>`;
 }
+
+// ── Bulk status selection (detail view) ──────────────────────────────────────
+function rqToggleSelect(id, checked) {
+  if (checked) RQ_SELECTED.add(id); else RQ_SELECTED.delete(id);
+  renderQuantities();
+}
+window.rqToggleSelect = rqToggleSelect;
+
+function rqToggleSelectAll(checked) {
+  // Operate on the currently filtered/visible items only.
+  const pid = STATE.activeProjectId;
+  const fStack  = document.getElementById('rqFilterStack')?.value || '';
+  const fType   = document.getElementById('rqFilterType')?.value  || '';
+  const fTower  = document.getElementById('rqFilterTower')?.value || '';
+  const fStatus = document.getElementById('rqFilterStatus')?.value || '';
+  const fSearch = (document.getElementById('rqSearch')?.value || '').toLowerCase();
+  const visible = DATA_rqi.filter(i =>
+    i.project_id === pid &&
+    (!fTower  || i.tower === fTower) &&
+    (!fStack  || i.stack_id === fStack) &&
+    (!fType   || i.repair_type === fType) &&
+    (!fStatus || i.status === fStatus) &&
+    (!fSearch || (i.description || '').toLowerCase().includes(fSearch) ||
+                 (i.stack_label || '').toLowerCase().includes(fSearch) ||
+                 (i.floor_level || '').toLowerCase().includes(fSearch))
+  );
+  if (checked) visible.forEach(i => RQ_SELECTED.add(i.id));
+  else visible.forEach(i => RQ_SELECTED.delete(i.id));
+  renderQuantities();
+}
+window.rqToggleSelectAll = rqToggleSelectAll;
+
+function rqClearSelection() { RQ_SELECTED.clear(); renderQuantities(); }
+window.rqClearSelection = rqClearSelection;
+
+async function rqBulkSetStatus(status) {
+  if (!(isOwner() || isStaff())) { toast('Only staff can change status', 'error'); return; }
+  const ids = [...RQ_SELECTED];
+  if (!ids.length) return;
+  const meta = RQ_STATUS_META[status] || { label: status };
+  if (!confirm(`Mark ${ids.length} repair ${ids.length===1?'entry':'entries'} as "${meta.label}"?`)) return;
+  // When marking Complete, also stamp date_repaired (today) on entries that have none.
+  const patch = { status };
+  try {
+    if (status === 'complete') {
+      const today = new Date().toISOString().slice(0,10);
+      const needDate = ids.filter(id => {
+        const it = DATA_rqi.find(x => x.id === id);
+        return it && !it.date_repaired;
+      });
+      if (needDate.length) {
+        const { error: e1 } = await sb.from('repair_quantity_items')
+          .update({ status, date_repaired: today }).in('id', needDate);
+        if (e1) throw e1;
+      }
+      const rest = ids.filter(id => !needDate.includes(id));
+      if (rest.length) {
+        const { error: e2 } = await sb.from('repair_quantity_items').update(patch).in('id', rest);
+        if (e2) throw e2;
+      }
+    } else {
+      const { error } = await sb.from('repair_quantity_items').update(patch).in('id', ids);
+      if (error) throw error;
+    }
+    RQ_SELECTED.clear();
+    await loadQuantities();
+    renderQuantities();
+    toast(`${ids.length} ${ids.length===1?'entry':'entries'} marked "${meta.label}" ✅`, 'success');
+  } catch (e) {
+    toast('Bulk update failed: ' + (e.message || e), 'error');
+  }
+}
+window.rqBulkSetStatus = rqBulkSetStatus;
 
 // ── Totals bar ────────────────────────────────────────────────────────────────
 
