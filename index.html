@@ -9766,7 +9766,7 @@ function rqUpdatePreview() {
     // area
     const parts = [];
     if (!isNaN(w)) parts.push(`W: ${w}" = ${(w/12).toFixed(2)} ft`);
-    if (!isNaN(h)) parts.push(`H: ${h}" = ${(h/12).toFixed(2)} ft`);
+    if (!isNaN(h)) parts.push(`L: ${h}" = ${(h/12).toFixed(2)} ft`);
     if (!isNaN(w) && !isNaN(h)) {
       const sf = rqCalcArea(w, h);
       parts.push(`<b>Area: ${sf} SF</b>`);
@@ -9841,11 +9841,11 @@ async function rqOpenForm(id) {
     <div style="margin:12px 0 4px;font-weight:600;font-size:13px;">Measurements (enter in <b>inches</b>)</div>
     <div class="form-grid" style="grid-template-columns:repeat(3,1fr);">
       <div class="form-group">
-        <label>Width / Length (in)</label>
+        <label>Width (in)</label>
         <input id="rqW" type="number" step="0.001" min="0" placeholder="e.g. 18.5" oninput="rqUpdatePreview()" value="${item?.length_in??''}">
       </div>
       <div class="form-group">
-        <label>Height (in)</label>
+        <label>Length (in)</label>
         <input id="rqH" type="number" step="0.001" min="0" placeholder="e.g. 12" oninput="rqUpdatePreview()" value="${item?.height_in??''}">
       </div>
       <div class="form-group" id="rqDepthRow">
