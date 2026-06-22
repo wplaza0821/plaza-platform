@@ -1424,6 +1424,9 @@
 
       <!-- Filter bar -->
       <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <select id="rqFilterTower" onchange="renderQuantities()" style="min-width:120px;">
+          <option value="">All Towers</option>
+        </select>
         <select id="rqFilterStack" onchange="renderQuantities()" style="min-width:130px;">
           <option value="">All Stacks</option>
         </select>
@@ -9130,6 +9133,10 @@ const RQ_TYPES = [
 ];
 const RQ_TYPE_MAP = Object.fromEntries(RQ_TYPES.map(t => [t.key, t]));
 
+// Towers — for multi-tower projects (e.g. Terrazas Riverpark Village: Park & River).
+// Leave blank/Unassigned for single-building projects.
+const RQ_TOWERS = ['Park', 'River'];
+
 const RQ_STATUS_META = {
   pending:     { label: 'Pending',     color: '#f59e0b' },
   in_progress: { label: 'In Progress', color: '#3b82f6' },
@@ -9193,6 +9200,13 @@ function renderQuantities() {
   // Populate filter dropdowns
   const stackSel  = document.getElementById('rqFilterStack');
   const typeSel   = document.getElementById('rqFilterType');
+  const towerSel  = document.getElementById('rqFilterTower');
+  if (towerSel && towerSel.options.length <= 1) {
+    RQ_TOWERS.forEach(tw => {
+      const o = document.createElement('option'); o.value = tw; o.textContent = tw;
+      towerSel.appendChild(o);
+    });
+  }
   if (stackSel && stackSel.options.length <= 1) {
     DATA_stacks.forEach(s => {
       const o = document.createElement('option'); o.value = s.id; o.textContent = s.label;
@@ -9209,11 +9223,13 @@ function renderQuantities() {
   // Filter items
   const fStack  = stackSel?.value || '';
   const fType   = typeSel?.value  || '';
+  const fTower  = towerSel?.value || '';
   const fStatus = document.getElementById('rqFilterStatus')?.value || '';
   const fSearch = (document.getElementById('rqSearch')?.value || '').toLowerCase();
 
   const items = DATA_rqi.filter(i =>
     i.project_id === pid &&
+    (!fTower  || i.tower === fTower) &&
     (!fStack  || i.stack_id === fStack) &&
     (!fType   || i.repair_type === fType) &&
     (!fStatus || i.status === fStatus) &&
@@ -9242,26 +9258,63 @@ function renderRqSummary(items) {
   const panel = document.getElementById('rqSummaryPanel');
   if (!panel) return;
 
-  // Group by stack
+  if (!items.length) {
+    panel.innerHTML = '<div class="empty-state"><p>No repair entries yet.</p><p>Click <b>+ Add Entry</b> to log the first measurement.</p></div>';
+    return;
+  }
+
+  // Top-level split by tower. Towers present in the data, in RQ_TOWERS order,
+  // plus an "Unassigned" bucket for entries with no tower. Single-tower (or no
+  // tower) projects collapse to one unlabeled section so nothing changes for them.
+  const towerOrder = [...RQ_TOWERS, null];
+  const byTower = new Map();
+  items.forEach(i => {
+    const key = (i.tower && RQ_TOWERS.includes(i.tower)) ? i.tower : null;
+    if (!byTower.has(key)) byTower.set(key, []);
+    byTower.get(key).push(i);
+  });
+  const towers = towerOrder.filter(tw => byTower.has(tw));
+  const showTowerHeaders = towers.filter(Boolean).length > 0 &&
+                           !(towers.length === 1 && towers[0] === null);
+
+  panel.innerHTML = towers.map(tw => {
+    const towerItems = byTower.get(tw);
+    // Tower-level rollup chip line
+    const tTotals = {};
+    towerItems.forEach(item => {
+      const q = rqItemQty(item);
+      const k = item.repair_type + '|' + q.unit;
+      if (!tTotals[k]) tTotals[k] = { type: item.repair_type, unit: q.unit, val: 0 };
+      tTotals[k].val += q.val;
+    });
+    const tChips = Object.values(tTotals).map(t => {
+      const meta = RQ_TYPE_MAP[t.type] || { label: t.type, icon: '📌' };
+      return `<span class="rq-total-chip"><span class="rq-total-icon">${meta.icon}</span><span class="rq-total-label">${escapeHtml(meta.label)}</span><span class="rq-total-val">${t.val.toFixed(2)} ${t.unit}</span></span>`;
+    }).join('');
+    const header = showTowerHeaders
+      ? `<div class="rq-tower-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:18px 0 8px;padding:8px 12px;background:#0f172a;color:#fff;border-radius:8px;">
+          <span style="font-weight:700;font-size:15px;">🏢 ${escapeHtml(tw || 'Unassigned Tower')}</span>
+          <span style="font-size:12px;opacity:.8;">${towerItems.length} item${towerItems.length !== 1 ? 's' : ''}</span>
+          <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">${tChips}</span>
+        </div>`
+      : '';
+    return header + rqRenderStackCards(towerItems);
+  }).join('');
+}
+
+// Render the per-stack cards for a given subset of items (used per tower).
+function rqRenderStackCards(items) {
   const byStack = {};
   DATA_stacks.forEach(s => { byStack[s.id] = { stack: s, items: [] }; });
-  // Unstacked bucket
   const unstacked = { stack: { id: null, label: 'Unassigned' }, items: [] };
   items.forEach(i => {
     if (i.stack_id && byStack[i.stack_id]) byStack[i.stack_id].items.push(i);
     else unstacked.items.push(i);
   });
-
   const groups = Object.values(byStack).filter(g => g.items.length > 0);
   if (unstacked.items.length > 0) groups.push(unstacked);
 
-  if (!groups.length) {
-    panel.innerHTML = '<div class="empty-state"><p>No repair entries yet.</p><p>Click <b>+ Add Entry</b> to log the first measurement.</p></div>';
-    return;
-  }
-
-  panel.innerHTML = groups.map(g => {
-    // Aggregate by type
+  return groups.map(g => {
     const typeTotals = {};
     g.items.forEach(item => {
       const q = rqItemQty(item);
@@ -9325,6 +9378,7 @@ function renderRqDetail(items) {
          <button class="btn-icon danger" onclick="rqDelete('${item.id}')" title="Delete">🗑</button>`
       : '';
     return `<tr>
+      <td>${escapeHtml(item.tower || '—')}</td>
       <td>${escapeHtml(item.stack_label || '—')}</td>
       <td>${escapeHtml(item.floor_level || '—')}</td>
       <td>${t.icon} ${escapeHtml(t.label)}</td>
@@ -9343,7 +9397,7 @@ function renderRqDetail(items) {
     <div class="table-wrap">
     <table class="data-table">
       <thead><tr>
-        <th>Stack</th><th>Floor</th><th>Type</th><th>Dimensions</th>
+        <th>Tower</th><th>Stack</th><th>Floor</th><th>Type</th><th>Dimensions</th>
         <th>Qty</th><th>Description</th><th>Status</th>
         <th>Observed</th><th>Repaired</th><th>SI Ref</th><th></th>
       </tr></thead>
@@ -9452,6 +9506,9 @@ async function rqOpenForm(id) {
   const typeOpts = RQ_TYPES.map(t =>
     `<option value="${t.key}" ${(item?.repair_type || 'concrete_repair') === t.key ? 'selected' : ''}>${t.icon} ${escapeHtml(t.label)}</option>`
   ).join('');
+  const towerOpts = RQ_TOWERS.map(tw =>
+    `<option value="${escapeHtml(tw)}" ${item?.tower === tw ? 'selected' : ''}>${escapeHtml(tw)}</option>`
+  ).join('');
   const statusOpts = Object.entries(RQ_STATUS_META).map(([k,v]) =>
     `<option value="${k}" ${(item?.status || 'pending') === k ? 'selected' : ''}>${v.label}</option>`
   ).join('');
@@ -9459,6 +9516,12 @@ async function rqOpenForm(id) {
   const body = `
   <form id="rqForm" onsubmit="rqSubmit(event,'${id||''}')">
     <div class="form-grid">
+      <div class="form-group">
+        <label>Tower</label>
+        <select id="rqTower">
+          <option value="">— Unassigned —</option>${towerOpts}
+        </select>
+      </div>
       <div class="form-group">
         <label>Stack</label>
         <select id="rqStack" required>
@@ -9551,6 +9614,7 @@ async function rqSubmit(e, id) {
 
   const data = {
     project_id:    STATE.activeProjectId,
+    tower:         document.getElementById('rqTower')?.value || null,
     stack_id:      stackId || null,
     stack_label:   stack?.label || null,
     floor_level:   document.getElementById('rqFloor').value.trim() || null,
@@ -9599,16 +9663,18 @@ function rqExport() {
   const items = DATA_rqi.filter(i => i.project_id === pid);
   if (!items.length) { toast('No entries to export', 'error'); return; }
 
+  // Build the stack sections for a subset of items (used per tower below).
+  const buildStackSections = (subset) => {
   const groups = {};
   DATA_stacks.forEach(s => { groups[s.id] = { label: s.label, items: [] }; });
   const unassigned = { label: 'Unassigned', items: [] };
-  items.forEach(i => {
+  subset.forEach(i => {
     if (i.stack_id && groups[i.stack_id]) groups[i.stack_id].items.push(i);
     else unassigned.items.push(i);
   });
   const allGroups = [...Object.values(groups).filter(g => g.items.length), ...(unassigned.items.length ? [unassigned] : [])];
 
-  const stackSections = allGroups.map(g => {
+  return allGroups.map(g => {
     const rows = g.items.map(item => {
       const t = RQ_TYPE_MAP[item.repair_type] || { label: item.repair_type };
       const q = rqItemQty(item);
@@ -9620,7 +9686,7 @@ function rqExport() {
       if (item.length_in != null && item.height_in != null)
         ft = `${(item.length_in/12).toFixed(2)}' × ${(item.height_in/12).toFixed(2)}'`;
       else if (item.length_in != null) ft = (item.length_in/12).toFixed(2)+"'";
-      return `<tr><td>${escapeHtml(item.floor_level||'—')}</td><td>${escapeHtml(t.label)}</td>
+      return `<tr><td>${escapeHtml(item.tower||'—')}</td><td>${escapeHtml(item.floor_level||'—')}</td><td>${escapeHtml(t.label)}</td>
         <td>${escapeHtml(item.description||'—')}</td>
         <td>${escapeHtml(dim)}</td><td>${escapeHtml(ft)}</td>
         <td><b>${q.val.toFixed(2)} ${q.unit}</b></td>
@@ -9636,9 +9702,10 @@ function rqExport() {
     });
     const subtotalRow = Object.values(typeTotals).map(t =>
       `${t.label}: <b>${t.val.toFixed(2)} ${t.unit}</b>`).join(' &nbsp;|&nbsp; ');
-    return `<h3 style="margin-top:28px;border-bottom:2px solid #000;padding-bottom:4px;">🏗 ${escapeHtml(g.label)}</h3>
+    return `<h4 style="margin-top:20px;border-bottom:1px solid #999;padding-bottom:3px;">🏗 ${escapeHtml(g.label)}</h4>
       <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px;">
         <thead style="background:#f5f5f5;"><tr>
+          <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Tower</th>
           <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Floor</th>
           <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Type</th>
           <th style="text-align:left;padding:4px 6px;border:1px solid #ddd;">Description</th>
@@ -9651,6 +9718,33 @@ function rqExport() {
         <tbody>${rows}</tbody>
       </table>
       <div style="font-size:12px;padding:4px 0 8px;"><b>Stack Totals:</b> ${subtotalRow}</div>`;
+  }).join('');
+  };
+
+  // Group top-level by tower (Park / River / Unassigned). Single-tower projects
+  // render one section with no tower banner.
+  const towerOrder = [...RQ_TOWERS, null];
+  const byTower = new Map();
+  items.forEach(i => {
+    const key = (i.tower && RQ_TOWERS.includes(i.tower)) ? i.tower : null;
+    if (!byTower.has(key)) byTower.set(key, []);
+    byTower.get(key).push(i);
+  });
+  const towers = towerOrder.filter(tw => byTower.has(tw));
+  const showTowerHeaders = towers.filter(Boolean).length > 0 &&
+                           !(towers.length === 1 && towers[0] === null);
+
+  const stackSections = towers.map(tw => {
+    const tItems = byTower.get(tw);
+    const tt = {};
+    tItems.forEach(i => { const q = rqItemQty(i); const k=i.repair_type;
+      if(!tt[k]) tt[k]={label:(RQ_TYPE_MAP[k]||{label:k}).label,val:0,unit:q.unit}; tt[k].val+=q.val; });
+    const tSub = Object.values(tt).map(t=>`${t.label}: <b>${t.val.toFixed(2)} ${t.unit}</b>`).join(' &nbsp;|&nbsp; ');
+    const banner = showTowerHeaders
+      ? `<h3 style="margin-top:30px;background:#0f172a;color:#fff;padding:8px 12px;border-radius:6px;">🏢 ${escapeHtml(tw || 'Unassigned Tower')} — Tower</h3>
+         <div style="font-size:12px;padding:2px 0 6px;"><b>Tower Totals:</b> ${tSub}</div>`
+      : '';
+    return banner + buildStackSections(tItems);
   }).join('');
 
   const grandTotals = {};
