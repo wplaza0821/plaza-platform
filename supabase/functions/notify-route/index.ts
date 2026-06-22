@@ -144,7 +144,9 @@ Deno.serve(async (req) => {
   }
 
   const phone = assignee.phone ? String(assignee.phone).trim() : "";
-  const willSms = !!phone && /^\+[1-9]\d{6,14}$/.test(phone) && assignee.active !== false;
+  // SMS kill-switch: A2P 10DLC not yet authorized -> SMS OFF unless SMS_ENABLED="true".
+  const SMS_ENABLED = (Deno.env.get("SMS_ENABLED") || "").toLowerCase() === "true";
+  const willSms = SMS_ENABLED && !!phone && /^\+[1-9]\d{6,14}$/.test(phone) && assignee.active !== false;
   const email = (assignee as any).email ? String((assignee as any).email).trim() : "";
   const willEmail = !!email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
     && assignee.active !== false && EMAIL_EVENTS.has(event);

@@ -189,7 +189,9 @@ Deno.serve(async (req) => {
     const email = prof.email ? String(prof.email).trim() : "";
     const phone = prof.phone ? String(prof.phone).trim() : "";
     const willEmail = !!email && /.+@.+\..+/.test(email);
-    const willSms = !!phone && /^\+[1-9]\d{6,14}$/.test(phone);
+    // SMS kill-switch: A2P 10DLC not yet authorized -> SMS OFF unless SMS_ENABLED="true".
+    const SMS_ENABLED = (Deno.env.get("SMS_ENABLED") || "").toLowerCase() === "true";
+    const willSms = SMS_ENABLED && !!phone && /^\+[1-9]\d{6,14}$/.test(phone);
 
     const { data: inserted } = await admin.from("notifications").insert({
       user_id: prof.id, project_id: projectId, kind: refTable,

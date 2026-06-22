@@ -130,7 +130,9 @@ Deno.serve(async (req) => {
 
   const phone = assignee.phone ? String(assignee.phone).trim() : "";
   const phoneOk = !!phone && /^\+[1-9]\d{6,14}$/.test(phone);
-  const willSms = phoneOk && assignee.active !== false;
+  // SMS kill-switch: A2P 10DLC not yet authorized -> SMS OFF unless SMS_ENABLED="true".
+  const SMS_ENABLED = (Deno.env.get("SMS_ENABLED") || "").toLowerCase() === "true";
+  const willSms = SMS_ENABLED && phoneOk && assignee.active !== false;
 
   const titleStr = String(task.title || "task");
   const priorityStr = task.priority ? String(task.priority) : "normal";
