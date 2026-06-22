@@ -9651,7 +9651,10 @@ function renderRqDetail(items) {
     return;
   }
 
-  const canEdit = isOwner() || isStaff();
+  // Option B (William): only the OWNER can edit, delete, or change status once
+  // entries exist. Staff/members can still ADD entries (separate + Add button),
+  // but the per-row edit/delete controls and the bulk-status bar are owner-only.
+  const canEdit = isOwner();
   // Prune any selections that are no longer in the visible/filtered set.
   const visibleIds = new Set(items.map(i => i.id));
   [...RQ_SELECTED].forEach(id => { if (!visibleIds.has(id)) RQ_SELECTED.delete(id); });
@@ -9763,7 +9766,7 @@ function rqClearSelection() { RQ_SELECTED.clear(); renderQuantities(); }
 window.rqClearSelection = rqClearSelection;
 
 async function rqBulkSetStatus(status) {
-  if (!(isOwner() || isStaff())) { toast('Only staff can change status', 'error'); return; }
+  if (!isOwner()) { toast('Only the owner can change repair status', 'error'); return; }
   const ids = [...RQ_SELECTED];
   if (!ids.length) return;
   const meta = RQ_STATUS_META[status] || { label: status };
@@ -9892,7 +9895,12 @@ window.rqUpdatePreview = rqUpdatePreview;
 
 async function rqOpenForm(id) {
   const isEdit = !!id;
+  // Option B: editing an existing entry is owner-only. Staff/members may still ADD new entries.
+  if (isEdit && !isOwner()) { toast('Only the owner can edit an existing repair entry', 'error'); return; }
   const item = isEdit ? DATA_rqi.find(x => x.id === id) : null;
+  // On a NEW entry, non-owners cannot pick an arbitrary status — it is forced to Pending
+  // (only the owner approves/changes status afterwards).
+  const lockStatus = !isOwner();
 
   const pid = STATE.activeProjectId;
   const stackOpts = DATA_stacks.map(s =>
@@ -9962,8 +9970,8 @@ async function rqOpenForm(id) {
 
     <div class="form-grid">
       <div class="form-group">
-        <label>Status</label>
-        <select id="rqStatus">${statusOpts}</select>
+        <label>Status${lockStatus ? ' <span style="color:#888;font-size:11px;">(owner sets/approves)</span>' : ''}</label>
+        <select id="rqStatus" ${lockStatus ? 'disabled' : ''}>${statusOpts}</select>
       </div>
       <div class="form-group">
         <label>SI Report Ref</label>
@@ -10018,7 +10026,8 @@ async function rqSubmit(e, id) {
     length_in:     w,
     height_in:     t?.unit === 'area' || t?.unit === 'linear' ? h : null,
     depth_in:      t?.unit === 'area' ? d : null,
-    status:        document.getElementById('rqStatus').value,
+    // Non-owners can only create Pending entries; the owner approves/changes status later.
+    status:        isOwner() ? (document.getElementById('rqStatus').value || 'pending') : 'pending',
     si_report_ref: document.getElementById('rqSiRef').value.trim() || null,
     date_observed: document.getElementById('rqDateObs').value || null,
     date_repaired: document.getElementById('rqDateRep').value || null,
@@ -10027,6 +10036,12 @@ async function rqSubmit(e, id) {
     updated_at:    new Date().toISOString(),
   };
 
+  // Option B guard: editing an existing entry is owner-only (DB also enforces this).
+  if (id && !isOwner()) {
+    toast('Only the owner can edit an existing repair entry', 'error');
+    if(btn){btn.disabled=false;btn.textContent='Save Changes';}
+    return;
+  }
   let res;
   if (id) {
     res = await sb.from('repair_quantity_items').update(data).eq('id', id);
@@ -10041,6 +10056,7 @@ async function rqSubmit(e, id) {
 window.rqSubmit = rqSubmit;
 
 async function rqDelete(id) {
+  if (!isOwner()) { toast('Only the owner can delete a repair entry', 'error'); return; }
   if (!confirm('Delete this repair entry?')) return;
   const res = await sb.from('repair_quantity_items').delete().eq('id', id);
   if (res.error) { handleSbError(res.error, 'Delete entry'); return; }
