@@ -9078,6 +9078,11 @@ async function schedAnalyzeImport(id) {
       </div>`, 'wide');
     return;
   }
+  // Guard: ensure the privileged token is fresh before the analyze edge call.
+  if (typeof ensureFreshPrivilegedSession === 'function') {
+    const ok = await ensureFreshPrivilegedSession();
+    if (!ok) return;
+  }
   toast('Analyzing schedule… this can take 10–30s', 'info');
   // optimistic UI
   item.status = 'analyzing'; renderScheduleImportsList(activeProject());
@@ -9409,6 +9414,14 @@ async function schedUploadSubmit(e) {
   const pid  = STATE.activeProjectId;
   if (!file || !pid) return;
 
+  // Guard: if the owner/contractor custom JWT has expired, re-mint (contractor)
+  // or prompt a clean re-login (owner) BEFORE hitting storage. Otherwise an
+  // expired token surfaces as a cryptic 'exp claim timestamp check failed'.
+  if (typeof ensureFreshPrivilegedSession === 'function') {
+    const ok = await ensureFreshPrivilegedSession();
+    if (!ok) { if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload Schedule'; } return; }
+  }
+
   if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
 
   // Determine file type
@@ -9427,7 +9440,15 @@ async function schedUploadSubmit(e) {
     cacheControl: '3600', upsert: false,
   });
   if (upErr) {
-    toast('Upload failed: ' + (upErr.message || upErr), 'error');
+    const msg = (upErr.message || String(upErr));
+    if (/exp.*claim|claim.*timestamp|jwt|token.*expired|expired.*token/i.test(msg)) {
+      toast('Your session expired — please sign in again, then re-upload.', 'error');
+      try { sessionStorage.removeItem(SESSION_AUTH_KEY); } catch (e) {}
+      if (typeof clearSbAuth === 'function') clearSbAuth();
+      if (typeof showLogin === 'function') showLogin();
+    } else {
+      toast('Upload failed: ' + msg, 'error');
+    }
     if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload Schedule'; }
     return;
   }
