@@ -207,7 +207,10 @@ async function llmNormalize(payload: { kind: "rows" | "pdf"; rows?: unknown; b64
     },
     body: JSON.stringify({
       model: LLM_MODEL,
-      max_tokens: 8000,
+      // Large schedules (hundreds of tasks) can blow past a small ceiling and
+      // the JSON response gets truncated mid-string -> JSON.parse throws
+      // "Unterminated string". sonnet-4-5 supports up to 64K output tokens.
+      max_tokens: 32000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content }],
     }),
@@ -218,10 +221,65 @@ async function llmNormalize(payload: { kind: "rows" | "pdf"; rows?: unknown; b64
   }
   const data = await resp.json();
   const text = (data?.content || []).map((c: any) => c?.text || "").join("").trim();
+  const stopReason = data?.stop_reason || null;
   const cleaned = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
-  const parsed = JSON.parse(cleaned);
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    // The model output was likely truncated (hit max_tokens) leaving an
+    // unterminated JSON string. Salvage the complete task objects instead of
+    // failing the whole import, and flag it so the owner knows it's partial.
+    const salvaged = salvageTruncatedTasks(cleaned);
+    if (!salvaged) throw e;
+    parsed = salvaged;
+    parsed.warnings = [
+      ...(Array.isArray(parsed.warnings) ? parsed.warnings : []),
+      `Schedule was very large; the analysis was truncated${stopReason === "max_tokens" ? " (hit token limit)" : ""} and recovered ${parsed.tasks?.length || 0} complete tasks. Some trailing tasks may be missing — re-upload as MS Project .xml for a complete, lossless parse.`,
+    ];
+    parsed.confidence = Math.min(Number(parsed.confidence) || 0.5, 0.5);
+  }
   parsed.model = LLM_MODEL;
   return parsed;
+}
+
+// Recover a usable task list from a truncated/unterminated JSON response.
+// Extracts every fully-closed object inside the "tasks":[ ... ] array by
+// bracket-depth scanning, ignoring braces/brackets that appear inside strings,
+// then stops at the last complete object. Returns null if nothing usable.
+function salvageTruncatedTasks(raw: string): any | null {
+  const key = raw.indexOf('"tasks"');
+  if (key === -1) return null;
+  const arrStart = raw.indexOf("[", key);
+  if (arrStart === -1) return null;
+  const objs: string[] = [];
+  let depth = 0;
+  let objStart = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = arrStart + 1; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inStr) {
+      if (esc) { esc = false; }
+      else if (ch === "\\") { esc = true; }
+      else if (ch === '"') { inStr = false; }
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "{") { if (depth === 0) objStart = i; depth++; }
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objStart !== -1) { objs.push(raw.slice(objStart, i + 1)); objStart = -1; }
+    } else if (ch === "]" && depth === 0) {
+      break; // array closed cleanly
+    }
+  }
+  const tasks: any[] = [];
+  for (const o of objs) {
+    try { tasks.push(JSON.parse(o)); } catch { /* skip the partial trailing object */ }
+  }
+  if (!tasks.length) return null;
+  return { tasks };
 }
 
 function normalizeAnalysis(a: any): any {
