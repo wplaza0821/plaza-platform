@@ -25,7 +25,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const PDF_RENDER_URL = Deno.env.get("PDF_RENDER_URL") || "";
 const APP_URL = "https://plazacore.plazaandassociates.com";

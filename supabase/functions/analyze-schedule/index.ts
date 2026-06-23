@@ -40,7 +40,7 @@ import { verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
 import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const LLM_API_KEY  = Deno.env.get("CO_LLM_API_KEY") || "";
