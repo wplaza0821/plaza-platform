@@ -3165,6 +3165,13 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   const contractorCanEdit = isContractor() && pa.contractor_id === AUTH.contractorId && isDraft;
   const editable = (forceEdit && !financeLocked) || ownerCanEdit || contractorCanEdit;
 
+  // The lien waiver is a DOCUMENT attachment, not a financial figure, so it must
+  // remain manageable even after finance is locked (submitted/approved/paid) —
+  // otherwise a pay app approved without its legally-required waiver can never be
+  // remedied. Allow owner/staff always; contractor only on their own pay app.
+  const canManageWaiver = isOwner() || isStaff() ||
+    (isContractor() && pa.contractor_id === AUTH.contractorId);
+
   const lines = DATA.payAppLines.filter(l => l.pay_app_id === pa.id);
   // Index by sov_item_id for easy lookup
   const lineBySov = {};
@@ -3298,14 +3305,14 @@ async function openPayAppModal(payAppId, forceEdit = false) {
       <div class="sov-section-head" style="margin-top:22px;">
         <div class="sov-section-title">Required: Partial Conditional Waiver &amp; Release</div>
       </div>
-      <div id="paWaiverZone" class="waiver-zone ${waiver ? 'uploaded' : (editable ? 'missing' : '')}">
+      <div id="paWaiverZone" class="waiver-zone ${waiver ? 'uploaded' : (canManageWaiver ? 'missing' : '')}">
         ${waiver ? `
           ✅ <strong>${escapeHtml(waiver.file_name)}</strong>
           (${escapeHtml(lbl(waiver.waiver_type))}, ${fmt$2(waiver.amount)})
           <button class="btn btn-secondary btn-sm" onclick="viewWaiver('${waiver.id}')" style="margin-left:10px;">View / Download</button>
-          ${editable ? `<button class="btn btn-danger btn-sm" onclick="removeWaiver('${waiver.id}','${pa.id}')" style="margin-left:6px;">Replace</button>` : ''}
-        ` : (editable ? `
-          <div style="margin-bottom:10px; color:var(--red); font-weight:600;">⚠️ Waiver required before this pay app can be submitted.</div>
+          ${canManageWaiver ? `<button class="btn btn-danger btn-sm" onclick="removeWaiver('${waiver.id}','${pa.id}')" style="margin-left:6px;">Replace</button>` : ''}
+        ` : (canManageWaiver ? `
+          <div style="margin-bottom:10px; color:var(--red); font-weight:600;">${financeLocked ? '⚠️ This pay app was approved without its required partial release &amp; waiver of lien. Upload it now to complete the record.' : '⚠️ Waiver required before this pay app can be submitted.'}</div>
           <div class="form-row two-col" style="text-align:left;">
             <div>
               <label class="form-label">Waiver Type</label>
