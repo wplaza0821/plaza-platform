@@ -165,6 +165,88 @@ function workbookToRows(bytes: Uint8Array): Record<string, unknown>[] {
   return XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
 }
 
+// --- Deterministic XLSX/CSV parse (MS Project "Export to Excel" layout) ------
+// Most contractor exports have stable, named columns (Name/Task Name/Activity,
+// Start, Finish/End, Duration, Predecessors, Outline Level, % Complete, Notes).
+// Parsing these deterministically avoids a slow, timeout-prone LLM round-trip
+// on large schedules (hundreds of tasks) which was leaving imports stuck in
+// "analyzing". Returns null when the columns aren't recognizable -> LLM fallback.
+function pick(row: Record<string, unknown>, names: string[]): unknown {
+  const keys = Object.keys(row);
+  for (const want of names) {
+    const k = keys.find((kk) => kk.trim().toLowerCase() === want.toLowerCase());
+    if (k != null && row[k] !== "" && row[k] != null) return row[k];
+  }
+  return null;
+}
+function durationToDays(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const s = String(v).toLowerCase();
+  const m = s.match(/-?\d+(\.\d+)?/);
+  if (!m) return null;
+  let d = Number(m[0]);
+  if (/\bhr|hour\b/.test(s)) d = d / 8;       // workday hours -> days
+  else if (/\bwk|week\b/.test(s)) d = d * 5;  // work weeks -> days
+  else if (/\bmon|month\b/.test(s)) d = d * 20;
+  return Math.round(d);
+}
+function parseMsprojectXlsx(rows: Record<string, unknown>[]): any | null {
+  if (!rows.length) return null;
+  // Require a recognizable Name + at least one date column, else bail to LLM.
+  const sample = rows[0];
+  const hasName = pick(sample, ["Name", "Task Name", "Activity", "Task"]) != null ||
+    Object.keys(sample).some((k) => /name|activity|task/i.test(k));
+  const hasDate = Object.keys(sample).some((k) => /start|finish|end|due|date/i.test(k));
+  if (!hasName || !hasDate) return null;
+  const tasks: any[] = [];
+  rows.forEach((row, i) => {
+    const name = String(pick(row, ["Name", "Task Name", "Activity", "Task"]) || "").trim();
+    if (!name) return;
+    const start = toISODate(pick(row, ["Start", "Start Date", "Begin"]));
+    const finish = toISODate(pick(row, ["Finish", "End", "End Date", "Due", "Due Date"]));
+    const lvl = num(pick(row, ["Outline Level", "OutlineLevel", "Level"])) || 1;
+    const wbsRaw = pick(row, ["WBS", "WBS Code"]);
+    const wbs = wbsRaw != null && wbsRaw !== "" ? String(wbsRaw) : null;
+    const durDays = durationToDays(pick(row, ["Duration", "Dur"]));
+    const pct = Math.max(0, Math.min(100, num(pick(row, ["% Complete", "Percent Complete", "% Comp", "Complete"]))));
+    const preds = pick(row, ["Predecessors", "Depends On", "Predecessor"]);
+    const assigned = pick(row, ["Resource Names", "Assigned To", "Resources", "Owner"]);
+    const notes = pick(row, ["Notes", "Note", "Comments"]);
+    const ms = pick(row, ["Milestone"]);
+    const sm = pick(row, ["Summary"]);
+    // Heuristics: a row with outline_level from WBS dot-depth if no explicit level.
+    const lvlFromWbs = wbs ? (wbs.split(".").length) : lvl;
+    tasks.push({
+      uid: pick(row, ["ID", "UID", "Unique ID"]) != null ? String(pick(row, ["ID", "UID", "Unique ID"])) : null,
+      wbs,
+      outline_level: Math.max(1, lvl || lvlFromWbs || 1),
+      is_summary: sm != null ? /^(1|yes|true)$/i.test(String(sm)) : false,
+      is_milestone: ms != null ? /^(1|yes|true)$/i.test(String(ms)) : (durDays === 0),
+      name,
+      start,
+      finish,
+      duration_days: durDays,
+      pct_complete: pct,
+      predecessors: preds != null && preds !== "" ? String(preds) : null,
+      assigned_to: assigned != null && assigned !== "" ? String(assigned) : null,
+      notes: notes != null && notes !== "" ? String(notes) : null,
+      sort_order: i,
+    });
+  });
+  if (!tasks.length) return null;
+  const starts = tasks.map((t) => t.start).filter(Boolean).sort();
+  const finishes = tasks.map((t) => t.finish).filter(Boolean).sort();
+  return {
+    tasks,
+    project_start: starts[0] || null,
+    project_finish: finishes[finishes.length - 1] || null,
+    summary: `Parsed ${tasks.length} tasks deterministically from MS Project Excel export.`,
+    confidence: 0.95,
+    model: "deterministic-xlsx",
+    warnings: [],
+  };
+}
+
 const SYSTEM_PROMPT =
   "You are a construction scheduling analyst for Plaza and Associates (structural " +
   "engineering / special inspection / owner's-rep). You receive the raw rows of a " +
@@ -406,7 +488,12 @@ Deno.serve(async (req) => {
     } else if (fmt === "csv" || fmt === "xlsx") {
       const rows = workbookToRows(bytes);
       if (!rows.length) throw new Error("no_rows_found_in_file");
-      analysis = normalizeAnalysis(await llmNormalize({ kind: "rows", rows }, name));
+      // Deterministic parse first (fast, no LLM, no timeout). Fall back to the
+      // LLM only when the column layout isn't recognizable.
+      const det = parseMsprojectXlsx(rows);
+      analysis = det
+        ? normalizeAnalysis(det)
+        : normalizeAnalysis(await llmNormalize({ kind: "rows", rows }, name));
     } else {
       await admin.from("schedule_imports").update({ status: "failed", error_detail: "unsupported_format" }).eq("id", importId);
       return json({ error: "unsupported_format", detail: "Upload .xlsx, .csv, MS Project .xml, or a schedule .pdf." }, 422);
