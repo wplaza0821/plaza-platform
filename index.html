@@ -8896,19 +8896,24 @@ function renderGanttView(proj) {
     return;
   }
 
-  // Map import_id -> filename so we can label each tower's chart.
+  // Map import_id -> filename so we can label each upload's chart.
   const impById = {};
   (DATA.scheduleImports || []).forEach(i => { impById[i.id] = i.file_name || ''; });
 
-  // Group tasks into separate Gantt charts, one per tower. Grouping key:
-  // the tower derived from the import filename / first task name; tasks that
-  // don't resolve to a tower fall back to grouping by import_id (or 'Schedule').
-  const groups = new Map(); // label -> { label, tasks:[] }
+  // Each uploaded schedule file (e.g. one per tower/building) renders as its
+  // OWN Gantt chart. Group strictly by import_id so multiple uploads never
+  // merge into one chart. Label each group by its source filename (a friendly
+  // tower name when we can derive one, else the filename). Falls back to a
+  // single 'Schedule' group only for legacy tasks with no import_id.
+  const groups = new Map(); // key -> { label, tasks:[] }
   allTasks.forEach(t => {
-    const fn = impById[t.import_id];
-    const tower = _towerLabel(fn, (t.task_name || t.name));
-    const key = tower || (t.import_id ? ('import:' + t.import_id) : 'Schedule');
-    if (!groups.has(key)) groups.set(key, { label: tower || (fn ? fn.replace(/\.[^.]+$/, '') : 'Schedule'), tasks: [] });
+    const fn = impById[t.import_id] || '';
+    const key = t.import_id || 'manual';
+    if (!groups.has(key)) {
+      const tower = _towerLabel(fn, (t.task_name || t.name));
+      const label = tower || (fn ? fn.replace(/\.[^.]+$/, '') : 'Schedule');
+      groups.set(key, { label, tasks: [] });
+    }
     groups.get(key).tasks.push(t);
   });
 
@@ -9178,26 +9183,15 @@ async function schedApproveImport(id) {
     toast('Nothing to approve — analyze the file first', 'error'); return;
   }
   const pid = item.project_id;
-  // Which tower does this import belong to? Replace only that tower's prior tasks
-  // so the two towers (Park / River) coexist as separate Gantt charts.
-  const firstTaskName = (item.analysis.tasks[0] && (item.analysis.tasks[0].name || item.analysis.tasks[0].task_name)) || '';
-  const tower = _towerLabel(item.file_name, firstTaskName);
-  const scopeMsg = tower ? `the ${tower} chart` : 'this schedule';
-  if (!confirm(`Apply ${item.analysis.tasks.length} tasks to ${scopeMsg}?\n\nThis replaces the previous import for ${tower || 'this schedule'} (the other tower and any manually-added tasks are kept).`)) return;
+  // Each uploaded schedule renders as its OWN Gantt chart (grouped by import_id),
+  // so applying one upload must replace ONLY its own prior tasks — never another
+  // upload's. This keeps multiple towers/buildings as separate, coexisting charts.
+  const fileLabel = (item.file_name || '').replace(/\.[^.]+$/, '') || 'this schedule';
+  if (!confirm(`Apply ${item.analysis.tasks.length} tasks for "${fileLabel}"?\n\nThis replaces only this upload's previous tasks. Other uploaded schedules and any manually-added tasks are kept as separate charts.`)) return;
   try {
-    // Find prior import ids that belong to the SAME tower, so we only clear those.
-    let priorImportIds = [];
-    if (tower) {
-      priorImportIds = (DATA.scheduleImports || [])
-        .filter(i => i.project_id === pid && i.id !== id)
-        .filter(i => {
-          const fn0 = i.file_name;
-          const tn0 = i.analysis && Array.isArray(i.analysis.tasks) && i.analysis.tasks[0]
-            ? (i.analysis.tasks[0].name || i.analysis.tasks[0].task_name) : '';
-          return _towerLabel(fn0, tn0) === tower;
-        })
-        .map(i => i.id);
-    }
+    // Only supersede THIS import's own rows (idempotent re-apply). Other imports'
+    // tasks stay untouched so each upload keeps its own chart.
+    const priorImportIds = [];
     // Always also clear any rows already carrying THIS import's id (idempotent re-apply).
     const idsToClear = [id, ...priorImportIds];
     const { error: delErr } = await sb.from('schedule_tasks')
@@ -9240,7 +9234,7 @@ async function schedApproveImport(id) {
       sw.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.schedview === 'gantt'));
     }
     render();
-    toast(`${tower || 'Gantt'} updated — ${rows.length} tasks applied ✅`, 'success');
+    toast(`"${fileLabel}" updated — ${rows.length} tasks applied ✅`, 'success');
   } catch (e) {
     toast('Approve failed: ' + (e.message || e), 'error');
   }
