@@ -718,6 +718,8 @@
   /* Quantity reconciliation button: owner-only (financial-integrity tool). */
   .rq-owner-only { display: none !important; }
   body.role-owner .rq-owner-only { display: inline-flex !important; }
+  /* Hide quantity-totals/export affordances for no_financials field members. */
+  body.perm-no-qtytotals .rq-no-qtytotals-hide { display: none !important; }
   body.perm-no-edit-payapps  .perm-edit-payapps  { display: none !important; }
   body.perm-no-edit-cos      .perm-edit-cos      { display: none !important; }
   body.perm-no-edit-rfis     .perm-edit-rfis     { display: none !important; }
@@ -1459,9 +1461,14 @@
         </div>
         <div class="page-actions">
           <button class="btn-secondary rq-owner-only" onclick="rqOpenReconcile()" id="rqReconcileBtn" title="Cross-reference verified quantities vs contractor pay-app quantities">⚖️ Reconcile vs Pay Apps</button>
-          <button class="btn-secondary" onclick="rqExport()" id="rqExportBtn">⬇ Export</button>
+          <button class="btn-secondary rq-no-qtytotals-hide" onclick="rqExport()" id="rqExportBtn">⬇ Export</button>
           <button class="btn-primary" onclick="rqOpenForm()" id="rqAddBtn">+ Add Entry</button>
         </div>
+      </div>
+
+      <!-- Unverified-quantities disclaimer (shown only to no_financials field members) -->
+      <div id="rqUnverifiedDisclaimer" style="display:none;margin-bottom:14px;padding:12px 16px;background:#fef3c7;border:1px solid #f59e0b;border-left:4px solid #f59e0b;border-radius:8px;color:#92400e;font-size:13px;line-height:1.5;">
+        ⚠️ <strong>Preliminary field measurements.</strong> Quantities entered here are preliminary and are <strong>NOT verified</strong> until final review with the Contractor of Record.
       </div>
 
       <!-- Filter bar -->
@@ -1813,6 +1820,11 @@ function isContractor() { return AUTH && AUTH.role === 'contractor'; }
 // Per-user financial lockout (profiles.perms.no_financials) — mirrors the RLS
 // gate plz_no_financials() so the UI hides what the DB already refuses to serve.
 function noFinancials() { return !!(AUTH && AUTH.permissions && AUTH.permissions.no_financials); }
+// Quantity-totals lockout: no_financials members (e.g. field inspectors like Noel)
+// may INPUT individual repair-quantity entries but must not see aggregated
+// rollup totals (which could read as an authoritative/verified figure). They
+// also get a disclaimer that quantities are unverified pending contractor review.
+function hideQtyTotals() { return noFinancials() && !isOwner() && !isStaff(); }
 // Native (email/password) login vs legacy custom-JWT (owner-pw / contractor-token).
 function isNative()     { return AUTH && AUTH.native === true; }
 
@@ -2084,6 +2096,12 @@ function applyRoleBodyClasses() {
   if (noFinancials() && !isOwner()) {
     body.classList.add('perm-no-view-payapps');
     body.classList.add('perm-no-view-cos');
+  }
+  // Field members (no_financials, non-owner/staff): hide quantity rollup totals
+  // + export. They keep input + per-entry visibility; aggregated totals are
+  // suppressed and an "unverified" disclaimer is shown on the Quantities page.
+  if (hideQtyTotals()) {
+    body.classList.add('perm-no-qtytotals');
   }
 }
 
@@ -9901,6 +9919,10 @@ function renderQuantities() {
   document.getElementById('rqViewBtn').textContent =
     RQ_VIEW === 'summary' ? '⊞ Summary' : '☰ Detail';
 
+  // Toggle the unverified-quantities disclaimer for no_financials field members.
+  const disc = document.getElementById('rqUnverifiedDisclaimer');
+  if (disc) disc.style.display = hideQtyTotals() ? '' : 'none';
+
   if (RQ_VIEW === 'summary') {
     renderRqSummary(items);
     document.getElementById('rqDetailPanel').innerHTML = '';
@@ -9947,7 +9969,7 @@ function renderRqSummary(items) {
       if (!tTotals[k]) tTotals[k] = { type: item.repair_type, unit: q.unit, val: 0 };
       tTotals[k].val += q.val;
     });
-    const tChips = Object.values(tTotals).map(t => {
+    const tChips = hideQtyTotals() ? '' : Object.values(tTotals).map(t => {
       const meta = RQ_TYPE_MAP[t.type] || { label: t.type, icon: '📌' };
       return `<span class="rq-total-chip"><span class="rq-total-icon">${meta.icon}</span><span class="rq-total-label">${escapeHtml(meta.label)}</span><span class="rq-total-val">${t.val.toFixed(2)} ${t.unit}</span></span>`;
     }).join('');
@@ -9982,12 +10004,13 @@ function rqRenderStackCards(items) {
       typeTotals[item.repair_type].val   += q.val;
       typeTotals[item.repair_type].count += 1;
     });
+    const _hideTot = hideQtyTotals();
     const typeRows = Object.entries(typeTotals).map(([type, tot]) => {
       const t = RQ_TYPE_MAP[type] || { label: type, icon: '📌' };
       return `<div class="rq-type-row">
         <span class="rq-type-icon">${t.icon}</span>
         <span class="rq-type-label">${escapeHtml(t.label)}</span>
-        <span class="rq-type-qty">${tot.val.toFixed(2)} ${tot.unit}</span>
+        ${_hideTot ? '' : `<span class="rq-type-qty">${tot.val.toFixed(2)} ${tot.unit}</span>`}
         <span class="rq-type-count">(${tot.count} item${tot.count !== 1 ? 's' : ''})</span>
       </div>`;
     }).join('');
@@ -10173,6 +10196,8 @@ window.rqBulkSetStatus = rqBulkSetStatus;
 
 function renderRqTotals(items) {
   const bar = document.getElementById('rqTotalsBar');
+  // Field members flagged no_financials never see aggregated totals.
+  if (hideQtyTotals()) { if (bar) bar.innerHTML = ''; return; }
   if (!bar || !items.length) { if(bar) bar.innerHTML=''; return; }
 
   // Aggregate all types
