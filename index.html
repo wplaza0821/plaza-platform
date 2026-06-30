@@ -1664,9 +1664,11 @@ const _authCallback = (() => {
 function setSbAuth(jwt) {
   _sbJwt = jwt;
   try { sb.realtime.setAuth(jwt); } catch (e) {}
+  try { sb.storage.setAuth(jwt); } catch (e) {}
 }
 function clearSbAuth() {
   _sbJwt = null;
+  try { sb.storage.setAuth(null); } catch (e) {}
 }
 
 // Phase B: decode a JWT payload (no verification — server RLS verifies). Used to
