@@ -4046,7 +4046,7 @@ function renderSubmittals() {
       <td class="text-sm">${fmtDate(s.submitted_at)}</td>
       <td class="text-sm">${fmtDate(s.reviewed_at)}</td>
       <td>${statusBadge(s.status)}</td>
-      <td><span class="badge ${s.ball_in_court === 'engineer' ? 'badge-yellow' : s.ball_in_court === 'owner' ? 'badge-purple' : 'badge-blue'}">${escapeHtml(lbl(s.ball_in_court))}</span></td>
+      <td>${(s.status === 'approved' || s.status === 'rejected' || s.status === 'approved_as_noted') ? '<span class="badge badge-green">Completed</span>' : `<span class="badge ${s.ball_in_court === 'engineer' ? 'badge-yellow' : s.ball_in_court === 'owner' ? 'badge-purple' : 'badge-blue'}">${escapeHtml(lbl(s.ball_in_court))}</span>`}</td>
       <td><div class="row-actions"><button class="btn btn-ghost btn-sm" onclick="openSubmittalModal('${s.id}')">View</button></div></td>
     </tr>
   `;
@@ -4085,7 +4085,7 @@ function openSubmittalModal(id) {
       <div class="form-row"><label class="form-label">Description</label><input id="sb-desc" value="${escapeHtml(editing?.description || '')}" /></div>
       <div class="form-row two-col">
         <div><label class="form-label">Submitted By</label><input id="sb-by" value="${escapeHtml(editing?.submitted_by || (isContractor() ? AUTH.name : ''))}" /></div>
-        <div><label class="form-label">Reviewer</label><input id="sb-reviewer" value="${escapeHtml(editing?.reviewer || 'W. Plaza, P.E.')}" /></div>
+        <div><label class="form-label">Reviewer</label><input id="sb-reviewer" value="${escapeHtml(editing?.reviewer || 'William Plaza')}" /></div>
       </div>
       <div class="form-row two-col">
         <div><label class="form-label">Date Submitted</label><input id="sb-dsub" type="date" value="${editing?.submitted_at ? editing.submitted_at.slice(0,10) : todayStr()}" /></div>
@@ -4745,7 +4745,7 @@ function renderDocs() {
   const list = DATA.documents.filter(d => d.project_id === STATE.activeProjectId);
 
   // Update category pills
-  const cats = ['structural','architectural','mep','civil','specifications','permits','other'];
+  const cats = ['permits','structural','architectural','mep','civil','specifications','other'];
   document.getElementById('docCategories').innerHTML = cats.map(cat => {
     const c = list.filter(d => d.category === cat).length;
     if (!c) return '';
@@ -4781,15 +4781,15 @@ function renderDocs() {
   }
 
   // Group by category
-  const CAT_LABELS = { structural:'Structural', architectural:'Architectural', mep:'MEP',
-    civil:'Civil', specifications:'Specifications & Contracts', permits:'Permits & Approvals', other:'Other' };
+  const CAT_LABELS = { permits:'Permit Set & Specs', structural:'Structural', architectural:'Architectural', mep:'MEP',
+    civil:'Civil', specifications:'Specifications & Contracts', other:'Other' };
   const groups = {};
   filtered.forEach(d => {
     const g = d.category || 'other';
     (groups[g] = groups[g] || []).push(d);
   });
 
-  const orderedGroups = ['structural','architectural','mep','civil','permits','specifications','other']
+  const orderedGroups = ['permits','structural','architectural','mep','civil','specifications','other']
     .filter(g => groups[g]?.length);
 
   // Fieldwire-style: a multi-page PDF expands into one tile per page (sheet).
