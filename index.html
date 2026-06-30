@@ -1461,10 +1461,14 @@
         </div>
         <div class="page-actions">
           <button class="btn-secondary rq-owner-only" onclick="rqOpenReconcile()" id="rqReconcileBtn" title="Cross-reference verified quantities vs contractor pay-app quantities">⚖️ Reconcile vs Pay Apps</button>
+          <button class="btn-secondary rq-owner-only" onclick="qiOpenUploadModal()" id="qiImportBtn" title="Upload a spreadsheet of repair quantities — AI parses it and allocates entries into stacks">📥 Import Spreadsheet</button>
           <button class="btn-secondary rq-no-qtytotals-hide" onclick="rqExport()" id="rqExportBtn">⬇ Export</button>
           <button class="btn-primary" onclick="rqOpenForm()" id="rqAddBtn">+ Add Entry</button>
         </div>
       </div>
+
+      <!-- Spreadsheet-import review panel (owner/staff) -->
+      <div id="qiImportsPanel" style="margin-bottom:14px;"></div>
 
       <!-- Unverified-quantities disclaimer (shown only to no_financials field members) -->
       <div id="rqUnverifiedDisclaimer" style="display:none;margin-bottom:14px;padding:12px 16px;background:#fef3c7;border:1px solid #f59e0b;border-left:4px solid #f59e0b;border-radius:8px;color:#92400e;font-size:13px;line-height:1.5;">
@@ -9632,6 +9636,7 @@ const RQ_STATUS_META = {
 
 let RQ_VIEW = 'summary';  // 'summary' | 'detail'
 let DATA_stacks = [];     // repair_stacks for active project
+let DATA_qimports = [];   // quantity_imports for active project (owner/staff)
 let DATA_rqi    = [];     // repair_quantity_items for active project
 let RQ_SELECTED = new Set(); // ids of repair items checked for bulk status change (detail view)
 
@@ -9859,15 +9864,20 @@ window.rqSaveReconMap = rqSaveReconMap;
 async function loadQuantities() {
   const pid = STATE.activeProjectId;
   if (!pid) return;
-  const [sr, ir] = await Promise.all([
+  const [sr, ir, qr] = await Promise.all([
     sb.from('repair_stacks').select('*').eq('project_id', pid).order('sort_order'),
     sb.from('repair_quantity_items').select('*').eq('project_id', pid).order('created_at', { ascending: false }),
+    (isOwner() || isStaff())
+      ? sb.from('quantity_imports').select('*').eq('project_id', pid).order('created_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (sr.error) { softErr(sr, 'Loading stacks'); return; }
   if (ir.error) { softErr(ir, 'Loading quantities'); return; }
   DATA_stacks = sr.data || [];
   DATA_rqi    = ir.data || [];
+  DATA_qimports = (qr && !qr.error) ? (qr.data || []) : [];
   renderQuantities();
+  qiRenderPanel();
 }
 window.loadQuantities = loadQuantities;
 
@@ -10457,6 +10467,347 @@ async function rqDelete(id) {
   await loadQuantities();
 }
 window.rqDelete = rqDelete;
+
+// ── Repair-Quantity spreadsheet auto-import (Analyze → Review → Apply) ────────
+// Owner/staff upload a spreadsheet; analyze-quantities edge fn AI-normalizes it
+// into repair line items; owner reviews, then Apply materializes
+// repair_quantity_items (auto-creating any missing repair_stacks).
+const ANALYZE_QTY_FN_URL = SUPABASE_URL + '/functions/v1/analyze-quantities';
+
+function qiStatusBadge(st) {
+  const map = {
+    pending:   { t: 'Uploaded',  c: '#64748b' },
+    analyzing: { t: 'Analyzing…', c: '#d97706' },
+    analyzed:  { t: 'Ready to review', c: '#2563eb' },
+    applied:   { t: 'Applied ✓', c: '#16a34a' },
+    rejected:  { t: 'Rejected', c: '#dc2626' },
+    failed:    { t: 'Failed', c: '#dc2626' },
+  };
+  const m = map[st] || { t: st, c: '#64748b' };
+  return `<span class="status-badge" style="background:${m.c}20;color:${m.c};border:1px solid ${m.c}40;">${m.t}</span>`;
+}
+
+function qiRenderPanel() {
+  const panel = document.getElementById('qiImportsPanel');
+  if (!panel) return;
+  if (!(isOwner() || isStaff())) { panel.innerHTML = ''; return; }
+  const imports = DATA_qimports || [];
+  if (!imports.length) { panel.innerHTML = ''; return; }
+  const rows = imports.map(im => {
+    const cnt = im.item_count != null ? `${im.item_count} item${im.item_count !== 1 ? 's' : ''}` : '—';
+    let actions = '';
+    if (im.status === 'pending' || im.status === 'failed') {
+      actions = `<button class="btn-sm btn-primary" onclick="qiAnalyze('${im.id}')">🔍 Analyze</button>`;
+    } else if (im.status === 'analyzing') {
+      actions = `<button class="btn-sm btn-secondary" onclick="qiAnalyze('${im.id}')">↻ Retry</button>`;
+    } else if (im.status === 'analyzed') {
+      actions = `<button class="btn-sm btn-primary" onclick="qiReview('${im.id}')">👁 Review & Apply</button>`;
+    } else if (im.status === 'applied') {
+      actions = `<button class="btn-sm btn-secondary" onclick="qiReview('${im.id}')">View</button>`;
+    }
+    const err = im.error_detail ? `<div style="font-size:11px;color:#dc2626;margin-top:2px;">${escapeHtml(im.error_detail)}</div>` : '';
+    return `<tr>
+      <td>📄 ${escapeHtml(im.file_name || 'spreadsheet')}${err}</td>
+      <td style="white-space:nowrap;">${im.created_at ? fmtDate(im.created_at) : '—'}</td>
+      <td>${cnt}</td>
+      <td>${qiStatusBadge(im.status)}</td>
+      <td style="text-align:right;white-space:nowrap;">${actions}
+        <button class="btn-icon danger" onclick="qiDelete('${im.id}')" title="Delete import">🗑</button></td>
+    </tr>`;
+  }).join('');
+  panel.innerHTML = `
+    <div style="border:1px solid var(--gray-200);border-radius:10px;overflow:hidden;">
+      <div style="background:#f8fafc;padding:8px 14px;font-size:12px;font-weight:700;color:#475569;letter-spacing:.3px;text-transform:uppercase;border-bottom:1px solid var(--gray-200);">
+        📥 Spreadsheet imports
+      </div>
+      <div class="table-wrap" style="max-height:240px;overflow:auto;">
+        <table class="data-table" style="font-size:13px;margin:0;">
+          <thead><tr><th>File</th><th>Uploaded</th><th>Items</th><th>Status</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+window.qiRenderPanel = qiRenderPanel;
+
+function qiOpenUploadModal() {
+  if (!(isOwner() || isStaff())) { toast('Only staff can import quantities', 'error'); return; }
+  if (!STATE.activeProjectId) { toast('Select a project first', 'error'); return; }
+  const body = `
+    <div style="font-size:13px;line-height:1.5;color:var(--text-muted);margin-bottom:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;">
+      Upload a spreadsheet of field-measured repair quantities. The platform parses it with AI and
+      maps each row into the right <b>stack</b>, <b>tower</b>, <b>floor/level</b> and <b>repair type</b>
+      — auto-creating any stacks that don't exist yet. You review everything before it's applied.<br><br>
+      <b>Accepted:</b> Excel (.xlsx/.xls) or CSV. Columns can be named anything reasonable
+      (Stack, Tower, Floor/Level, Type, Width/Length/Height/Depth, Qty/SF/LF, Description, Date, SI Ref).
+    </div>
+    <form id="qiUploadForm" onsubmit="qiUploadSubmit(event)">
+      <div class="form-group">
+        <label>Spreadsheet file</label>
+        <input id="qiFile" type="file" accept=".xlsx,.xls,.csv"
+          style="display:block;width:100%;padding:8px;border:1px solid var(--gray-200);border-radius:6px;font-size:13px;"
+          onchange="qiFileChanged(this)" required>
+        <div id="qiFileHint" style="font-size:11px;color:#888;margin-top:4px;"></div>
+      </div>
+      <div class="modal-footer" style="margin-top:16px;">
+        <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn-primary" id="qiUploadBtn">⬆ Upload & Analyze</button>
+      </div>
+    </form>`;
+  openModal('Import Repair Quantities', body, 'wide');
+}
+window.qiOpenUploadModal = qiOpenUploadModal;
+
+function qiFileChanged(input) {
+  const hint = document.getElementById('qiFileHint');
+  if (!hint) return;
+  const f = input.files[0];
+  if (!f) { hint.textContent = ''; return; }
+  hint.textContent = `${f.name} · ${(f.size / 1024 / 1024).toFixed(2)} MB`;
+}
+window.qiFileChanged = qiFileChanged;
+
+async function qiUploadSubmit(e) {
+  e.preventDefault();
+  const btn  = document.getElementById('qiUploadBtn');
+  const file = document.getElementById('qiFile').files[0];
+  const pid  = STATE.activeProjectId;
+  if (!file || !pid) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+    toast('Unsupported file type. Use Excel (.xlsx/.xls) or CSV.', 'error'); return;
+  }
+  if (typeof ensureFreshPrivilegedSession === 'function') {
+    const ok = await ensureFreshPrivilegedSession();
+    if (!ok) return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${pid}/quantity/${Date.now()}_${safeName}`;
+  const { error: upErr } = await sb.storage.from('plans-specs').upload(storagePath, file, {
+    cacheControl: '3600', upsert: false,
+  });
+  if (upErr) {
+    const msg = (upErr.message || String(upErr));
+    if (/exp.*claim|claim.*timestamp|jwt|token.*expired|expired.*token/i.test(msg)) {
+      toast('Your session expired — please sign in again, then re-upload.', 'error');
+      try { sessionStorage.removeItem(SESSION_AUTH_KEY); } catch (e) {}
+      if (typeof clearSbAuth === 'function') clearSbAuth();
+      if (typeof showLogin === 'function') showLogin();
+    } else {
+      toast('Upload failed: ' + msg, 'error');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload & Analyze'; }
+    return;
+  }
+  const { data: ins, error: dbErr } = await sb.from('quantity_imports').insert({
+    project_id:  pid,
+    file_name:   file.name,
+    file_path:   storagePath,
+    file_size:   file.size,
+    status:      'pending',
+    uploaded_by: AUTH?.email || null,
+  }).select('id').maybeSingle();
+  if (dbErr) {
+    toast('File uploaded but record failed: ' + dbErr.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⬆ Upload & Analyze'; }
+    return;
+  }
+  closeModal();
+  toast('Uploaded — analyzing…', 'success');
+  await loadQuantities();
+  if (ins?.id) qiAnalyze(ins.id);
+}
+window.qiUploadSubmit = qiUploadSubmit;
+
+async function qiAnalyze(id) {
+  if (!(isOwner() || isStaff())) { toast('Only staff can analyze', 'error'); return; }
+  const item = (DATA_qimports || []).find(i => i.id === id);
+  if (!item) { toast('Import not found', 'error'); return; }
+  if (typeof ensureFreshPrivilegedSession === 'function') {
+    const ok = await ensureFreshPrivilegedSession();
+    if (!ok) return;
+  }
+  toast('Analyzing spreadsheet… this can take 10–30s', 'info');
+  item.status = 'analyzing'; qiRenderPanel();
+  try {
+    const res = await fetch(ANALYZE_QTY_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+      },
+      body: JSON.stringify({ import_id: id }),
+    });
+    let j = {}; try { j = await res.json(); } catch {}
+    if (!res.ok || j?.error) {
+      const map = {
+        analyzer_not_configured: 'Quantity analyzer not configured (missing LLM key).',
+        unsupported_format: 'Unsupported file type. Upload .xlsx, .xls, or .csv.',
+        no_file: 'No file attached to this upload.',
+        forbidden_owner_only: 'Only the owner/staff can analyze.',
+        download_failed: 'Could not read the uploaded file from storage.',
+        parse_failed: 'Could not parse the spreadsheet. ' + (j?.detail || ''),
+        llm_failed: 'AI analysis failed. ' + (j?.detail || ''),
+      };
+      throw new Error(map[j?.error] || j?.detail || j?.message || j?.error || ('HTTP ' + res.status));
+    }
+    await loadQuantities();
+    toast(`Parsed ${j.item_count} items across ${(j.stacks || []).length} stack(s) — review, then Apply`, 'success');
+    qiReview(id);
+  } catch (e) {
+    await loadQuantities();
+    toast('Analyze failed: ' + (e.message || e), 'error');
+  }
+}
+window.qiAnalyze = qiAnalyze;
+
+function qiReview(id) {
+  const item = (DATA_qimports || []).find(i => i.id === id);
+  if (!item || !item.analysis || !Array.isArray(item.analysis.items)) {
+    toast('No analysis to review yet — click Analyze first', 'info'); return;
+  }
+  const a = item.analysis;
+  const items = a.items || [];
+  const rows = items.map(it => {
+    const t = RQ_TYPE_MAP[it.repair_type] || { label: it.repair_type, icon: '📌' };
+    let dim = '';
+    if (it.qty_override != null) dim = `${it.qty_override} (given)`;
+    else {
+      if (it.length_in != null) dim += it.length_in + '"';
+      if (it.height_in != null) dim += ' × ' + it.height_in + '"';
+      if (it.depth_in  != null) dim += ' × ' + it.depth_in  + '"';
+    }
+    return `<tr>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);">${escapeHtml(it.tower || '—')}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);font-weight:600;">${escapeHtml(it.stack_label || '—')}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);">${escapeHtml(it.floor_level || '—')}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);">${t.icon} ${escapeHtml(t.label)}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);font-family:monospace;font-size:11px;">${escapeHtml(dim || '—')}</td>
+      <td style="padding:4px 8px;border-bottom:1px solid var(--gray-100);">${escapeHtml(it.description || '—')}</td>
+    </tr>`;
+  }).join('');
+  const existingLabels = new Set((DATA_stacks || []).map(s => (s.label || '').toLowerCase().trim()));
+  const newStacks = (a.stacks || []).filter(s => !existingLabels.has((s || '').toLowerCase().trim()));
+  const warn = (a.warnings && a.warnings.length)
+    ? `<div style="font-size:12px;color:#b45309;margin-bottom:8px;">⚠ ${a.warnings.map(escapeHtml).join('; ')}</div>` : '';
+  const newStackNote = newStacks.length
+    ? `<div style="font-size:12px;color:#2563eb;margin-bottom:8px;">＋ ${newStacks.length} new stack(s) will be created: ${newStacks.map(escapeHtml).join(', ')}</div>` : '';
+  const applied = item.status === 'applied';
+  const body = `
+    <div style="font-size:13px;margin-bottom:6px;">${escapeHtml(a.summary || '')}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+      ${items.length} items · ${(a.stacks || []).length} stack(s) · ${(a.towers || []).length} tower(s) · confidence ${Math.round((a.confidence || 0) * 100)}%</div>
+    ${warn}${newStackNote}
+    <div style="max-height:48vh;overflow:auto;border:1px solid var(--gray-200);border-radius:6px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="position:sticky;top:0;background:var(--gray-50);">
+          <th style="text-align:left;padding:6px 8px;">Tower</th>
+          <th style="text-align:left;padding:6px 8px;">Stack</th>
+          <th style="text-align:left;padding:6px 8px;">Floor</th>
+          <th style="text-align:left;padding:6px 8px;">Type</th>
+          <th style="text-align:left;padding:6px 8px;">Dims/Qty</th>
+          <th style="text-align:left;padding:6px 8px;">Description</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+      <button class="btn btn-ghost" onclick="closeModal&&closeModal()">Close</button>
+      ${(!applied && isOwner()) ? `<button class="btn btn-primary" onclick="qiApply('${id}')">✅ Apply ${items.length} items to Quantities</button>` : ''}
+      ${applied ? `<span style="font-size:12px;color:#16a34a;align-self:center;">Already applied ✓</span>` : ''}
+    </div>`;
+  openModal('Review imported quantities — ' + (item.file_name || 'import'), body, 'wide');
+}
+window.qiReview = qiReview;
+
+async function qiApply(id) {
+  if (!isOwner()) { toast('Only the owner can apply imported quantities', 'error'); return; }
+  const item = (DATA_qimports || []).find(i => i.id === id);
+  if (!item || !item.analysis || !Array.isArray(item.analysis.items) || !item.analysis.items.length) {
+    toast('Nothing to apply — analyze the file first', 'error'); return;
+  }
+  const pid = item.project_id;
+  const items = item.analysis.items;
+  if (!confirm(`Apply ${items.length} repair items?\n\nMissing stacks will be created automatically. Re-applying this same import first removes its own previously-applied rows (other entries are untouched).`)) return;
+  try {
+    // 1) Ensure every referenced stack exists; create missing ones.
+    const stackByLabel = {};
+    (DATA_stacks || []).forEach(s => { stackByLabel[(s.label || '').toLowerCase().trim()] = s; });
+    const wantedLabels = [...new Set(items.map(it => (it.stack_label || '').trim()).filter(Boolean))];
+    const toCreate = wantedLabels.filter(l => !stackByLabel[l.toLowerCase()]);
+    if (toCreate.length) {
+      let nextOrder = (DATA_stacks || []).reduce((m, s) => Math.max(m, s.sort_order || 0), 0) + 1;
+      const newRows = toCreate.map((label, i) => ({ project_id: pid, label, sort_order: nextOrder + i }));
+      const { data: created, error: cErr } = await sb.from('repair_stacks').insert(newRows).select('*');
+      if (cErr) throw cErr;
+      (created || []).forEach(s => { stackByLabel[(s.label || '').toLowerCase().trim()] = s; });
+    }
+    // 2) Idempotent re-apply: clear this import's own prior rows.
+    const { error: delErr } = await sb.from('repair_quantity_items')
+      .delete().eq('project_id', pid).eq('import_id', id);
+    if (delErr) throw delErr;
+    // 3) Build repair_quantity_items rows with computed area/lf/volume.
+    const rows = items.map(it => {
+      const stack = stackByLabel[(it.stack_label || '').toLowerCase().trim()] || null;
+      const t = RQ_TYPE_MAP[it.repair_type] || { unit: 'area' };
+      const w = it.length_in, h = it.height_in, d = it.depth_in;
+      let area = rqCalcArea(w, h);
+      let lf   = rqCalcLf(w);
+      let vol  = rqCalcVol(w, h, d);
+      // Honor a precomputed qty when no dimensions were given.
+      if (it.qty_override != null && w == null && h == null) {
+        if (t.unit === 'linear') { lf = +Number(it.qty_override).toFixed(4); area = null; }
+        else if (t.unit === 'count') { /* count stored via qty_override -> area null */ area = null; lf = null; }
+        else { area = +Number(it.qty_override).toFixed(4); lf = null; }
+      }
+      return {
+        project_id:    pid,
+        import_id:     id,
+        stack_id:      stack ? stack.id : null,
+        stack_label:   stack ? stack.label : (it.stack_label || null),
+        tower:         it.tower || null,
+        floor_level:   it.floor_level || null,
+        repair_type:   it.repair_type,
+        description:   it.description || null,
+        length_in:     w,
+        height_in:     h,
+        depth_in:      d,
+        area_sf:       area,
+        lf:            lf,
+        volume_cf:     vol,
+        status:        it.status || 'pending',
+        si_report_ref: it.si_report_ref || null,
+        date_observed: it.date_observed || null,
+        date_repaired: it.date_repaired || null,
+        notes:         it.notes || null,
+      };
+    });
+    for (let i = 0; i < rows.length; i += 200) {
+      const { error: insErr } = await sb.from('repair_quantity_items').insert(rows.slice(i, i + 200));
+      if (insErr) throw insErr;
+    }
+    await sb.from('quantity_imports').update({ status: 'applied', applied_at: new Date().toISOString() }).eq('id', id);
+    if (typeof closeModal === 'function') closeModal();
+    await loadQuantities();
+    toast(`Applied ${rows.length} items ✅`, 'success');
+  } catch (e) {
+    toast('Apply failed: ' + (e.message || e), 'error');
+  }
+}
+window.qiApply = qiApply;
+
+async function qiDelete(id) {
+  if (!(isOwner() || isStaff())) { toast('Only staff can delete imports', 'error'); return; }
+  if (!confirm('Delete this spreadsheet import? Applied quantities are NOT removed.')) return;
+  const res = await sb.from('quantity_imports').delete().eq('id', id);
+  if (res.error) { handleSbError(res.error, 'Delete import'); return; }
+  toast('Import deleted');
+  await loadQuantities();
+}
+window.qiDelete = qiDelete;
+
 
 // ── Export (printable HTML by stack) ──────────────────────────────────────────
 
