@@ -9660,10 +9660,11 @@ function rqUnitLabel(type) {
 
 function rqItemQty(item) {
   const t = RQ_TYPE_MAP[item.repair_type];
-  if (!t) return { val: item.area_sf || 0, unit: 'SF' };
-  if (t.unit === 'linear') return { val: item.lf   || rqCalcLf(item.length_in) || 0, unit: 'LF' };
-  if (t.unit === 'count')  return { val: 1, unit: 'EA' };
-  return { val: item.area_sf || rqCalcArea(item.length_in, item.height_in) || 0, unit: 'SF' };
+  const manual = (item.qty_manual != null) ? Number(item.qty_manual) : null;
+  if (!t) return { val: manual ?? item.area_sf ?? 0, unit: 'SF' };
+  if (t.unit === 'linear') return { val: manual ?? item.lf ?? rqCalcLf(item.length_in) ?? 0, unit: 'LF' };
+  if (t.unit === 'count')  return { val: manual ?? 1, unit: 'EA' };
+  return { val: manual ?? item.area_sf ?? rqCalcArea(item.length_in, item.height_in) ?? 0, unit: 'SF' };
 }
 
 // ══ QUANTITY RECONCILIATION (verified vs contractor pay-app) ═══════════════════
@@ -10752,15 +10753,14 @@ async function qiApply(id) {
     const rows = items.map(it => {
       const stack = stackByLabel[(it.stack_label || '').toLowerCase().trim()] || null;
       const t = RQ_TYPE_MAP[it.repair_type] || { unit: 'area' };
-      const w = it.length_in, h = it.height_in, d = it.depth_in;
-      let area = rqCalcArea(w, h);
-      let lf   = rqCalcLf(w);
-      let vol  = rqCalcVol(w, h, d);
-      // Honor a precomputed qty when no dimensions were given.
+      let w = it.length_in, h = it.height_in, d = it.depth_in;
+      let qtyManual = null;
+      // area_sf/lf/volume_cf are GENERATED ALWAYS in the DB — never insert them.
+      // Honor a precomputed qty when no dimensions were given, via qty_manual.
       if (it.qty_override != null && w == null && h == null) {
-        if (t.unit === 'linear') { lf = +Number(it.qty_override).toFixed(4); area = null; }
-        else if (t.unit === 'count') { /* count stored via qty_override -> area null */ area = null; lf = null; }
-        else { area = +Number(it.qty_override).toFixed(4); lf = null; }
+        const ov = +Number(it.qty_override).toFixed(4);
+        if (t.unit === 'linear') { w = +Number(ov * 12).toFixed(4); } // lf = length_in/12 -> store inches so generated lf === ov
+        else { qtyManual = ov; } // count/area override with no dimensions
       }
       return {
         project_id:    pid,
@@ -10774,9 +10774,7 @@ async function qiApply(id) {
         length_in:     w,
         height_in:     h,
         depth_in:      d,
-        area_sf:       area,
-        lf:            lf,
-        volume_cf:     vol,
+        qty_manual:    qtyManual,
         status:        it.status || 'pending',
         si_report_ref: it.si_report_ref || null,
         date_observed: it.date_observed || null,
