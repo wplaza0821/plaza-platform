@@ -2043,14 +2043,94 @@ async function handleNativeLogin(email, password) {
   return { ok: true };
 }
 
-async function logout() {
+async function logout(reason) {
+  stopIdleTimer();
   stopNotifPolling();
   DATA.notifications = [];
   sessionStorage.removeItem(SESSION_AUTH_KEY);
+  if (reason === 'idle') {
+    try { sessionStorage.setItem('plaza_logout_reason', 'idle'); } catch (e) {}
+  }
   try { await sb.auth.signOut(); } catch (e) {}
   clearSbAuth();
   if (window.location.search) window.location.href = window.location.pathname;
   else window.location.reload();
+}
+
+/* =========================================================================
+   INACTIVITY AUTO-LOGOUT
+   Signs the user out after IDLE_LIMIT_MS of no user interaction (mouse,
+   keyboard, touch, scroll). Timer resets on activity; a short countdown
+   warning is shown near the end. Started on successful auth (see init()
+   and the login handlers), stopped on logout.
+   ========================================================================= */
+const IDLE_LIMIT_MS   = 5 * 60 * 1000;   // 5 minutes of inactivity -> logout
+const IDLE_WARN_MS    = 30 * 1000;       // show warning 30s before logout
+let _idleTimer  = null;
+let _idleWarnTimer = null;
+let _idleWarnToast = null;
+let _idleBound = false;
+
+function _clearIdleTimers() {
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  if (_idleWarnTimer) { clearTimeout(_idleWarnTimer); _idleWarnTimer = null; }
+  if (_idleWarnToast) {
+    try { _idleWarnToast.remove(); } catch (e) {}
+    _idleWarnToast = null;
+  }
+}
+
+function resetIdleTimer() {
+  // No auth = nothing to expire.
+  if (!AUTH) return;
+  _clearIdleTimers();
+  _idleWarnTimer = setTimeout(_showIdleWarning, Math.max(0, IDLE_LIMIT_MS - IDLE_WARN_MS));
+  _idleTimer = setTimeout(() => { logout('idle'); }, IDLE_LIMIT_MS);
+}
+
+function _showIdleWarning() {
+  // Lightweight, non-blocking banner. Any activity dismisses it via reset.
+  try {
+    if (_idleWarnToast) { try { _idleWarnToast.remove(); } catch (e) {} }
+    const el = document.createElement('div');
+    el.id = 'idleWarnToast';
+    el.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;'
+      + 'background:#1a1a1a;color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;'
+      + 'box-shadow:0 4px 16px rgba(0,0,0,.3);display:flex;gap:12px;align-items:center;';
+    el.innerHTML = '<span>Signing you out for inactivity soon…</span>';
+    const btn = document.createElement('button');
+    btn.textContent = 'Stay signed in';
+    btn.style.cssText = 'background:#fff;color:#1a1a1a;border:none;padding:5px 12px;border-radius:6px;'
+      + 'font-size:12px;font-weight:600;cursor:pointer;';
+    btn.onclick = (e) => { e.stopPropagation(); resetIdleTimer(); };
+    el.appendChild(btn);
+    document.body.appendChild(el);
+    _idleWarnToast = el;
+  } catch (e) {}
+}
+
+function _onUserActivity() {
+  // Only meaningful while authed; also dismisses any active warning.
+  if (!AUTH) return;
+  resetIdleTimer();
+}
+
+function startIdleTimer() {
+  if (!AUTH) return;
+  if (!_idleBound) {
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click', 'wheel'];
+    events.forEach(ev => window.addEventListener(ev, _onUserActivity, { passive: true }));
+    // Cross-tab: if another tab records activity, keep this one alive too.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') _onUserActivity();
+    });
+    _idleBound = true;
+  }
+  resetIdleTimer();
+}
+
+function stopIdleTimer() {
+  _clearIdleTimers();
 }
 window.logout = logout;
 
@@ -3493,7 +3573,12 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   async function savePaLine(inp) {
     const sovId = inp.dataset.sov;
     const tr = inp.closest('tr');
+    if (!tr) return;
     const si = sovItems.find(s => s.id === sovId);
+    // Guard: SOV item may have been removed/superseded while the modal was
+    // open (version change, stale row). Bail cleanly instead of throwing
+    // mid-save in the G702/G703 money path.
+    if (!si) { toast('This line references a schedule-of-values item that no longer exists. Reopen the pay app.', 'error'); return; }
     const C = Number(si.scheduled_value) || 0;
     const D = Number(lineBySov[sovId]?.work_completed_previous) || 0;
     const E = Number(tr.querySelector('input[data-f="work_completed_this_period"]')?.value) || 0;
@@ -5445,35 +5530,8 @@ function tokenUrl(token) {
 
 
 
-function renderAccess() {
-  const body = document.getElementById('accessBody');
-  if (!body) return;
-  const list = DATA.contractors.filter(c => c.active);
-  if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">🔑</div><div class="empty-title">No access links yet</div><div class="empty-sub">Click "New Access Link" to generate a contractor URL.</div></div></td></tr>`;
-    return;
-  }
-  body.innerHTML = list.map(t => {
-    const proj = getProject(t.project_id);
-    const projLabel = proj ? (escapeHtml(proj.code) + ' — ' + escapeHtml(proj.name)) : '<span class="text-muted">—</span>';
-    const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : '—';
-    const tokenShort = t.access_token ? (t.access_token.slice(0, 10) + '…') : '—';
-    return `
-      <tr>
-        <td><strong>${escapeHtml(t.name)}</strong>${t.contact_email ? `<div class="text-sm text-muted">${escapeHtml(t.contact_email)}</div>` : ''}</td>
-        <td>${projLabel}</td>
-        <td class="text-sm">${escapeHtml(moduleSummary(t.permissions))}</td>
-        <td class="text-sm">${created}</td>
-        <td class="text-sm"><code style="font-size:11px;">${escapeHtml(tokenShort)}</code></td>
-        <td class="row-actions" style="text-align:right; white-space:nowrap;">
-          <button class="btn btn-secondary btn-sm" onclick="copyAccessLink('${escapeHtml(t.access_token)}')">Copy Link</button>
-          <button class="btn btn-secondary btn-sm" onclick="openAccessModal('${t.id}')">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="revokeAccess('${t.id}')">Revoke</button>
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
+// (renderAccess removed 2026-07-06 — Access tab retired; contractor access
+// links are managed from the Users modal via openAccessModal/copyAccessLink/revokeAccess.)
 
 function openAccessModal(contractorId) {
   const editing = contractorId ? DATA.contractors.find(c => c.id === contractorId) : null;
@@ -6241,6 +6299,14 @@ function showLogin() {
   if (nativeF && nativeF.style.display === 'none') nativeF.style.display = '';
   const email = document.getElementById('nativeEmail');
   if (email) { setTimeout(() => email.focus(), 50); }
+  // Surface an inactivity-logout notice, if that's why we're back at login.
+  try {
+    if (sessionStorage.getItem('plaza_logout_reason') === 'idle') {
+      sessionStorage.removeItem('plaza_logout_reason');
+      const errEl = document.getElementById('nativeLoginError');
+      if (errEl) errEl.textContent = 'You were signed out after 5 minutes of inactivity. Please sign in again.';
+    }
+  } catch (e) {}
 }
 
 // Invite / password-reset flow: the user arrived from a Supabase invite or
@@ -6317,6 +6383,7 @@ document.getElementById('setPasswordForm')?.addEventListener('submit', async (e)
         await loadAllData();
         render();
         startNotifPolling();
+        startIdleTimer();
         return;
       }
     }
@@ -6348,6 +6415,7 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     await loadAllData();
     render();
     startNotifPolling();
+    startIdleTimer();
   } else {
     if (errEl) errEl.textContent = 'Invalid access code';
     if (input) { input.value = ''; input.focus(); }
@@ -6374,6 +6442,7 @@ document.getElementById('nativeLoginForm')?.addEventListener('submit', async (e)
     await loadAllData();
     render();
     startNotifPolling();
+    startIdleTimer();
   } else {
     if (errEl) errEl.textContent = res.error || 'Sign-in failed';
     if (pwEl) { pwEl.value = ''; pwEl.focus(); }
@@ -6727,6 +6796,7 @@ async function init() {
 
   // Phase B Layer 3: begin light notification polling for native users.
   startNotifPolling();
+  startIdleTimer();
 
   // Phase 4: flush any writes queued while offline, once we're authed + online.
   flushOutbox();
@@ -9222,9 +9292,9 @@ async function schedApproveImport(id) {
   try {
     // Only supersede THIS import's own rows (idempotent re-apply). Other imports'
     // tasks stay untouched so each upload keeps its own chart.
-    const priorImportIds = [];
-    // Always also clear any rows already carrying THIS import's id (idempotent re-apply).
-    const idsToClear = [id, ...priorImportIds];
+    // Clear any rows already carrying THIS import's id (idempotent re-apply).
+    // Each import supersedes only its own rows; other imports' charts stay intact.
+    const idsToClear = [id];
     const { error: delErr } = await sb.from('schedule_tasks')
       .delete().eq('project_id', pid).in('import_id', idsToClear);
     if (delErr) throw delErr;
