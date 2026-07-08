@@ -3366,6 +3366,31 @@ async function openPayAppModal(payAppId, forceEdit = false) {
         </div>
       </div>
 
+      ${editable && pa.status === 'draft' ? (() => {
+        const paDoc = payAppDocs.find(d => d.doc_type === 'pay_application');
+        return `
+      <div class="sov-section-head" style="margin-top:18px;">
+        <div class="sov-section-title">📄 Import from Pay Application PDF</div>
+        <div class="sov-meta">Upload a G702/G703 PDF — values are extracted and reviewed before applying</div>
+      </div>
+      <div id="paImportZone" class="waiver-zone ${paDoc ? 'uploaded' : ''}">
+        ${paDoc ? `
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;text-align:left;margin-bottom:8px;">
+            <span>📄 <strong>${escapeHtml(paDoc.file_name || 'Pay application')}</strong>
+              ${paDoc.analyzed_at ? `<span class="badge badge-green" title="Analyzed ${fmtDate(paDoc.analyzed_at)}">Analyzed</span>` : '<span class="badge badge-yellow">Not analyzed</span>'}</span>
+            <button class="btn btn-secondary btn-sm" onclick="viewPayAppDoc('${paDoc.id}')">View PDF</button>
+            <button class="btn btn-primary btn-sm" id="paAnalyzeBtn" onclick="paAnalyze('${paDoc.id}','${pa.id}')">${paDoc.analyzed_at ? '↻ Re-analyze' : '🔍 Analyze'}</button>
+            ${paDoc.analysis ? `<button class="btn btn-primary btn-sm" onclick="paReview('${paDoc.id}','${pa.id}')">📋 Review &amp; Apply</button>` : ''}
+            <button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${paDoc.id}','${pa.id}')">Remove</button>
+          </div>
+          ${paDoc.analysis && Array.isArray(paDoc.analysis.warnings) && paDoc.analysis.warnings.length ? `<div class="warn-banner" style="margin-top:6px;">⚠️ ${paDoc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
+        ` : `
+          <div class="text-muted" style="margin-bottom:10px;">No pay application PDF uploaded. Upload one to auto-fill the G703 below.</div>
+          <input type="file" id="paImportFile" accept=".pdf,image/jpeg,image/png" />
+          <button class="btn btn-primary btn-sm" id="paImportUploadBtn" style="margin-top:10px;">📄 Upload Pay Application PDF</button>
+        `}
+      </div>` ; })() : ''}
+
       <div class="sov-section-head" style="margin-top:18px;">
         <div class="sov-section-title">G703 — Continuation Sheet</div>
         <div class="sov-meta">SOV v${pa.sov_version || 1} · Retainage ${financeLocked ? 'as certified' : proj.retainage_pct + '%'}</div>
@@ -3519,6 +3544,12 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     uploadPadBtn.addEventListener('click', () => uploadPayAppDoc(pa));
   }
 
+  // Wire pay-application PDF import upload
+  const paImportUploadBtn = document.getElementById('paImportUploadBtn');
+  if (paImportUploadBtn) {
+    paImportUploadBtn.addEventListener('click', () => uploadPayAppImport(pa));
+  }
+
   function recalcPaRow(inp) {
     const sovId = inp.dataset.sov;
     const field = inp.dataset.f;
@@ -3615,16 +3646,21 @@ function payAppFooter(pa, editable, hasWaiver) {
     buttons.push(`<button class="btn btn-secondary" onclick="closeModal()">Save &amp; Close</button>`);
     buttons.push(`<button class="btn btn-primary" id="submitPaBtn" ${hasWaiver ? '' : 'disabled'} onclick="submitPayApp('${pa.id}')">${hasWaiver ? 'Submit for Review' : 'Upload Waiver to Submit'}</button>`);
   } else if (isOwner() && ['submitted','under_review'].includes(pa.status)) {
+    const approveGate = hasWaiver ? '' : 'disabled title="Upload the release of lien before approving"';
     buttons.push(`<button class="btn btn-danger" onclick="rejectPayApp('${pa.id}')">Reject</button>`);
     buttons.push(`<div style="flex:1"></div>`);
-    buttons.push(`<button class="btn btn-secondary" onclick="approveAsNoted('${pa.id}')">Approve as Noted</button>`);
+    buttons.push(`<button class="btn btn-secondary" ${approveGate} onclick="approveAsNoted('${pa.id}')">Approve as Noted</button>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
-    buttons.push(`<button class="btn btn-primary" onclick="approvePayApp('${pa.id}')">Approve</button>`);
+    buttons.push(`<button class="btn btn-primary" ${approveGate} onclick="approvePayApp('${pa.id}')">${hasWaiver ? 'Approve' : 'Waiver Required to Approve'}</button>`);
   } else if (isOwner() && pa.status === 'approved') {
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
     buttons.push(`<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
     buttons.push(`<button class="btn btn-primary" onclick="markPaid('${pa.id}')">Mark Paid</button>`);
+  } else if (isOwner() && pa.status === 'rejected') {
+    buttons.push(`<button class="btn btn-danger" onclick="deletePayApp('${pa.id}')">Delete Pay App</button>`);
+    buttons.push(`<div style="flex:1"></div>`);
+    buttons.push(`<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
   } else {
     buttons.push(`<div style="flex:1"></div>`);
     if (['approved','paid'].includes(pa.status)) {
@@ -3732,6 +3768,216 @@ async function uploadPayAppDoc(pa) {
 }
 window.uploadPayAppDoc = uploadPayAppDoc;
 
+// ---- Pay App PDF import (AI-assisted G702/G703 extraction) ----
+// Uploads the contractor's pay application PDF as a doc_type='pay_application'
+// row in the 'change-orders' bucket, then the owner/staff/contractor can
+// Analyze it (analyze-payapp edge fn) and Review & Apply the extracted values
+// onto the G703 line items. Nothing writes to pay_app_lines until Apply.
+async function uploadPayAppImport(pa) {
+  const fileEl = document.getElementById('paImportFile');
+  const file = fileEl?.files?.[0];
+  if (!file) { toast('Choose a PDF first', 'error'); return; }
+  if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
+  const allowed = ['application/pdf','image/jpeg','image/png'];
+  if (!allowed.includes(file.type)) { toast('Only PDF/JPG/PNG allowed', 'error'); return; }
+
+  const btn = document.getElementById('paImportUploadBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
+
+  const proj = getProject(pa.project_id);
+  const codePrefix = proj?.code || pa.project_id;
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${codePrefix}/payapp/${pa.id}/import_${Date.now()}_${safeName}`;
+  const { error: upErr } = await sb.storage.from('change-orders').upload(path, file, { upsert: false });
+  if (upErr) { handleSbError(upErr, 'Upload pay application'); if (btn) { btn.disabled = false; btn.textContent = '📄 Upload Pay Application PDF'; } return; }
+
+  const { data: ins, error: insErr } = await sb.from('pay_app_documents').insert({
+    pay_app_id: pa.id,
+    doc_type: 'pay_application',
+    file_path: path,
+    file_name: file.name,
+    file_size: file.size,
+    uploaded_by: AUTH.name,
+  }).select().single();
+  if (insErr) { handleSbError(insErr, 'Record pay application'); if (btn) { btn.disabled = false; btn.textContent = '📄 Upload Pay Application PDF'; } return; }
+
+  await loadAllData();
+  toast('Pay application uploaded — analyzing…');
+  openPayAppModal(pa.id, true);
+  // Kick off analysis immediately for a smooth one-click experience.
+  if (ins?.id) paAnalyze(ins.id, pa.id);
+}
+window.uploadPayAppImport = uploadPayAppImport;
+
+async function paAnalyze(docId, payAppId) {
+  if (typeof ensureFreshPrivilegedSession === 'function') {
+    const ok = await ensureFreshPrivilegedSession();
+    if (!ok) return;
+  }
+  const btn = document.getElementById('paAnalyzeBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…'; }
+  toast('Analyzing pay application… this can take 15–40s', 'info');
+  try {
+    const res = await fetch(ANALYZE_PAYAPP_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+      },
+      body: JSON.stringify({ doc_id: docId }),
+    });
+    let j = {}; try { j = await res.json(); } catch {}
+    if (!res.ok || j?.error) {
+      const map = {
+        analyzer_not_configured: 'Pay-app analyzer not configured (missing LLM key).',
+        no_file: 'No file attached to this upload.',
+        wrong_doc_type: 'This document is not a pay application.',
+        not_draft: 'Pay app is no longer a draft — values cannot be imported.',
+        forbidden: 'You are not allowed to analyze this pay app.',
+        forbidden_not_your_pay_app: 'This pay app belongs to another contractor.',
+        download_failed: 'Could not read the uploaded PDF from storage.',
+        no_lines_extracted: 'No line items could be read from the PDF. Check that it is a G703 continuation sheet.',
+        llm_failed: 'AI analysis failed. ' + (j?.detail || ''),
+        llm_parse_failed: 'AI returned an unreadable result. Try re-analyzing.',
+      };
+      throw new Error(map[j?.error] || j?.detail || j?.message || j?.error || ('HTTP ' + res.status));
+    }
+    await loadAllData();
+    toast(`Extracted ${j.line_count} line item(s) — review, then Apply`, 'success');
+    openPayAppModal(payAppId, true);
+    paReview(docId, payAppId);
+  } catch (e) {
+    await loadAllData();
+    openPayAppModal(payAppId, true);
+    toast('Analyze failed: ' + (e.message || e), 'error');
+  }
+}
+window.paAnalyze = paAnalyze;
+
+// Review screen: match extracted lines to the pay app's SOV items and let the
+// user apply E (this period) + F (stored) per line. Matching: exact item_no
+// first, then normalized description.
+function paReview(docId, payAppId) {
+  const doc = (DATA.payAppDocs || []).find(d => d.id === docId);
+  const pa = DATA.payApps.find(x => x.id === payAppId);
+  if (!doc?.analysis || !Array.isArray(doc.analysis.lines)) { toast('No analysis to review — Analyze first', 'info'); return; }
+  if (!pa) return;
+  const proj = getProject(pa.project_id);
+  const sovItems = DATA.sovItems
+    .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1) && !i.is_alternate)
+    .sort((a,b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byItemNo = {}; sovItems.forEach(i => { byItemNo[norm(i.item_no)] = i; });
+  const rows = doc.analysis.lines.map((ln, idx) => {
+    let match = byItemNo[norm(ln.item_no)];
+    if (!match) {
+      const nd = norm(ln.description);
+      match = sovItems.find(i => nd && norm(i.description) === nd)
+           || sovItems.find(i => nd && (norm(i.description).includes(nd) || nd.includes(norm(i.description))));
+    }
+    return { idx, ln, match };
+  });
+  const matched = rows.filter(r => r.match).length;
+  const unmatched = rows.length - matched;
+
+  const bodyRows = rows.map(r => {
+    const { ln, match } = r;
+    if (!match) {
+      return `<tr style="background:rgba(245,158,11,0.10);">
+        <td class="text-sm"><strong>${escapeHtml(ln.item_no || '—')}</strong><div class="text-muted">${escapeHtml(ln.description || '')}</div></td>
+        <td class="num text-sm">${fmt$2(ln.this_period)}</td>
+        <td class="num text-sm">${fmt$2(ln.stored)}</td>
+        <td class="text-sm" colspan="2"><span class="badge badge-yellow">No SOV match</span> — skipped</td>
+      </tr>`;
+    }
+    const C = Number(match.scheduled_value) || 0;
+    const D = Number((DATA.payAppLines.find(l => l.pay_app_id === pa.id && l.sov_item_id === match.id) || {}).work_completed_previous) || 0;
+    const G = D + Number(ln.this_period) + Number(ln.stored);
+    const over = G > C + 0.01;
+    return `<tr${over ? ' style="background:rgba(239,68,68,0.10);"' : ''}>
+      <td class="text-sm"><strong>${escapeHtml(match.item_no)}</strong><div class="text-muted">${escapeHtml(match.description)}</div></td>
+      <td class="num text-sm">${fmt$2(ln.this_period)}</td>
+      <td class="num text-sm">${fmt$2(ln.stored)}</td>
+      <td class="num text-sm">${fmt$2(G)} / ${fmt$2(C)}</td>
+      <td class="text-sm">${over ? '<span class="badge badge-red">Over scheduled value</span>' : '<span class="badge badge-green">OK</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const h = doc.analysis.header || {};
+  const hdrBits = [];
+  if (h.current_payment_due != null) hdrBits.push(`Current Due: <strong>${fmt$2(h.current_payment_due)}</strong>`);
+  if (h.total_completed_stored != null) hdrBits.push(`Total Completed &amp; Stored: <strong>${fmt$2(h.total_completed_stored)}</strong>`);
+  if (h.period_to) hdrBits.push(`Period To: <strong>${escapeHtml(h.period_to)}</strong>`);
+
+  showModal({
+    title: `Review Extracted Pay Application — #${pa.pay_app_number}`,
+    wide: true,
+    body: `
+      ${doc.analysis.warnings && doc.analysis.warnings.length ? `<div class="warn-banner">⚠️ ${doc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
+      <div class="hint-banner">Extracted <strong>${rows.length}</strong> line(s): <strong>${matched}</strong> matched to the SOV${unmatched ? `, <strong>${unmatched}</strong> unmatched (will be skipped)` : ''}. ${hdrBits.length ? '<br>' + hdrBits.join(' · ') : ''}<br>Applying will set each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>; totals recompute automatically. Review against the PDF before applying.</div>
+      <div class="table-wrap" style="max-height:420px;overflow:auto;">
+        <table class="data">
+          <thead><tr><th>SOV Item</th><th class="num">E: This Period</th><th class="num">F: Stored</th><th class="num">Completed / Sched</th><th>Check</th></tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" onclick="openPayAppModal('${pa.id}', true)">Cancel</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" onclick="paApply('${docId}','${pa.id}')">Apply ${matched} Matched Line(s)</button>`,
+  });
+}
+window.paReview = paReview;
+
+async function paApply(docId, payAppId) {
+  const doc = (DATA.payAppDocs || []).find(d => d.id === docId);
+  const pa = DATA.payApps.find(x => x.id === payAppId);
+  if (!doc?.analysis || !pa) { toast('Nothing to apply', 'error'); return; }
+  if (pa.status !== 'draft') { toast('Only draft pay apps can be updated', 'error'); return; }
+  const proj = getProject(pa.project_id);
+  const sovItems = DATA.sovItems
+    .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1) && !i.is_alternate);
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byItemNo = {}; sovItems.forEach(i => { byItemNo[norm(i.item_no)] = i; });
+
+  let applied = 0;
+  for (const ln of doc.analysis.lines) {
+    let match = byItemNo[norm(ln.item_no)];
+    if (!match) {
+      const nd = norm(ln.description);
+      match = sovItems.find(i => nd && norm(i.description) === nd)
+           || sovItems.find(i => nd && (norm(i.description).includes(nd) || nd.includes(norm(i.description))));
+    }
+    if (!match) continue;
+    const line = DATA.payAppLines.find(l => l.pay_app_id === pa.id && l.sov_item_id === match.id);
+    if (!line) continue;
+    const C = Number(match.scheduled_value) || 0;
+    const D = Number(line.work_completed_previous) || 0;
+    const E = Number(ln.this_period) || 0;
+    const F = Number(ln.stored) || 0;
+    const G = D + E + F;
+    const H = C > 0 ? (G / C) * 100 : 0;
+    const I = C - G;
+    const J = G * ((Number(proj.retainage_pct) || 0) / 100);
+    const { error } = await sb.from('pay_app_lines').update({
+      work_completed_this_period: E,
+      materials_stored: F,
+      total_completed_stored: G,
+      pct_complete: H,
+      balance_to_finish: I,
+      retainage: J,
+    }).eq('id', line.id);
+    if (error) { handleSbError(error, 'Apply pay app line'); return; }
+    applied++;
+  }
+  await loadAllData();
+  toast(`Applied ${applied} line item(s) from the pay application PDF`, 'success');
+  openPayAppModal(pa.id, true);
+}
+window.paApply = paApply;
+
 async function viewPayAppDoc(docId) {
   const d = (DATA.payAppDocs || []).find(x => x.id === docId);
   if (!d?.file_path) { toast('No file on record', 'error'); return; }
@@ -3804,10 +4050,24 @@ async function submitPayApp(payAppId) {
 window.submitPayApp = submitPayApp;
 
 async function deletePayApp(payAppId) {
-  if (!confirm('Delete this draft pay app?')) return;
-  // remove waiver files
+  const pa = DATA.payApps.find(x => x.id === payAppId);
+  if (!pa) return;
+  // Deletable states: own draft (contractor/owner) or a rejected app (owner only).
+  const isDraft = pa.status === 'draft';
+  const isRejected = pa.status === 'rejected';
+  if (!(isDraft || (isRejected && isOwner()))) {
+    toast('Only draft or rejected pay apps can be deleted', 'error');
+    return;
+  }
+  if (!confirm(isRejected
+      ? `Permanently delete rejected Pay App #${pa.pay_app_number}? This removes its line items, uploaded documents, and lien waiver.`
+      : 'Delete this draft pay app?')) return;
+  // remove lien waiver files
   const ws = DATA.lienWaivers.filter(w => w.pay_app_id === payAppId);
   for (const w of ws) await sb.storage.from('lien-waivers').remove([w.file_path]).catch(()=>{});
+  // remove supporting/pay-application document files
+  const ds = (DATA.payAppDocs || []).filter(d => d.pay_app_id === payAppId);
+  for (const d of ds) { if (d.file_path) await sb.storage.from('change-orders').remove([d.file_path]).catch(()=>{}); }
   await sb.from('pay_apps').delete().eq('id', payAppId);
   await loadAllData();
   toast('Pay app deleted');
@@ -3816,7 +4076,17 @@ async function deletePayApp(payAppId) {
 }
 window.deletePayApp = deletePayApp;
 
+// Approval requires a partial release & waiver of lien on file (in addition to
+// the DB-layer submit gate). Approving rolls the pay app's completed-to-date
+// forward into the SOV (via previousCompletedBySov, which the SOV table reads).
+function payAppHasWaiver(payAppId) {
+  return DATA.lienWaivers.some(w => w.pay_app_id === payAppId);
+}
 async function approvePayApp(payAppId) {
+  if (!payAppHasWaiver(payAppId)) {
+    toast('A release of lien must be uploaded before this pay app can be approved.', 'error');
+    return;
+  }
   const { error } = await sb.from('pay_apps').update({
     status: 'approved',
     reviewed_at: new Date().toISOString(),
@@ -3824,13 +4094,17 @@ async function approvePayApp(payAppId) {
   }).eq('id', payAppId);
   if (error) { handleSbError(error, 'Approve pay app'); return; }
   await loadAllData();
-  toast('Pay app approved');
+  toast('Pay app approved — completed values rolled into the SOV');
   closeModal();
   render();
 }
 window.approvePayApp = approvePayApp;
 
 async function approveAsNoted(payAppId) {
+  if (!payAppHasWaiver(payAppId)) {
+    toast('A release of lien must be uploaded before this pay app can be approved.', 'error');
+    return;
+  }
   const notes = prompt('Approval notes:');
   if (notes === null) return;
   const { error } = await sb.from('pay_apps').update({
@@ -5733,6 +6007,7 @@ const ROUTE_FN_URL    = SUPABASE_URL + '/functions/v1/notify-route';
 const FINALIZE_FN_URL = SUPABASE_URL + '/functions/v1/finalize-report';
 const QB_FN_URL       = SUPABASE_URL + '/functions/v1/qb-billing';
 const ANALYZE_CO_FN_URL = SUPABASE_URL + '/functions/v1/analyze-co';
+const ANALYZE_PAYAPP_FN_URL = SUPABASE_URL + '/functions/v1/analyze-payapp';
 
 function myProfile() {
   if (!isNative() || !AUTH?.userId) return null;
