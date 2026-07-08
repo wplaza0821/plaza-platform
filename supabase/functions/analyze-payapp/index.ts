@@ -81,36 +81,64 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 const SYSTEM_PROMPT =
-  "You are a construction billing analyst for Plaza and Associates (structural " +
+  "You are a meticulous construction billing analyst for Plaza and Associates (structural " +
   "engineering / special inspection / owner's representation). You are given a " +
   "contractor's PAY APPLICATION document — usually AIA G702 (Application and " +
   "Certificate for Payment) with a G703 Continuation Sheet, but possibly a " +
-  "similar non-AIA format. Extract the billing values exactly as stated. Tasks:\n\n" +
+  "similar non-AIA format. The G703 is frequently a DENSE, LOW-RESOLUTION SCAN with " +
+  "many narrow columns packed tightly together. ACCURACY IS CRITICAL: these numbers " +
+  "authorize payment. Read every digit deliberately. Extract the billing values " +
+  "EXACTLY as printed. Tasks:\n\n" +
   "(1) CONTINUATION SHEET LINE ITEMS — for EVERY schedule-of-values line on the " +
   "continuation sheet, extract:\n" +
   "  • item_no: the item number/code exactly as printed (string; keep leading zeros, dots, dashes).\n" +
   "  • description: the work description exactly as printed.\n" +
   "  • scheduled_value: column C, the line's scheduled value in dollars.\n" +
-  "  • previous: column D, work completed from previous applications (dollars; 0 if blank).\n" +
+  "  • previous: column D, work completed from PREVIOUS applications (dollars; 0 if blank).\n" +
   "  • this_period: column E, work completed THIS PERIOD (dollars; 0 if blank).\n" +
   "  • stored: column F, materials presently stored (dollars; 0 if blank).\n" +
-  "  • total_completed: column G if printed (dollars; null if not shown).\n" +
-  "  Rules: skip subtotal/section-header rows that carry no billing of their own; " +
-  "  include zero-dollar lines (E=0,F=0) so the schedule stays complete; numbers " +
-  "  are plain (no $ or commas); never invent a value — use 0 for blank cells and " +
-  "  null only where a column is genuinely absent from the document.\n\n" +
-  "(2) G702 HEADER / CERTIFICATE FIGURES — extract when present (null when absent):\n" +
+  "  • total_completed: column G, total completed and stored to date (dollars; if the " +
+  "    document does not print column G, compute it as previous+this_period+stored).\n" +
+  "  COLUMN DISCIPLINE (the #1 source of error): the AIA G703 columns run left→right " +
+  "  as A(item) B(description) C(scheduled value) D(previous) E(this period) F(stored) " +
+  "  G(total completed) H(% ) I(balance to finish) [retainage]. On a tight scan it is " +
+  "  EASY to slide a value into the wrong column. For each line, the invariant " +
+  "  G = D + E + F MUST hold; if your read does not satisfy it, you have mis-assigned a " +
+  "  column — RE-READ that row before answering. A large 100%-complete line will show " +
+  "  its value in column D (previous) with E=0, NOT in E.\n" +
+  "  Rules: skip pure subtotal/section-header rows that carry no billing of their own; " +
+  "  include zero-dollar lines so the schedule stays complete; numbers are plain " +
+  "  (no $, no commas); never invent a value — use 0 for a blank cell; null only where a " +
+  "  column is genuinely absent from the document entirely.\n\n" +
+  "(2) PRINTED COLUMN TOTALS (the TOTALS / GRAND TOTAL row at the bottom of the G703) — " +
+  "  these are the contractor's own printed checksums. Transcribe them EXACTLY as printed " +
+  "  (do not compute — read the printed totals row):\n" +
+  "  • printed_scheduled_total (column C total), printed_previous_total (column D total),\n" +
+  "    printed_this_period_total (column E total), printed_stored_total (column F total),\n" +
+  "    printed_total_completed (column G total). Use null for any total not printed.\n\n" +
+  "(3) G702 HEADER / CERTIFICATE FIGURES — extract when present (null when absent):\n" +
   "  • application_no, period_to (ISO date if determinable), contract_sum_orig,\n" +
   "    change_order_net, contract_sum_to_date, total_completed_stored (line 4),\n" +
   "    retainage_amount (line 5 total), earned_less_retainage (line 6),\n" +
   "    previous_certificates (line 7), current_payment_due (line 8).\n\n" +
-  "(3) LIEN RELEASE / WAIVER DETECTION — if the uploaded file ALSO contains a " +
+  "(4) SELF-RECONCILIATION BEFORE YOU ANSWER (mandatory):\n" +
+  "  a. For every line confirm G = D + E + F (within $1). Fix any line that fails.\n" +
+  "  b. Confirm your extracted line items sum to the printed column totals from (2):\n" +
+  "     Σprevious ≈ printed_previous_total, Σthis_period ≈ printed_this_period_total,\n" +
+  "     Σstored ≈ printed_stored_total, Σtotal_completed ≈ printed_total_completed.\n" +
+  "  c. Confirm Σtotal_completed ≈ G702 line 4 (total_completed_stored).\n" +
+  "  If any check is off, you have a mis-read — go back into the columns and correct the " +
+  "  offending line(s) until every check reconciles. Set confidence to reflect how well " +
+  "  the final numbers reconcile (1.0 only when every checksum ties exactly).\n\n" +
+  "(5) LIEN RELEASE / WAIVER DETECTION — if the uploaded file ALSO contains a " +
   "conditional/unconditional waiver and release of lien (some contractors merge " +
   "them into one PDF), set waiver_included=true and waiver_amount to its stated " +
   "amount (null if not stated). Otherwise waiver_included=false.\n\n" +
   "Respond ONLY with a single minified JSON object, no prose, no markdown: " +
   '{"lines":[{"item_no":"string","description":"string","scheduled_value":number,' +
   '"previous":number,"this_period":number,"stored":number,"total_completed":number|null}],' +
+  '"printed_totals":{"printed_scheduled_total":number|null,"printed_previous_total":number|null,' +
+  '"printed_this_period_total":number|null,"printed_stored_total":number|null,"printed_total_completed":number|null},' +
   '"header":{"application_no":number|null,"period_to":"YYYY-MM-DD"|null,' +
   '"contract_sum_orig":number|null,"change_order_net":number|null,' +
   '"contract_sum_to_date":number|null,"total_completed_stored":number|null,' +
@@ -187,7 +215,7 @@ Deno.serve(async (req) => {
 
   const { data: pa, error: paErr } = await admin
     .from("pay_apps")
-    .select("id, project_id, contractor_id, status, sov_version")
+    .select("id, project_id, contractor_id, status, sov_version, pay_app_number")
     .eq("id", doc.pay_app_id)
     .maybeSingle();
   if (paErr || !pa) return json({ error: "pay_app_not_found" }, 404);
@@ -238,39 +266,34 @@ Deno.serve(async (req) => {
     "\nMatch extracted item_no values to this schedule where possible (use the schedule's " +
     "item_no spelling when the document clearly refers to the same line).";
 
-  // 6. LLM call
-  let llmJson: any;
-  try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": LLM_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: LLM_MODEL,
-        max_tokens: 8000,
-        system: SYSTEM_PROMPT,
-        messages: [{
-          role: "user",
-          content: [docBlock, { type: "text", text: userText }],
-        }],
-      }),
+  // 5b. Prior-pay-app FLOOR: the immediately preceding pay app's total completed-and-stored.
+  //     This pay app's "previous completed" (Σ col D) MUST equal the last pay app's total
+  //     completed-to-date, and its own total (Σ col G) can never be LESS than that floor.
+  //     Used as a reconciliation anchor — and the ONLY anchor when the sheet prints no
+  //     totals row and no G702 line 4.
+  let priorTotalCompleted: number | null = null;
+  let priorPayAppNumber: number | null = null;
+  {
+    const curNum = Number(pa.pay_app_number);
+    const { data: priors } = await admin
+      .from("pay_apps")
+      .select("id, pay_app_number, status, total_completed")
+      .eq("project_id", pa.project_id)
+      .eq("contractor_id", pa.contractor_id)
+      .neq("id", pa.id)
+      .order("pay_app_number", { ascending: false });
+    // Highest-numbered PRIOR pay app that is billed/certified (status !== 'draft').
+    const chosen = (priors || []).find((p: any) => {
+      const isPrior = !Number.isFinite(curNum) || Number(p.pay_app_number) < curNum;
+      return isPrior && String(p.status) !== "draft";
     });
-    if (!resp.ok) {
-      const t = await resp.text();
-      return json({ error: "llm_failed", status: resp.status, detail: t.slice(0, 500) }, 502);
+    if (chosen && chosen.total_completed != null) {
+      priorTotalCompleted = Number(chosen.total_completed);
+      priorPayAppNumber = Number(chosen.pay_app_number);
     }
-    const data = await resp.json();
-    const text = (data?.content || []).map((c: any) => c?.text || "").join("").trim();
-    const cleaned = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
-    llmJson = JSON.parse(cleaned);
-  } catch (e) {
-    return json({ error: "llm_parse_failed", detail: String(e).slice(0, 300) }, 502);
   }
 
-  // 7. Normalize + basic validation
+  // ---- helpers ----
   const num = (v: unknown): number => {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
@@ -280,52 +303,222 @@ Deno.serve(async (req) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   };
-  const rawLines = Array.isArray(llmJson?.lines) ? llmJson.lines : [];
-  const lines = rawLines
-    .map((l: any) => ({
-      item_no: String(l?.item_no ?? "").trim(),
-      description: String(l?.description ?? "").trim(),
-      scheduled_value: num(l?.scheduled_value),
-      previous: num(l?.previous),
-      this_period: num(l?.this_period),
-      stored: num(l?.stored),
-      total_completed: numOrNull(l?.total_completed),
-    }))
-    .filter((l: any) => l.item_no || l.description);
-  if (!lines.length) return json({ error: "no_lines_extracted" }, 422);
+  const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Tolerance: $1 or 0.1% of the reference, whichever is larger (rounding slack only).
+  const tol = (ref: number) => Math.max(1, Math.abs(ref) * 0.001);
 
-  const h = llmJson?.header || {};
-  const header = {
-    application_no: numOrNull(h.application_no),
-    period_to: typeof h.period_to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(h.period_to) ? h.period_to : null,
-    contract_sum_orig: numOrNull(h.contract_sum_orig),
-    change_order_net: numOrNull(h.change_order_net),
-    contract_sum_to_date: numOrNull(h.contract_sum_to_date),
-    total_completed_stored: numOrNull(h.total_completed_stored),
-    retainage_amount: numOrNull(h.retainage_amount),
-    earned_less_retainage: numOrNull(h.earned_less_retainage),
-    previous_certificates: numOrNull(h.previous_certificates),
-    current_payment_due: numOrNull(h.current_payment_due),
-  };
-  const confidence = Math.max(0, Math.min(1, Number(llmJson?.confidence) || 0));
-  const waiver_included = llmJson?.waiver_included === true;
-  const waiver_amount = numOrNull(llmJson?.waiver_amount);
+  async function callLLM(extraUserText: string): Promise<any> {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": LLM_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: LLM_MODEL,
+        max_tokens: 16000,
+        temperature: 0,
+        system: SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: [docBlock, { type: "text", text: userText + extraUserText }],
+        }],
+      }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(`llm_failed status=${resp.status} ${t.slice(0, 400)}`);
+    }
+    const data = await resp.json();
+    if (data?.stop_reason === "max_tokens") {
+      throw new Error("llm_truncated: response hit max_tokens — schedule too long to extract in one pass");
+    }
+    const text = (data?.content || []).map((c: any) => c?.text || "").join("").trim();
+    const cleaned = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
+    return JSON.parse(cleaned);
+  }
 
-  // Reconciliation warnings (surfaced on the review screen)
-  const warnings: string[] = [];
-  const sumG = lines.reduce((s: number, l: any) =>
-    s + (l.total_completed ?? (l.previous + l.this_period + l.stored)), 0);
-  if (header.total_completed_stored != null &&
-      Math.abs(sumG - header.total_completed_stored) > Math.max(1, header.total_completed_stored * 0.005)) {
+  function normalize(llmJson: any) {
+    const rawLines = Array.isArray(llmJson?.lines) ? llmJson.lines : [];
+    const lines = rawLines
+      .map((l: any) => {
+        const previous = num(l?.previous);
+        const this_period = num(l?.this_period);
+        const stored = num(l?.stored);
+        const tcRaw = numOrNull(l?.total_completed);
+        // If G not printed, compute it; keep printed value otherwise.
+        const total_completed = tcRaw === null ? (previous + this_period + stored) : tcRaw;
+        return {
+          item_no: String(l?.item_no ?? "").trim(),
+          description: String(l?.description ?? "").trim(),
+          scheduled_value: num(l?.scheduled_value),
+          previous, this_period, stored, total_completed,
+        };
+      })
+      .filter((l: any) => l.item_no || l.description);
+    const h = llmJson?.header || {};
+    const header = {
+      application_no: numOrNull(h.application_no),
+      period_to: typeof h.period_to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(h.period_to) ? h.period_to : null,
+      contract_sum_orig: numOrNull(h.contract_sum_orig),
+      change_order_net: numOrNull(h.change_order_net),
+      contract_sum_to_date: numOrNull(h.contract_sum_to_date),
+      total_completed_stored: numOrNull(h.total_completed_stored),
+      retainage_amount: numOrNull(h.retainage_amount),
+      earned_less_retainage: numOrNull(h.earned_less_retainage),
+      previous_certificates: numOrNull(h.previous_certificates),
+      current_payment_due: numOrNull(h.current_payment_due),
+    };
+    const pt = llmJson?.printed_totals || {};
+    const printed_totals = {
+      printed_scheduled_total: numOrNull(pt.printed_scheduled_total),
+      printed_previous_total: numOrNull(pt.printed_previous_total),
+      printed_this_period_total: numOrNull(pt.printed_this_period_total),
+      printed_stored_total: numOrNull(pt.printed_stored_total),
+      printed_total_completed: numOrNull(pt.printed_total_completed),
+    };
+    return { lines, header, printed_totals,
+      waiver_included: llmJson?.waiver_included === true,
+      waiver_amount: numOrNull(llmJson?.waiver_amount),
+      confidence: Math.max(0, Math.min(1, Number(llmJson?.confidence) || 0)) };
+  }
+
+  // Reconciliation engine: returns {ok, warnings, discrepancies[]} where
+  // discrepancies is human+model readable text describing each failed checksum.
+  function reconcile(n: any) {
+    const { lines, header, printed_totals } = n;
+    const sum = (k: string) => lines.reduce((s: number, l: any) => s + (l[k] || 0), 0);
+    const sPrev = sum("previous"), sThis = sum("this_period"), sStored = sum("stored"), sG = sum("total_completed");
+    const disc: string[] = [];
+    const warnings: string[] = [];
+
+    // (a) per-line G = D+E+F
+    const badLines = lines.filter((l: any) =>
+      Math.abs(l.total_completed - (l.previous + l.this_period + l.stored)) > 1);
+    if (badLines.length) {
+      disc.push(`${badLines.length} line(s) violate G=D+E+F, e.g. ` +
+        badLines.slice(0, 5).map((l: any) =>
+          `${l.item_no}: G ${money(l.total_completed)} ≠ D ${money(l.previous)} + E ${money(l.this_period)} + F ${money(l.stored)}`).join("; ") + ".");
+    }
+
+    // (b) line sums vs printed column totals
+    const cmp = (label: string, got: number, printed: number | null) => {
+      if (printed == null) return;
+      if (Math.abs(got - printed) > tol(printed)) {
+        disc.push(`${label}: extracted line items sum to ${money(got)} but the sheet's printed ${label} total is ${money(printed)} (off by ${money(got - printed)}).`);
+      }
+    };
+    cmp("previous (col D)", sPrev, printed_totals.printed_previous_total);
+    cmp("this period (col E)", sThis, printed_totals.printed_this_period_total);
+    cmp("stored (col F)", sStored, printed_totals.printed_stored_total);
+    cmp("total completed (col G)", sG, printed_totals.printed_total_completed);
+
+    // (c) G total vs G702 line 4
+    if (header.total_completed_stored != null &&
+        Math.abs(sG - header.total_completed_stored) > tol(header.total_completed_stored)) {
+      disc.push(`Continuation-sheet total completed ${money(sG)} does not match G702 line 4 ${money(header.total_completed_stored)} (off by ${money(sG - header.total_completed_stored)}).`);
+    }
+    // (d) printed G total vs line 4 (document-internal, surfaced only as a warning — that would be a contractor error, not ours)
+    if (printed_totals.printed_total_completed != null && header.total_completed_stored != null &&
+        Math.abs(printed_totals.printed_total_completed - header.total_completed_stored) > tol(header.total_completed_stored)) {
+      warnings.push(`Document may be internally inconsistent: printed G703 total ${money(printed_totals.printed_total_completed)} ≠ G702 line 4 ${money(header.total_completed_stored)}. Verify against the PDF.`);
+    }
+
+    // (e) PRIOR-PAY-APP FLOOR anchor. The extracted "previous completed" (Σ col D) must
+    //     equal the immediately preceding certified pay app's total completed-to-date, and
+    //     the current total (Σ col G) can never be LESS than that floor. This is the ONLY
+    //     numeric anchor when the sheet prints no totals row and no G702 line 4.
+    if (priorTotalCompleted != null) {
+      if (Math.abs(sPrev - priorTotalCompleted) > tol(priorTotalCompleted)) {
+        disc.push(`"previous completed" (Σ col D) sums to ${money(sPrev)} but pay app #${priorPayAppNumber} already certified ${money(priorTotalCompleted)} completed-to-date — this pay app's "previous" column must equal that. A prior-billed line was likely mis-read as $0 or put in the wrong column.`);
+      }
+      if (sG < priorTotalCompleted - tol(priorTotalCompleted)) {
+        disc.push(`Total completed-to-date ${money(sG)} is LESS than the prior certified total ${money(priorTotalCompleted)} (pay app #${priorPayAppNumber}) — impossible; completed-to-date can only increase. Re-read the columns.`);
+      }
+    }
+
+    // Track whether ANY external checksum existed. If the sheet printed no column-G total,
+    // no G702 line 4, AND there is no prior pay app to anchor to, we cannot fully verify.
+    const hadStrongAnchor =
+      printed_totals.printed_previous_total != null ||
+      printed_totals.printed_total_completed != null ||
+      header.total_completed_stored != null ||
+      priorTotalCompleted != null;
+
+    return { ok: disc.length === 0, discrepancies: disc, warnings, hadStrongAnchor };
+  }
+
+  // 6. LLM call with self-repair loop (up to 3 passes). We only accept an
+  //    extraction once it reconciles against the sheet's own printed totals.
+  const MAX_PASSES = 3;
+  let normalized: any = null;
+  let recon: any = null;
+  let repairNote = "";
+  let lastErr = "";
+  for (let pass = 1; pass <= MAX_PASSES; pass++) {
+    let llmJson: any;
+    try {
+      llmJson = await callLLM(repairNote);
+    } catch (e) {
+      lastErr = String(e).slice(0, 400);
+      // Truncation/transport errors are worth one more try; parse errors too.
+      if (pass < MAX_PASSES) { repairNote = "\n\nYour previous response could not be used (" + lastErr + "). Return ONLY valid minified JSON per the schema."; continue; }
+      return json({ error: "llm_error", detail: lastErr }, 502);
+    }
+    const n = normalize(llmJson);
+    if (!n.lines.length) {
+      lastErr = "no_lines_extracted";
+      if (pass < MAX_PASSES) { repairNote = "\n\nYour previous response had no line items. Re-read the G703 continuation sheet and extract every line."; continue; }
+      return json({ error: "no_lines_extracted" }, 422);
+    }
+    const r = reconcile(n);
+    normalized = n; recon = r;
+    if (r.ok) break;
+    // Build a targeted repair prompt with the exact discrepancies.
+    if (pass < MAX_PASSES) {
+      repairNote =
+        "\n\nYOUR PREVIOUS EXTRACTION DID NOT RECONCILE against the sheet's own printed " +
+        "totals. This almost always means a value was read from the WRONG COLUMN (e.g. a " +
+        "100%-complete line's amount placed in 'this period' (E) instead of 'previous' (D), " +
+        "or a digit misread). Fix these specific problems by RE-READING the affected rows and " +
+        "columns, then return the full corrected JSON:\n- " + r.discrepancies.join("\n- ") +
+        "\nEnsure every line satisfies G=D+E+F and that Σ of each column equals the printed " +
+        "column totals you transcribed.";
+    }
+  }
+
+  const { lines, header, printed_totals, waiver_included, waiver_amount } = normalized;
+  // Confidence: keep the model's, but never report high confidence if it didn't reconcile.
+  let confidence = normalized.confidence;
+  const warnings: string[] = [...recon.warnings];
+  if (!recon.ok) {
+    confidence = Math.min(confidence, 0.5);
     warnings.push(
-      `Continuation-sheet total ($${sumG.toFixed(2)}) does not match G702 line 4 ` +
-      `($${header.total_completed_stored.toFixed(2)}).`,
+      "⚠️ Automatic reconciliation FAILED after " + MAX_PASSES + " attempts — the extracted " +
+      "figures do not tie to the pay application's own printed totals. DO NOT rely on these values; " +
+      "verify every line against the PDF before applying. Details: " + recon.discrepancies.join(" "),
     );
   }
-  if (confidence < 0.7) warnings.push("Low extraction confidence — verify every value against the PDF.");
+  if (confidence < 0.7 && recon.ok) {
+    warnings.push("Model reported low confidence — spot-check values against the PDF.");
+  }
+  // No external checksum at all (no printed totals, no G702 line 4, no prior pay app):
+  // reconciliation was vacuously "ok" but unverified — say so explicitly, cap confidence.
+  if (recon.ok && !recon.hadStrongAnchor) {
+    confidence = Math.min(confidence, 0.6);
+    warnings.push(
+      "⚠️ Could not auto-verify: this document prints no column totals or G702 line 4, and " +
+      "there is no prior certified pay app to anchor against. Values were extracted but NOT " +
+      "cross-checked — verify every line against the PDF before applying.",
+    );
+  }
 
   const analysis = {
-    lines, header, waiver_included, waiver_amount, confidence, warnings,
+    lines, header, printed_totals, waiver_included, waiver_amount, confidence, warnings,
+    reconciled: recon.ok, verified: recon.ok && recon.hadStrongAnchor,
+    reconciliation_discrepancies: recon.discrepancies,
+    prior_pay_app_number: priorPayAppNumber, prior_total_completed: priorTotalCompleted,
     model: LLM_MODEL, sov_version: ver,
   };
 
@@ -344,8 +537,13 @@ Deno.serve(async (req) => {
     ok: true,
     line_count: lines.length,
     header,
+    printed_totals,
     waiver_included,
     confidence,
+    reconciled: recon.ok,
+    verified: recon.ok && recon.hadStrongAnchor,
+    prior_pay_app_number: priorPayAppNumber,
+    prior_total_completed: priorTotalCompleted,
     warnings,
   });
 });
