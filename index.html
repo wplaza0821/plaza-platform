@@ -1259,6 +1259,7 @@
         <table class="data" id="taskTable">
           <thead>
             <tr>
+              <th style="width:34px;" class="perm-edit-tasks bulk-th"><input type="checkbox" id="taskSelAll" title="Select all" onclick="toggleTaskSelectAll(this)" /></th>
               <th style="width:110px;">Priority</th>
               <th>Title</th>
               <th>Assigned To</th>
@@ -7917,7 +7918,8 @@ function renderTasks() {
   const body = document.getElementById('taskBody');
   if (!body) return;
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No tasks</div><div class="empty-sub">${canCreateTask() ? 'Create a task to assign work to a project party.' : 'No tasks on this project yet.'}</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No tasks</div><div class="empty-sub">${canCreateTask() ? 'Create a task to assign work to a project party.' : 'No tasks on this project yet.'}</div></div></td></tr>`;
+    const oldBar = document.getElementById('taskBulkBar'); if (oldBar) oldBar.remove();
     return;
   }
 
@@ -7961,8 +7963,10 @@ function renderTasks() {
     }
     actions = `<div class="row-actions">${btns.join('')}</div>`;
 
+    const canBulk = canEditTask(t);
     return `
-      <tr style="${rowStyle}">
+      <tr style="${rowStyle}" data-task-id="${t.id}">
+        <td class="perm-edit-tasks bulk-td">${canBulk ? `<input type="checkbox" class="task-sel" value="${t.id}" onclick="updateTaskBulkBar()" ${STATE.taskSelected?.has(t.id) ? 'checked' : ''} />` : ''}</td>
         <td>${taskPriorityBadge(t.priority || 'normal')}</td>
         <td>${titleHtml}</td>
         <td>${assignedHtml}</td>
@@ -7972,8 +7976,64 @@ function renderTasks() {
       </tr>
     `;
   }).join('');
+  updateTaskBulkBar();
 }
 window.renderTasks = renderTasks;
+
+/* ── Bulk task actions (2026-07-10 pass 3) ── */
+function selectedTaskIds() {
+  return [...document.querySelectorAll('.task-sel:checked')].map(c => c.value);
+}
+function toggleTaskSelectAll(box) {
+  document.querySelectorAll('.task-sel').forEach(c => { c.checked = box.checked; });
+  updateTaskBulkBar();
+}
+window.toggleTaskSelectAll = toggleTaskSelectAll;
+
+function updateTaskBulkBar() {
+  STATE.taskSelected = new Set(selectedTaskIds());
+  const n = STATE.taskSelected.size;
+  let bar = document.getElementById('taskBulkBar');
+  if (!n) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'taskBulkBar';
+    bar.style.cssText = 'position:sticky; bottom:12px; z-index:20; display:flex; gap:8px; align-items:center; background:var(--black); color:#fff; padding:10px 16px; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.25); margin-top:10px;';
+    document.getElementById('taskTable').closest('.table-wrap').after(bar);
+  }
+  bar.innerHTML = `
+    <span style="font-size:13px; font-weight:600;">${n} selected</span>
+    <span style="flex:1"></span>
+    <button class="btn btn-sm" style="background:#fff; color:var(--black);" onclick="bulkTaskStatus('completed')">✓ Complete</button>
+    <button class="btn btn-sm" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,0.4);" onclick="bulkTaskStatus('in_progress')">▸ In Progress</button>
+    <button class="btn btn-sm" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,0.4);" onclick="bulkTaskStatus('cancelled')">✕ Cancel</button>
+    <button class="btn btn-sm" style="background:transparent; color:#aaa;" onclick="clearTaskSelection()">Clear</button>`;
+}
+window.updateTaskBulkBar = updateTaskBulkBar;
+
+function clearTaskSelection() {
+  document.querySelectorAll('.task-sel').forEach(c => { c.checked = false; });
+  const all = document.getElementById('taskSelAll'); if (all) all.checked = false;
+  updateTaskBulkBar();
+}
+window.clearTaskSelection = clearTaskSelection;
+
+async function bulkTaskStatus(status) {
+  const ids = selectedTaskIds();
+  if (!ids.length) return;
+  const verb = { completed: 'complete', in_progress: 'move to In Progress', cancelled: 'cancel' }[status] || status;
+  if (!confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} ${ids.length} task(s)?`)) return;
+  const patch = { status, updated_at: new Date().toISOString() };
+  if (status === 'completed') patch.completed_at = new Date().toISOString();
+  const { data, error } = await sb.from('tasks').update(patch).in('id', ids).select();
+  if (error) { surfaceTaskError(error, 'Bulk update'); return; }
+  const okCount = (data || []).length;
+  toast(`${okCount} task(s) updated${okCount < ids.length ? ` — ${ids.length - okCount} skipped (no permission)` : ''}`);
+  STATE.taskSelected = new Set();
+  await loadAllData();
+  render();
+}
+window.bulkTaskStatus = bulkTaskStatus;
 
 // Filter wiring — attach once on first render scope
 document.getElementById('taskStatusFilters')?.addEventListener('click', e => {
