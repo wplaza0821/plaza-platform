@@ -2397,6 +2397,33 @@ async function loadAllData() {
   await loadNotifications();
 }
 
+/* ── Targeted reloads (2026-07-10 perf pass 3b) ───────────────────────
+   loadAllData() refetches all ~26 tables after EVERY mutation. For simple
+   single-module saves that's ~25 wasted queries per click. reloadData(keys)
+   refreshes only the tables a mutation actually touched. Multi-table flows
+   (pay-app lifecycle, schedule imports, invites, project CRUD) still use
+   loadAllData() deliberately — they fan out across many tables. */
+const RELOADERS = {
+  tasks:          async () => { const r = await sb.from('tasks').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.tasks = r.data || []; },
+  rfis:           async () => { const r = await sb.from('rfis').select('*').order('rfi_number', { ascending: false }); if (!r.error) DATA.rfis = r.data || []; },
+  submittals:     async () => { const r = await sb.from('submittals').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.submittals = r.data || []; },
+  submittalFiles: async () => { const r = await sb.from('submittal_files').select('*').order('uploaded_at', { ascending: false }); if (!r.error) DATA.submittalFiles = r.data || []; },
+  changeOrders:   async () => { const r = await sb.from('change_orders').select('*').order('co_number', { ascending: false }); if (!r.error) DATA.changeOrders = r.data || []; },
+  documents:      async () => { const r = await sb.from('documents').select('*').order('uploaded_at', { ascending: false }); if (!r.error) DATA.documents = r.data || []; },
+  photos:         async () => { const r = await sb.from('photos').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.photos = r.data || []; },
+  fieldReports:   async () => { const r = await sb.from('field_reports').select('*').order('visit_date', { ascending: false }); if (!r.error) DATA.field_reports = r.data || []; },
+  deficiencies:   async () => { const r = await sb.from('deficiencies').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.deficiencies = r.data || []; },
+  deficiencyFollowups: async () => { const r = await sb.from('deficiency_followups').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.deficiency_followups = r.data || []; },
+  dailyReports:   async () => { const r = await sb.from('daily_reports').select('*').order('report_date', { ascending: false }); if (!r.error) DATA.daily_reports = r.data || []; },
+  milestones:     async () => { const r = await sb.from('milestones').select('*').order('sort_order', { ascending: true }); if (!r.error) DATA.milestones = r.data || []; },
+  profiles:       async () => { const r = await sb.from('profiles').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.profiles = r.data || []; },
+  accessRequests: async () => { const r = await sb.from('access_requests').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.accessRequests = r.data || []; },
+  dashboard:      async () => { const r = await sb.rpc('plz_dashboard'); if (r && !r.error && r.data) DATA.dashboard = r.data; },
+};
+async function reloadData(...keys) {
+  await Promise.all(keys.map(k => (RELOADERS[k] ? RELOADERS[k]() : Promise.resolve())));
+}
+
 /* =========================================================================
    HELPERS
    ========================================================================= */
@@ -4633,7 +4660,7 @@ async function saveRfi(id) {
     if (!res.error && res.data) { newId = res.data.id; notifyRoute('rfis', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save RFI'); return; }
-  await loadAllData();
+  await reloadData('rfis','dashboard');
   toast(id ? 'RFI updated' : 'RFI created');
   closeModal();
   render();
@@ -4644,7 +4671,7 @@ async function deleteRfi(id) {
   if (!confirm('Delete this RFI?')) return;
   const { error } = await sb.from('rfis').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete RFI'); return; }
-  await loadAllData();
+  await reloadData('rfis','dashboard');
   toast('RFI deleted');
   closeModal();
   render();
@@ -4812,7 +4839,7 @@ async function saveSubmittal(id) {
     if (!res.error && res.data) { newId = res.data.id; notifyRoute('submittals', newId, 'created'); }
   }
   if (res.error) { handleSbError(res.error, 'Save submittal'); return; }
-  await loadAllData();
+  await reloadData('submittals','dashboard');
   toast(id ? 'Submittal updated' : 'Submittal created');
   closeModal();
   render();
@@ -4823,7 +4850,7 @@ async function deleteSubmittal(id) {
   if (!confirm('Delete this submittal?')) return;
   const { error } = await sb.from('submittals').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete submittal'); return; }
-  await loadAllData();
+  await reloadData('submittals','submittalFiles','dashboard');
   toast('Submittal deleted');
   closeModal();
   render();
@@ -4874,7 +4901,7 @@ async function uploadSubmittalFile(submittalId) {
     return;
   }
 
-  await loadAllData();
+  await reloadData('submittalFiles');
   toast('File uploaded');
   openSubmittalModal(submittalId);
 }
@@ -4894,7 +4921,7 @@ async function deleteSubmittalFile(fileId, submittalId) {
   const f = (DATA.submittalFiles || []).find(x => x.id === fileId);
   if (f?.file_path) await sb.storage.from('submittals').remove([f.file_path]).catch(() => {});
   await sb.from('submittal_files').delete().eq('id', fileId);
-  await loadAllData();
+  await reloadData('submittalFiles');
   toast('Attachment removed');
   openSubmittalModal(submittalId);
 }
@@ -6039,7 +6066,7 @@ async function saveDoc(id) {
     res = await sb.from('documents').insert(data);
   }
   if (res.error) { handleSbError(res.error, 'Save document'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
-  await loadAllData();
+  await reloadData('documents');
   toast(id ? 'Document updated' : 'Document uploaded');
   closeModal();
   render();
@@ -6052,7 +6079,7 @@ async function deleteDoc(id) {
   if (d?.file_path) await sb.storage.from('plans-specs').remove([d.file_path]).catch(()=>{});
   const { error } = await sb.from('documents').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete document'); return; }
-  await loadAllData();
+  await reloadData('documents');
   toast('Document deleted');
   closeModal();
   render();
@@ -6348,7 +6375,7 @@ async function saveProfile() {
   if (error) { handleSbError(error, 'Saving profile'); return; }
   toast('Profile saved');
   if (patch.full_name) { AUTH.name = patch.full_name; renderRoleIndicator(); }
-  await loadAllData();
+  await reloadData('profiles');
   renderProfile();
 }
 window.saveProfile = saveProfile;
@@ -6400,7 +6427,7 @@ async function denyAccessRequest(id) {
     .update({ status: 'denied', reviewed_at: new Date().toISOString() }).eq('id', id);
   if (error) { handleSbError(error, 'Denying request'); return; }
   toast('Request denied');
-  await loadAllData(); render();
+  await reloadData('accessRequests'); render();
 }
 window.denyAccessRequest = denyAccessRequest;
 
@@ -8030,7 +8057,7 @@ async function bulkTaskStatus(status) {
   const okCount = (data || []).length;
   toast(`${okCount} task(s) updated${okCount < ids.length ? ` — ${ids.length - okCount} skipped (no permission)` : ''}`);
   STATE.taskSelected = new Set();
-  await loadAllData();
+  await reloadData('tasks','dashboard');
   render();
 }
 window.bulkTaskStatus = bulkTaskStatus;
@@ -8204,7 +8231,7 @@ async function saveTask(id, statusOnly) {
     const { data, error } = await sb.from('tasks').update(patch).eq('id', id).select();
     if (error) { surfaceTaskError(error, 'Update task'); return; }
     if (!data || !data.length) { toast("You don't have permission to update this task.", 'error'); return; }
-    await loadAllData();
+    await reloadData('tasks','dashboard');
     toast('Task status updated');
     closeModal();
     render();
@@ -8249,7 +8276,7 @@ async function saveTask(id, statusOnly) {
     const newTaskId = res.data[0] && res.data[0].id;
     if (newTaskId) notifyTaskAssigned(newTaskId);
   }
-  await loadAllData();
+  await reloadData('tasks','dashboard');
   toast(id ? 'Task updated' : 'Task created');
   closeModal();
   render();
@@ -8322,7 +8349,7 @@ async function markTaskComplete(id) {
   const { data, error } = await sb.from('tasks').update(patch).eq('id', id).select();
   if (error) { surfaceTaskError(error, 'Complete task'); return; }
   if (!data || !data.length) { toast("You don't have permission to update this task.", 'error'); return; }
-  await loadAllData();
+  await reloadData('tasks','dashboard');
   toast('Task marked complete');
   render();
 }
@@ -8339,7 +8366,7 @@ async function advanceTask(id, next) {
   const { data, error } = await sb.from('tasks').update(patch).eq('id', id).select();
   if (error) { surfaceTaskError(error, 'Advance task'); return; }
   if (!data || !data.length) { toast("You don't have permission to update this task.", 'error'); return; }
-  await loadAllData();
+  await reloadData('tasks','dashboard');
   toast('Task status updated');
   render();
 }
@@ -8353,7 +8380,7 @@ async function deleteTask(id) {
   if (!confirm('Delete this task?')) return;
   const { error } = await sb.from('tasks').delete().eq('id', id);
   if (error) { surfaceTaskError(error, 'Delete task'); return; }
-  await loadAllData();
+  await reloadData('tasks','dashboard');
   toast('Task deleted');
   closeModal();
   render();
@@ -8586,7 +8613,7 @@ async function uploadPhotos() {
     if (res.queued) queuedCount++; else okCount++;
   }
 
-  if (okCount) await loadAllData();
+  if (okCount) await reloadData('photos','dashboard');
   if (okCount && queuedCount) toast(`Uploaded ${okCount}, ${queuedCount} queued offline`);
   else if (queuedCount) toast(`${queuedCount} photo${queuedCount===1?'':'s'} queued — will upload when online`, 'warn');
   else toast(`Uploaded ${okCount} photo${okCount === 1 ? '' : 's'}`);
@@ -8634,7 +8661,7 @@ async function savePhotoEdit(id) {
   };
   const { error } = await sb.from('photos').update(data).eq('id', id);
   if (error) { handleSbError(error, 'Update photo'); return; }
-  await loadAllData();
+  await reloadData('photos');
   toast('Photo updated');
   closeModal();
   render();
@@ -8649,7 +8676,7 @@ async function deletePhoto(id) {
   }
   const { error } = await sb.from('photos').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete photo'); return; }
-  await loadAllData();
+  await reloadData('photos','dashboard');
   toast('Photo deleted');
   closeModal();
   render();
@@ -9057,7 +9084,7 @@ async function saveFieldReport(id) {
     }
   }
 
-  await loadAllData();
+  await reloadData('fieldReports','dashboard');
   toast(id ? 'Field report saved' : 'Field report created');
   closeModal();
   render();
@@ -9099,7 +9126,7 @@ async function deleteFieldReport(id) {
   if (!confirm('Delete this field report?')) return;
   const { error } = await sb.from('field_reports').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete field report'); return; }
-  await loadAllData();
+  await reloadData('fieldReports','dashboard');
   toast('Field report deleted');
   closeModal();
   render();
@@ -9264,7 +9291,7 @@ async function advanceDeficiency(id, next) {
   if (error) { handleSbError(error, 'Advance deficiency'); return; }
   // Notify: verify => resolved; everything else => status_change.
   notifyRoute('deficiencies', id, next === 'verified' ? 'resolved' : 'status_change');
-  await loadAllData();
+  await reloadData('deficiencies','deficiencyFollowups','dashboard');
   toast(next === 'verified' ? 'Deficiency verified & closed' : (next === 'rejected' ? 'Repair rejected — back to In Repair' : 'Status updated'));
   render();
 }
@@ -9516,7 +9543,7 @@ async function saveDeficiency(id) {
   if (id && !res.error && data.assigned_to && data.assigned_to !== prevAssignee) {
     notifyRoute('deficiencies', id, 'reassigned');
   }
-  if (!res.queued) { await loadAllData(); toast(id ? 'Deficiency updated' : 'Deficiency logged'); }
+  if (!res.queued) { await reloadData('deficiencies','deficiencyFollowups','dashboard'); toast(id ? 'Deficiency updated' : 'Deficiency logged'); }
   closeModal();
   render();
 }
@@ -9526,7 +9553,7 @@ async function deleteDeficiency(id) {
   if (!confirm('Delete this deficiency?')) return;
   const { error } = await sb.from('deficiencies').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete deficiency'); return; }
-  await loadAllData();
+  await reloadData('deficiencies','deficiencyFollowups','dashboard');
   toast('Deficiency deleted');
   closeModal();
   render();
@@ -9568,7 +9595,7 @@ async function addDeficiencyFollowUp(deficiencyId) {
 
   if (!r.queued) {
     notifyRoute('deficiencies', deficiencyId, action === 'resolved' ? 'resolved' : 'followed_up');
-    await loadAllData();
+    await reloadData('deficiencies','deficiencyFollowups');
   }
   toast('Follow-up logged');
   closeModal();
@@ -9698,7 +9725,7 @@ async function saveDailyReport(id) {
   if (id) res = await sb.from('daily_reports').update(data).eq('id', id);
   else    res = await queueableInsert('daily_reports', data, { select: false });
   if (res.error) { handleSbError(res.error, 'Save daily report'); return; }
-  if (!res.queued) { await loadAllData(); toast(id ? 'Daily log saved' : 'Daily log created'); }
+  if (!res.queued) { await reloadData('dailyReports','dashboard'); toast(id ? 'Daily log saved' : 'Daily log created'); }
   closeModal();
   render();
 }
@@ -9708,7 +9735,7 @@ async function deleteDailyReport(id) {
   if (!confirm('Delete this daily log entry?')) return;
   const { error } = await sb.from('daily_reports').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete daily report'); return; }
-  await loadAllData();
+  await reloadData('dailyReports','dashboard');
   toast('Daily log deleted');
   closeModal();
   render();
@@ -10422,7 +10449,7 @@ async function addMilestoneTemplate() {
   }));
   const { error } = await sb.from('milestones').insert(rows);
   if (error) { handleSbError(error, 'Add template milestones'); return; }
-  await loadAllData();
+  await reloadData('milestones');
   toast(`Added ${rows.length} milestone${rows.length === 1 ? '' : 's'}`);
   closeModal();
   render();
@@ -10446,7 +10473,7 @@ async function saveMilestone(id) {
   if (id) res = await sb.from('milestones').update(data).eq('id', id);
   else    res = await sb.from('milestones').insert(data);
   if (res.error) { handleSbError(res.error, 'Save milestone'); return; }
-  await loadAllData();
+  await reloadData('milestones');
   toast(id ? 'Milestone updated' : 'Milestone added');
   closeModal();
   render();
@@ -10457,7 +10484,7 @@ async function deleteMilestone(id) {
   if (!confirm('Delete this milestone?')) return;
   const { error } = await sb.from('milestones').delete().eq('id', id);
   if (error) { handleSbError(error, 'Delete milestone'); return; }
-  await loadAllData();
+  await reloadData('milestones');
   toast('Milestone deleted');
   closeModal();
   render();
@@ -10479,7 +10506,7 @@ async function moveMilestone(id, direction) {
   if (e1.error) { handleSbError(e1.error, 'Reorder milestone'); return; }
   const e2 = await sb.from('milestones').update({ sort_order: aOrder }).eq('id', b.id);
   if (e2.error) { handleSbError(e2.error, 'Reorder milestone'); return; }
-  await loadAllData();
+  await reloadData('milestones');
   render();
 }
 window.moveMilestone = moveMilestone;
