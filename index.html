@@ -3817,11 +3817,12 @@ async function paAnalyze(docId, payAppId) {
   const btn = document.getElementById('paAnalyzeBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…'; }
   toast('Analyzing pay application… this can take 15–60s', 'info');
-  // Guard against an indefinitely-hanging request: abort after 130s so the
-  // button never spins forever. The edge fn's own work is bounded well under
-  // this; anything longer is a stuck request we want to surface as an error.
+  // Guard against an indefinitely-hanging request: abort after 210s so the
+  // button never spins forever. A dense scanned G703 (100+ lines) legitimately
+  // takes ~90s per LLM pass; the edge fn caps itself at 2 passes, so ~200s is
+  // the realistic worst case. Anything past this is a genuinely stuck request.
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 130000);
+  const timer = setTimeout(() => ctrl.abort(), 210000);
   try {
     const res = await fetch(ANALYZE_PAYAPP_FN_URL, {
       method: 'POST',
@@ -3859,7 +3860,7 @@ async function paAnalyze(docId, payAppId) {
     await loadAllData();
     openPayAppModal(payAppId, true);
     const msg = (e?.name === 'AbortError')
-      ? 'Analyze timed out (>130s). The PDF may be too large/dense — try a clearer scan or fewer pages, then re-analyze.'
+      ? 'Analyze timed out (>210s). The PDF is very large/dense — try a clearer scan or split it into fewer pages, then re-analyze.'
       : ('Analyze failed: ' + (e.message || e));
     toast(msg, 'error');
   }

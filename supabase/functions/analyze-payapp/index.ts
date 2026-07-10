@@ -309,7 +309,12 @@ Deno.serve(async (req) => {
 
   // Hard per-call timeout so a stuck Anthropic request can't wedge the whole
   // edge function (which would surface to the user as a spinning button).
-  const LLM_CALL_TIMEOUT_MS = 55000;
+  // NOTE: a dense scanned G703 with 100+ lines legitimately takes ~90s for one
+  // pass (measured: 92s / ~7.9k output tokens on TRPV Pay App 2). Set the cap
+  // above that real duration so we abort only genuinely-stuck calls, not slow
+  // legitimate ones. Two passes worst case (~2x110s) stays within the Edge
+  // Function wall-clock budget.
+  const LLM_CALL_TIMEOUT_MS = 110000;
   async function callLLM(extraUserText: string): Promise<any> {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), LLM_CALL_TIMEOUT_MS);
