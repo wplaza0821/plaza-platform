@@ -1102,6 +1102,7 @@
               <th>From → To</th>
               <th>Reference</th>
               <th>Status</th>
+              <th>⚾ Ball in Court</th>
               <th>Due</th>
               <th class="num">Days Open</th>
               <th></th>
@@ -4397,7 +4398,7 @@ function renderRfis() {
 
   const body = document.getElementById('rfiBody');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">❓</div><div class="empty-title">No RFIs</div><div class="empty-sub">Open a new RFI to log a field question.</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">❓</div><div class="empty-title">No RFIs</div><div class="empty-sub">Open a new RFI to log a field question.</div></div></td></tr>`;
     return;
   }
   body.innerHTML = list.map(r => {
@@ -4406,6 +4407,11 @@ function renderRfis() {
     const daysOpen = r.status === 'open'
       ? daysBetween(r.created_at)
       : daysBetween(r.created_at, r.answered_at);
+    // Ball-in-court: who owes the next action. Open -> the to_party owes an
+    // answer; answered -> originator owes review/close; closed/void -> done.
+    let bic = '—', bicClass = '';
+    if (r.status === 'open') { bic = r.to_party || '?'; bicClass = 'badge-yellow'; }
+    else if (r.status === 'answered') { bic = r.from_party || '?'; bicClass = 'badge-blue'; }
     return `
       <tr style="${isOverdue ? 'background: rgba(192,57,43,0.04);' : ''}">
         <td style="font-weight:600;">RFI-${String(r.rfi_number).padStart(3,'0')}</td>
@@ -4416,6 +4422,7 @@ function renderRfis() {
         <td class="text-sm">${escapeHtml(r.from_party || '—')} <span class="text-muted">→</span><br/>${escapeHtml(r.to_party || '—')}</td>
         <td class="text-sm text-muted">${escapeHtml(r.reference || '—')}</td>
         <td>${statusBadge(r.status)}</td>
+        <td>${bicClass ? `<span class="badge ${bicClass}">${escapeHtml(lbl(bic))}</span>` : '<span class="text-muted">—</span>'}</td>
         <td class="text-sm" style="${isOverdue ? 'color:var(--red); font-weight:600;' : ''}">
           ${fmtDate(r.due_date)}${isOverdue ? ' ⚠️' : ''}
         </td>
@@ -6650,6 +6657,65 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ⌨ Keyboard shortcuts (2026-07-10 efficiency pass). Skipped while typing in
+// an input/textarea/select or while a modal is open.
+//   g then <key> : go to module (g d dashboard, g r RFIs, g s submittals,
+//                  g p pay apps, g t tasks, g f field reports, g q quantities,
+//                  g o photos, g c change orders, g l daily log, g m schedule,
+//                  g u documents)
+//   n : new item in current module   /  : focus the module search box
+//   ? : show shortcut help
+const SHORTCUT_TABS = { d:'projects', r:'rfis', s:'submittals', p:'sov', t:'tasks',
+                        f:'field_reports', q:'quantities', o:'photos', c:'cos',
+                        l:'daily', m:'milestones', u:'docs' };
+const SHORTCUT_NEW  = { rfis:'openRfiModal', submittals:'openSubmittalModal',
+                        cos:'openCoModal', tasks:'openTaskModal', photos:'openPhotoUploadModal',
+                        field_reports:'openFieldReportModal', deficiencies:'openDeficiencyModal',
+                        daily:'openDailyModal', docs:'openDocModal' };
+let _gPressed = false, _gTimer = null;
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
+                       t.tagName === 'SELECT' || t.isContentEditable);
+  const modalOpen = !!document.getElementById('modalOverlay');
+  if (typing || modalOpen || e.metaKey || e.ctrlKey || e.altKey) { _gPressed = false; return; }
+  const k = e.key.toLowerCase();
+  if (_gPressed) {
+    _gPressed = false; clearTimeout(_gTimer);
+    const tab = SHORTCUT_TABS[k];
+    if (tab) { e.preventDefault(); switchTab(tab); }
+    return;
+  }
+  if (k === 'g') { _gPressed = true; clearTimeout(_gTimer); _gTimer = setTimeout(() => { _gPressed = false; }, 1200); return; }
+  if (k === 'n') {
+    const fn = SHORTCUT_NEW[STATE.activeTab];
+    if (fn && typeof window[fn] === 'function') {
+      // Respect edit permissions — the buttons are hidden for read-only roles.
+      const scope = STATE.activeTab === 'daily' ? 'daily' : STATE.activeTab;
+      if (typeof canEdit === 'function' && !canEdit(scope) && !isOwner() && !isStaff()) return;
+      e.preventDefault(); window[fn]();
+    }
+    return;
+  }
+  if (k === '/') {
+    const page = document.querySelector('.tab-page.active');
+    const box = page && page.querySelector('input.search');
+    if (box) { e.preventDefault(); box.focus(); }
+    return;
+  }
+  if (k === '?' || (e.shiftKey && k === '/')) {
+    if (typeof showModal === 'function') {
+      showModal({ title: '⌨ Keyboard Shortcuts', body: `
+        <div style="font-size:13px; line-height:2;">
+          <b>g</b> then <b>d</b>/<b>r</b>/<b>s</b>/<b>p</b>/<b>t</b>/<b>f</b>/<b>q</b>/<b>o</b>/<b>c</b>/<b>l</b>/<b>m</b>/<b>u</b> — go to Dashboard / RFIs / Submittals / Pay Apps / Tasks / Field Reports / Quantities / Photos / Change Orders / Daily Log / Schedule / Documents<br/>
+          <b>n</b> — new item in current module<br/>
+          <b>/</b> — focus search<br/>
+          <b>Esc</b> — close modal
+        </div>` });
+    }
+  }
+});
+
 /* =========================================================================
    COUNTS / BADGES
    ========================================================================= */
@@ -8039,6 +8105,21 @@ async function photoSignedUrl(filePath) {
   } catch (e) { return null; }
 }
 
+// BATCH signed URLs: one API round-trip for N thumbnails instead of N calls.
+// (Perf audit 2026-07-10 — the per-photo createSignedUrl fan-out was the photo
+// grid's main bottleneck on slow field connections.)
+async function photoSignedUrls(paths) {
+  const clean = (paths || []).filter(Boolean);
+  if (!clean.length) return {};
+  try {
+    const { data, error } = await sb.storage.from('project-photos').createSignedUrls(clean, 3600);
+    if (error || !Array.isArray(data)) return {};
+    const map = {};
+    data.forEach(d => { if (d?.path && d?.signedUrl && !d.error) map[d.path] = d.signedUrl; });
+    return map;
+  } catch (e) { return {}; }
+}
+
 function renderPhotos() {
   const proj = activeProject();
   const ctxEl = document.getElementById('photos-context');
@@ -8070,7 +8151,7 @@ function renderPhotos() {
     return `
       <div class="card" style="overflow:hidden;">
         <div style="background:var(--gray-100); height:180px; display:flex; align-items:center; justify-content:center; cursor:pointer;" onclick="openPhotoFullscreen('${p.id}')">
-          <img id="${id}" alt="${escapeHtml(p.caption || p.file_name || 'Photo')}"
+          <img id="${id}" alt="${escapeHtml(p.caption || p.file_name || 'Photo')}" loading="lazy"
                style="width:100%; height:100%; object-fit:cover; display:block;"
                data-photo-path="${escapeHtml(p.file_path)}" />
         </div>
@@ -8090,14 +8171,18 @@ function renderPhotos() {
       </div>`;
   }).join('');
 
-  // Async load signed URLs for each thumbnail
-  list.forEach(async p => {
-    const img = document.getElementById('photo-img-' + p.id);
-    if (!img) return;
-    const url = await photoSignedUrl(p.file_path);
-    if (url) img.src = url;
-    else img.alt = '⚠ unable to load';
-  });
+  // Async load signed URLs for thumbnails — ONE batched API call for all of
+  // them (was: one createSignedUrl call per photo, brutal on field connections).
+  (async () => {
+    const urlMap = await photoSignedUrls(list.map(p => p.file_path));
+    list.forEach(p => {
+      const img = document.getElementById('photo-img-' + p.id);
+      if (!img) return;
+      const url = urlMap[p.file_path];
+      if (url) img.src = url;
+      else img.alt = '⚠ unable to load';
+    });
+  })();
 }
 window.renderPhotos = renderPhotos;
 
