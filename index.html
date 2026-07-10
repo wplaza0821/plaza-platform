@@ -912,6 +912,26 @@
       </div>
     </div>
 
+    <!-- Request access panel (public client sign-up request) -->
+    <div id="requestAccessPanel" style="display:none; text-align:left;">
+      <div style="font-size:13px;color:var(--gray-600,#666);margin-bottom:10px;line-height:1.4;text-align:center;">
+        Request access to your project portal. Plaza &amp; Associates will review and email you an invitation.
+      </div>
+      <input id="raName" class="login-input" type="text" placeholder="Full name *" autocomplete="name" />
+      <input id="raEmail" class="login-input" type="email" placeholder="Email *" autocomplete="email" />
+      <input id="raCompany" class="login-input" type="text" placeholder="Company / Association" autocomplete="organization" />
+      <input id="raPhone" class="login-input" type="tel" placeholder="Phone" autocomplete="tel" />
+      <textarea id="raMessage" class="login-input" rows="3" placeholder="Project name / what access do you need?" style="text-align:left; resize:vertical; font-family:inherit;"></textarea>
+      <button type="button" class="login-btn" id="raSubmitBtn" onclick="submitAccessRequest()">Request Access</button>
+      <div class="login-error" id="raError"></div>
+      <div id="raSuccess" style="display:none; color:var(--green,#27ae60); font-size:13px; margin-top:12px; text-align:center; line-height:1.5;">
+        ✅ Request received. We'll review it and email you an invitation shortly.
+      </div>
+      <div style="text-align:center;margin-top:10px;">
+        <a href="#" onclick="hideRequestAccess(event)" style="font-size:12px;color:var(--gray-400,#aaa);text-decoration:underline;cursor:pointer;">← Back to sign in</a>
+      </div>
+    </div>
+
     <!-- Invite / password-reset: set a new password (shown after invite link) -->
     <form id="setPasswordForm" autocomplete="on" style="display:none;">
       <div id="setPwWelcome" style="font-size:13px;color:var(--gray-600,#666);margin-bottom:10px;line-height:1.4;">Welcome! Set a password to finish creating your account.</div>
@@ -930,6 +950,8 @@
     </form>
 
     <div class="login-altmode" style="margin-top:14px; font-size:13px;">
+      <a href="#" id="requestAccessLink" onclick="showRequestAccess(event)" style="color:var(--gray-500,#888); text-decoration:underline; cursor:pointer;">New client? Request access</a>
+      <span style="color:var(--gray-300,#ccc); margin:0 6px;">·</span>
       <a href="#" id="toggleLoginMode" style="color:var(--gray-500,#888); text-decoration:underline; cursor:pointer;">Use access code instead</a>
     </div>
 
@@ -1566,6 +1588,17 @@
       <div class="hint-banner" style="background:var(--gray-100); border-color:var(--gray-200); color:var(--ink);">
         📨 Invited users receive an email to set their password. Roles: <strong>owner</strong> (full),
         <strong>staff</strong> (edit all), <strong>member</strong> (read + own tasks), <strong>contractor</strong> (scoped).
+      </div>
+
+      <!-- Pending access requests from the login-page sign-up form -->
+      <div id="accessRequestsPanel" style="display:none; margin-bottom:16px;">
+        <h3 style="font-size:14px; margin:0 0 8px;">🔔 Pending Access Requests <span class="badge badge-yellow" id="arCount"></span></h3>
+        <div class="table-wrap">
+          <table class="data" id="accessRequestsTable">
+            <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Phone</th><th>Message</th><th>Requested</th><th></th></tr></thead>
+            <tbody id="accessRequestsBody"></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="table-wrap">
@@ -2233,6 +2266,7 @@ function renderRoleIndicator() {
 const DATA = {
   projects: [],
   contractors: [],
+  accessRequests: [],  // login-page sign-up requests (owner-only via RLS)
   sovItems: [],       // includes all versions; filter by project + latest version
   payApps: [],
   payAppLines: [],    // joined by pay_app_id
@@ -2292,9 +2326,12 @@ async function loadAllData() {
   const usersP = sb.rpc('plz_users');
   // Phase 6: per-user project memberships (owner reads all; others read own).
   const pmP = sb.from('project_members').select('user_id, project_id');
+  // Access requests (login-page sign-up form). RLS: owner-only select — other
+  // roles just get an empty result. Table may not exist yet -> soft.
+  const arP = sb.from('access_requests').select('*').order('created_at', { ascending: false });
 
-  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, st, si, prf, dash, tpl, usr, pm, sf] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, stP, siP, prfP, dashP, tplP, usersP, pmP, sfP
+  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, st, si, prf, dash, tpl, usr, pm, sf, ar] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, stP, siP, prfP, dashP, tplP, usersP, pmP, sfP, arP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -2352,6 +2389,7 @@ async function loadAllData() {
   // back to profiles so assignee pickers still work.
   DATA.users         = (usr && !usr.error && Array.isArray(usr.data)) ? usr.data : [];
   DATA.projectMembers = (pm && !pm.error && Array.isArray(pm.data)) ? pm.data : [];
+  DATA.accessRequests = (ar && !ar.error && Array.isArray(ar.data)) ? ar.data : [];
 
   // Phase B Layer 3: load in-app notifications for native users (RLS-scoped).
   // Cheap, isolated select; failures are swallowed inside loadNotifications.
@@ -6314,7 +6352,71 @@ async function saveProfile() {
 }
 window.saveProfile = saveProfile;
 
+function renderAccessRequests() {
+  const panel = document.getElementById('accessRequestsPanel');
+  const body  = document.getElementById('accessRequestsBody');
+  if (!panel || !body) return;
+  const pending = (DATA.accessRequests || []).filter(r => r.status === 'pending');
+  if (!isOwner() || !pending.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const cnt = document.getElementById('arCount');
+  if (cnt) cnt.textContent = pending.length;
+  body.innerHTML = pending.map(r => `
+    <tr>
+      <td style="font-weight:600;">${escapeHtml(r.full_name)}</td>
+      <td class="text-sm">${escapeHtml(r.email)}</td>
+      <td class="text-sm">${escapeHtml(r.company || '—')}</td>
+      <td class="text-sm">${escapeHtml(r.phone || '—')}</td>
+      <td class="text-sm text-muted" style="max-width:260px;">${escapeHtml(r.message || '—')}</td>
+      <td class="text-sm text-muted">${fmtDate(r.created_at)}</td>
+      <td><div class="row-actions">
+        <button class="btn btn-primary btn-sm" onclick="approveAccessRequest('${r.id}')">✓ Invite</button>
+        <button class="btn btn-ghost btn-sm" onclick="denyAccessRequest('${r.id}')">✕ Deny</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+async function approveAccessRequest(id) {
+  const r = (DATA.accessRequests || []).find(x => x.id === id);
+  if (!r) return;
+  // Open the normal invite modal pre-filled — owner still picks role + project
+  // scope, so approval always goes through the standard invite flow.
+  openInviteModal();
+  setTimeout(() => {
+    const em = document.getElementById('iv-email'); if (em) em.value = r.email;
+    const nm = document.getElementById('iv-name');  if (nm) nm.value = r.full_name || '';
+    const ph = document.getElementById('iv-phone'); if (ph && r.phone) ph.value = r.phone;
+    const co = document.getElementById('iv-company'); if (co && r.company) co.value = r.company;
+  }, 50);
+  // Mark reviewed once the invite is sent — watch for profile appearing.
+  STATE._pendingApproveRequestId = id;
+}
+window.approveAccessRequest = approveAccessRequest;
+
+async function denyAccessRequest(id) {
+  if (!confirm('Deny this access request?')) return;
+  const { error } = await sb.from('access_requests')
+    .update({ status: 'denied', reviewed_at: new Date().toISOString() }).eq('id', id);
+  if (error) { handleSbError(error, 'Denying request'); return; }
+  toast('Request denied');
+  await loadAllData(); render();
+}
+window.denyAccessRequest = denyAccessRequest;
+
+// Called after a successful invite — closes out the originating request row.
+async function settleApprovedAccessRequest(invitedEmail) {
+  const id = STATE._pendingApproveRequestId;
+  STATE._pendingApproveRequestId = null;
+  const list = DATA.accessRequests || [];
+  const row = id ? list.find(x => x.id === id)
+                 : list.find(x => x.status === 'pending' && x.email.toLowerCase() === (invitedEmail || '').toLowerCase());
+  if (!row) return;
+  await sb.from('access_requests')
+    .update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', row.id);
+}
+
 function renderUsers() {
+  renderAccessRequests();
   const body = document.getElementById('usersBody');
   if (!body) return;
   if (!isOwner()) {
@@ -6666,6 +6768,8 @@ async function submitInvite() {
       return;
     }
     toast('Invitation sent to ' + email);
+    // If this invite originated from a login-page access request, mark it approved.
+    try { await settleApprovedAccessRequest(email); } catch (e) { /* non-fatal */ }
     closeModal();
     await loadAllData();
     renderUsers();
@@ -7039,6 +7143,62 @@ function hideForgotPassword(e) {
   document.getElementById('nativePassword')?.focus();
 }
 window.hideForgotPassword = hideForgotPassword;
+
+/* ── Request Access (public client sign-up request, 2026-07-10) ──
+   Writes a pending row to access_requests (RLS: anon insert-only, owner
+   review). Owner approves via the normal invite-user flow in Users tab. */
+function showRequestAccess(e) {
+  if (e) e.preventDefault();
+  document.getElementById('nativeLoginForm').style.display = 'none';
+  document.getElementById('forgotPwPanel').style.display = 'none';
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('requestAccessPanel').style.display = '';
+  document.getElementById('raName')?.focus();
+}
+window.showRequestAccess = showRequestAccess;
+
+function hideRequestAccess(e) {
+  if (e) e.preventDefault();
+  document.getElementById('requestAccessPanel').style.display = 'none';
+  document.getElementById('nativeLoginForm').style.display = '';
+  document.getElementById('raError').textContent = '';
+}
+window.hideRequestAccess = hideRequestAccess;
+
+let _raSubmitting = false;
+async function submitAccessRequest() {
+  if (_raSubmitting) return;
+  const errEl = document.getElementById('raError');
+  const okEl  = document.getElementById('raSuccess');
+  const btn   = document.getElementById('raSubmitBtn');
+  errEl.textContent = '';
+  const name    = (document.getElementById('raName')?.value || '').trim();
+  const email   = (document.getElementById('raEmail')?.value || '').trim().toLowerCase();
+  const company = (document.getElementById('raCompany')?.value || '').trim();
+  const phone   = (document.getElementById('raPhone')?.value || '').trim();
+  const message = (document.getElementById('raMessage')?.value || '').trim();
+  if (name.length < 2) { errEl.textContent = 'Please enter your full name.'; return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { errEl.textContent = 'Please enter a valid email.'; return; }
+  _raSubmitting = true; btn.disabled = true; btn.textContent = 'Submitting…';
+  const { error } = await sb.from('access_requests').insert({
+    full_name: name, email,
+    company: company || null, phone: phone || null, message: message || null,
+  });
+  _raSubmitting = false; btn.disabled = false; btn.textContent = 'Request Access';
+  if (error) {
+    // Unique-index violation = they already have a pending request.
+    if ((error.code === '23505') || /duplicate/i.test(error.message || '')) {
+      okEl.style.display = ''; btn.style.display = 'none';
+      okEl.textContent = '✅ You already have a pending request — we\'ll be in touch soon.';
+    } else {
+      errEl.textContent = 'Could not submit request. Please try again or email us directly.';
+    }
+    return;
+  }
+  okEl.style.display = ''; btn.style.display = 'none';
+  ['raName','raEmail','raCompany','raPhone','raMessage'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
+}
+window.submitAccessRequest = submitAccessRequest;
 
 async function sendPasswordReset() {
   const emailEl = document.getElementById('forgotPwEmail');
