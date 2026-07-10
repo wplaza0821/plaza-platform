@@ -3385,9 +3385,9 @@ async function openPayAppModal(payAppId, forceEdit = false) {
           </div>
           ${paDoc.analysis && Array.isArray(paDoc.analysis.warnings) && paDoc.analysis.warnings.length ? `<div class="warn-banner" style="margin-top:6px;">⚠️ ${paDoc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
         ` : `
-          <div class="text-muted" style="margin-bottom:10px;">No pay application PDF uploaded. Upload one to auto-fill the G703 below.</div>
-          <input type="file" id="paImportFile" accept=".pdf,image/jpeg,image/png" />
-          <button class="btn btn-primary btn-sm" id="paImportUploadBtn" style="margin-top:10px;">📄 Upload Pay Application PDF</button>
+          <div class="text-muted" style="margin-bottom:10px;">No pay application uploaded. Upload the contractor's G703 to auto-fill below. <strong>Native Excel (.xlsx) is best</strong> — it imports instantly and reconciles exactly; a PDF/image scan is read by AI (~1–2 min) and should be verified.</div>
+          <input type="file" id="paImportFile" accept=".pdf,.xlsx,.xls,.csv,image/jpeg,image/png" />
+          <button class="btn btn-primary btn-sm" id="paImportUploadBtn" style="margin-top:10px;">📄 Upload Pay Application (Excel or PDF)</button>
         `}
       </div>` ; })() : ''}
 
@@ -3776,10 +3776,18 @@ window.uploadPayAppDoc = uploadPayAppDoc;
 async function uploadPayAppImport(pa) {
   const fileEl = document.getElementById('paImportFile');
   const file = fileEl?.files?.[0];
-  if (!file) { toast('Choose a PDF first', 'error'); return; }
+  if (!file) { toast('Choose a file first', 'error'); return; }
   if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
-  const allowed = ['application/pdf','image/jpeg','image/png'];
-  if (!allowed.includes(file.type)) { toast('Only PDF/JPG/PNG allowed', 'error'); return; }
+  // Accept the native G703 spreadsheet (best — instant, exact) or a PDF/image scan.
+  // Validate by extension too, since .xlsx MIME types vary across browsers/OSes.
+  const allowedMime = ['application/pdf','image/jpeg','image/png',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel','text/csv','application/csv'];
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const allowedExt = ['pdf','jpg','jpeg','png','xlsx','xls','csv'];
+  if (!allowedMime.includes(file.type) && !allowedExt.includes(ext)) {
+    toast('Allowed: Excel (.xlsx/.xls/.csv) — preferred — or PDF/JPG/PNG scan', 'error'); return;
+  }
 
   const btn = document.getElementById('paImportUploadBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
@@ -3816,7 +3824,10 @@ async function paAnalyze(docId, payAppId) {
   }
   const btn = document.getElementById('paAnalyzeBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…'; }
-  toast('Analyzing pay application… this can take 15–60s', 'info');
+  // Native spreadsheets parse server-side in ~1s; PDF/image scans go through AI (~1–2 min).
+  const _doc = (DATA.payAppDocs || []).find(d => d.id === docId);
+  const _isXlsx = /\.(xlsx|xls|csv)$/i.test(_doc?.file_name || _doc?.file_path || '');
+  toast(_isXlsx ? 'Importing spreadsheet…' : 'Analyzing scan with AI… this can take 1–2 min', 'info');
   // Guard against an indefinitely-hanging request: abort after 210s so the
   // button never spins forever. A dense scanned G703 (100+ lines) legitimately
   // takes ~90s per LLM pass; the edge fn caps itself at 2 passes, so ~200s is

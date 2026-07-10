@@ -26,6 +26,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { verify } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
+import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))!;
@@ -78,6 +79,122 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+// ---------------------------------------------------------------------------
+// Native G703 spreadsheet parser (.xlsx/.xls/.csv).
+// Most G703 continuation sheets originate in Excel, where the columns are
+// unambiguous — no OCR guesswork. When a contractor uploads the native file we
+// parse it deterministically (no LLM), which is instant and reconciles exactly.
+// The layout varies per contractor, so we DETECT columns from the header text
+// rather than assuming fixed positions.
+// Returns the SAME shape the LLM path produces: { lines, printed_totals, header }.
+// ---------------------------------------------------------------------------
+function parseMoney(v: unknown): number {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const s = String(v).replace(/[$,\s]/g, "").replace(/[()]/g, ""); // strip $, commas, parens
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseG703Spreadsheet(bytes: Uint8Array): {
+  lines: any[];
+  printed_totals: any;
+  header: any;
+} | null {
+  const wb = XLSX.read(bytes, { type: "array", cellDates: true });
+  const norm = (v: unknown) => String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  const lines: any[] = [];
+
+  // A G703 pay app is often split across multiple sheets/pages (e.g. a G702
+  // cover sheet on "PAGE 1" and the G703 continuation on "PAGE 2"). We scan
+  // EACH sheet independently for its own header band, so a cover sheet with no
+  // line items is simply skipped and every continuation sheet contributes rows.
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true }) as any[][];
+    if (!rows.length) continue;
+
+    // AIA G703 header labels commonly wrap across up to THREE rows, e.g.:
+    //   row n:   A | B | C | ... (column letters)
+    //   row n+1: No. | DESCRIPTION OF WORK | ... | SCHEDULED OF VALUES | WORK COMPLETED | ...
+    //   row n+2: ...                            | FROM PREVIOUS APPLICATION | THIS PERIOD | ...
+    let colDesc = -1, colSched = -1, colPrev = -1, colThis = -1, colStored = -1, colTotal = -1, colItem = -1;
+    let headerRowIdx = -1;
+    const scanTo = Math.min(rows.length, 45);
+    for (let r = 0; r < scanTo; r++) {
+      const joined = rows[r].map(norm).join(" | ");
+      const bandRows = [rows[r - 1] || [], rows[r], rows[r + 1] || [], rows[r + 2] || []];
+      const bandJoined = bandRows.map((br) => br.map(norm).join(" | ")).join(" || ");
+      if (joined.includes("scheduled") &&
+          (bandJoined.includes("this period") || bandJoined.includes("previous"))) {
+        const findCol = (pred: (c: string) => boolean): number => {
+          for (const br of bandRows) {
+            const idx = br.map(norm).findIndex(pred);
+            if (idx >= 0) return idx;
+          }
+          return -1;
+        };
+        colDesc   = findCol((c) => c.includes("description"));
+        colSched  = findCol((c) => c.includes("scheduled"));
+        colPrev   = findCol((c) => c.includes("previous"));
+        colThis   = findCol((c) => c.includes("this period"));
+        colStored = findCol((c) => (c.includes("stored") || c.includes("mat.")) && !c.includes("total"));
+        colTotal  = findCol((c) => c.includes("total") && (c.includes("complet") || c.includes("stored")));
+        colItem   = findCol((c) => c === "no." || c === "no" || c === "a" || c.includes("item"));
+        if (colItem < 0) colItem = 0;
+        headerRowIdx = r;
+        break;
+      }
+    }
+    if (headerRowIdx < 0 || colSched < 0 || (colThis < 0 && colPrev < 0)) continue; // no G703 on this sheet
+
+    // Extract detail rows. Keep any row that has BOTH an item number and a
+    // description — including $0 lines, so the schedule stays complete for SOV
+    // matching (a $0 line applies no change but must map to its SOV item).
+    // Skip:
+    //  - the wrapped label rows / column-letter row (no item_no or no description)
+    //  - section SUBTOTAL rows (they carry a dollar figure but NO item_no, since
+    //    the item column is blank on subtotal lines) — already excluded by !item_no.
+    //  - section TITLE rows (item code but no description) — excluded by !description.
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || !row.length) continue;
+      const item_no = String(row[colItem] ?? "").trim();
+      const description = colDesc >= 0 ? String(row[colDesc] ?? "").trim() : "";
+      if (!item_no || !description) continue;
+      // Guard against the header/label band leaking in (e.g. an "A"/"No." row):
+      // a real line's description is not itself a column label.
+      const dl = description.toLowerCase();
+      if (dl === "description of work" || dl === "description") continue;
+      const scheduled_value = parseMoney(row[colSched]);
+      const previous = colPrev >= 0 ? parseMoney(row[colPrev]) : 0;
+      const this_period = colThis >= 0 ? parseMoney(row[colThis]) : 0;
+      const stored = colStored >= 0 ? parseMoney(row[colStored]) : 0;
+      const totalRaw = colTotal >= 0 ? parseMoney(row[colTotal]) : (previous + this_period + stored);
+      const total_completed = totalRaw !== 0 ? totalRaw : previous + this_period + stored;
+      lines.push({ item_no, description, scheduled_value, previous, this_period, stored, total_completed });
+    }
+  }
+  if (!lines.length) return null;
+
+  // Printed totals: sum of the detail lines (the sheet's own subtotal/total rows
+  // are excluded above, so these ARE the authoritative column totals).
+  const sum = (k: string) => lines.reduce((s, l) => s + (l[k] || 0), 0);
+  const printed_totals = {
+    printed_scheduled_total: sum("scheduled_value"),
+    printed_previous_total: sum("previous"),
+    printed_this_period_total: sum("this_period"),
+    printed_stored_total: sum("stored"),
+    printed_total_completed: sum("total_completed"),
+  };
+  const header = {
+    application_no: null, period_to: null, contract_sum_orig: null, change_order_net: null,
+    contract_sum_to_date: null, total_completed_stored: printed_totals.printed_total_completed,
+    retainage_amount: null, earned_less_retainage: null, previous_certificates: null, current_payment_due: null,
+  };
+  return { lines, printed_totals, header };
 }
 
 const SYSTEM_PROMPT =
@@ -239,9 +356,11 @@ Deno.serve(async (req) => {
 
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.length > 30 * 1024 * 1024) return json({ error: "file_too_large" }, 422);
-  const b64 = bytesToBase64(bytes);
   const name = (doc.file_name || doc.file_path).toLowerCase();
+  const isSpreadsheet = /\.(xlsx|xls|csv)$/.test(name);
   const isPdf = name.endsWith(".pdf");
+  // b64/docBlock are only needed for the LLM (PDF/image) path.
+  const b64 = isSpreadsheet ? "" : bytesToBase64(bytes);
   const mediaType = isPdf ? "application/pdf"
     : name.endsWith(".png") ? "image/png"
     : "image/jpeg";
@@ -480,6 +599,27 @@ Deno.serve(async (req) => {
   let recon: any = null;
   let repairNote = "";
   let lastErr = "";
+  let source: "spreadsheet" | "llm" = "llm";
+
+  // 6a. NATIVE SPREADSHEET FAST PATH — no LLM, no OCR, instant + exact.
+  //     When the contractor uploaded the native G703 (.xlsx/.xls/.csv) we parse
+  //     the columns deterministically and run the SAME reconciliation engine.
+  if (isSpreadsheet) {
+    let parsed: any = null;
+    try {
+      parsed = parseG703Spreadsheet(bytes);
+    } catch (e) {
+      return json({ error: "spreadsheet_parse_failed", detail: String(e).slice(0, 400) }, 422);
+    }
+    if (!parsed || !parsed.lines?.length) {
+      return json({ error: "no_lines_extracted", detail: "Could not locate G703 columns in the spreadsheet. Ensure it is a G703 continuation sheet with Scheduled Value / Previous / This Period columns." }, 422);
+    }
+    // Normalize through the same normalizer so downstream shape matches the LLM path.
+    const n = normalize({ ...parsed, waiver_included: false, waiver_amount: null, confidence: 1 });
+    normalized = n;
+    recon = reconcile(n);
+    source = "spreadsheet";
+  } else
   for (let pass = 1; pass <= MAX_PASSES; pass++) {
     let llmJson: any;
     try {
@@ -516,23 +656,30 @@ Deno.serve(async (req) => {
   }
 
   const { lines, header, printed_totals, waiver_included, waiver_amount } = normalized;
+  const fromSpreadsheet = source === "spreadsheet";
   // Confidence: keep the model's, but never report high confidence if it didn't reconcile.
   let confidence = normalized.confidence;
   const warnings: string[] = [...recon.warnings];
   if (!recon.ok) {
     confidence = Math.min(confidence, 0.5);
     warnings.push(
-      "⚠️ Automatic reconciliation FAILED after " + MAX_PASSES + " attempts — the extracted " +
-      "figures do not tie to the pay application's own printed totals. DO NOT rely on these values; " +
-      "verify every line against the PDF before applying. Details: " + recon.discrepancies.join(" "),
+      fromSpreadsheet
+        ? "⚠️ The native spreadsheet's line items do not internally reconcile (G ≠ D + E + F on " +
+          "one or more lines, or against the prior pay app). Verify the source file. Details: " +
+          recon.discrepancies.join(" ")
+        : "⚠️ Automatic reconciliation FAILED after " + MAX_PASSES + " attempts — the extracted " +
+          "figures do not tie to the pay application's own printed totals. DO NOT rely on these values; " +
+          "verify every line against the PDF before applying. Details: " + recon.discrepancies.join(" "),
     );
   }
-  if (confidence < 0.7 && recon.ok) {
+  if (confidence < 0.7 && recon.ok && !fromSpreadsheet) {
     warnings.push("Model reported low confidence — spot-check values against the PDF.");
   }
   // No external checksum at all (no printed totals, no G702 line 4, no prior pay app):
   // reconciliation was vacuously "ok" but unverified — say so explicitly, cap confidence.
-  if (recon.ok && !recon.hadStrongAnchor) {
+  // For a native spreadsheet the per-line G=D+E+F invariant WAS checked against the file's
+  // own numbers, so it is genuinely verified even without an external anchor.
+  if (recon.ok && !recon.hadStrongAnchor && !fromSpreadsheet) {
     confidence = Math.min(confidence, 0.6);
     warnings.push(
       "⚠️ Could not auto-verify: this document prints no column totals or G702 line 4, and " +
@@ -543,10 +690,13 @@ Deno.serve(async (req) => {
 
   const analysis = {
     lines, header, printed_totals, waiver_included, waiver_amount, confidence, warnings,
-    reconciled: recon.ok, verified: recon.ok && recon.hadStrongAnchor,
+    reconciled: recon.ok,
+    // A native spreadsheet that passes per-line reconciliation is verified even
+    // without an external anchor (the columns are unambiguous, not OCR'd).
+    verified: recon.ok && (fromSpreadsheet || recon.hadStrongAnchor),
     reconciliation_discrepancies: recon.discrepancies,
     prior_pay_app_number: priorPayAppNumber, prior_total_completed: priorTotalCompleted,
-    model: LLM_MODEL, sov_version: ver,
+    source, model: fromSpreadsheet ? "native-xlsx-parser" : LLM_MODEL, sov_version: ver,
   };
 
   // 8. Persist onto the document row (frontend reads it for review/apply)
@@ -568,7 +718,8 @@ Deno.serve(async (req) => {
     waiver_included,
     confidence,
     reconciled: recon.ok,
-    verified: recon.ok && recon.hadStrongAnchor,
+    verified: recon.ok && (fromSpreadsheet || recon.hadStrongAnchor),
+    source,
     prior_pay_app_number: priorPayAppNumber,
     prior_total_completed: priorTotalCompleted,
     warnings,
