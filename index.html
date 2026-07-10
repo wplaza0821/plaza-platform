@@ -1462,6 +1462,7 @@
         <div class="page-actions">
           <button class="btn-secondary rq-owner-only" onclick="rqOpenReconcile()" id="rqReconcileBtn" title="Cross-reference verified quantities vs contractor pay-app quantities">⚖️ Reconcile vs Pay Apps</button>
           <button class="btn-secondary rq-owner-only" onclick="qiOpenUploadModal()" id="qiImportBtn" title="Upload a spreadsheet of repair quantities — AI parses it and allocates entries into stacks">📥 Import Spreadsheet</button>
+          <button class="btn-secondary rq-owner-only" onclick="rqClearAll()" id="rqClearAllBtn" style="color:#dc2626;border-color:#fecaca;" title="Delete ALL repair-quantity entries for this project (e.g. to re-import a spreadsheet that matches the last pay application)">🗑 Clear All Entries</button>
           <button class="btn-secondary rq-no-qtytotals-hide" onclick="rqExport()" id="rqExportBtn">⬇ Export</button>
           <button class="btn-primary" onclick="rqOpenForm()" id="rqAddBtn">+ Add Entry</button>
         </div>
@@ -10972,6 +10973,31 @@ async function rqDelete(id) {
   await loadQuantities();
 }
 window.rqDelete = rqDelete;
+
+// Bulk-delete EVERY repair-quantity entry for the active project. Destructive and
+// owner-only, so it requires a typed confirmation. Intended workflow: Clear All
+// Entries -> Import Spreadsheet, to reset field quantities to match what was
+// billed on the last pay application. Does NOT touch stacks, the SOV, or pay apps.
+async function rqClearAll() {
+  if (!isOwner()) { toast('Only the owner can clear all entries', 'error'); return; }
+  const pid = STATE.activeProjectId;
+  if (!pid) { toast('Select a project first', 'error'); return; }
+  const proj = getProject(pid);
+  const n = (DATA_rqi || []).length;
+  if (!n) { toast('No repair-quantity entries to clear', 'info'); return; }
+  const typed = prompt(
+    `⚠️ This permanently DELETES all ${n} repair-quantity entr${n === 1 ? 'y' : 'ies'} for ` +
+    `“${proj ? proj.name : 'this project'}”.\n\n` +
+    `Stacks, the SOV, and pay applications are NOT affected.\n\n` +
+    `Type  DELETE  to confirm:`);
+  if (typed == null) return;                       // cancelled
+  if (typed.trim().toUpperCase() !== 'DELETE') { toast('Not cleared — confirmation text did not match', 'info'); return; }
+  const { error } = await sb.from('repair_quantity_items').delete().eq('project_id', pid);
+  if (error) { handleSbError(error, 'Clear all repair quantities'); return; }
+  toast(`Cleared ${n} repair-quantity entr${n === 1 ? 'y' : 'ies'} — import a spreadsheet to repopulate`, 'success');
+  await loadQuantities();
+}
+window.rqClearAll = rqClearAll;
 
 // ── Repair-Quantity spreadsheet auto-import (Analyze → Review → Apply) ────────
 // Owner/staff upload a spreadsheet; analyze-quantities edge fn AI-normalizes it
