@@ -3188,6 +3188,51 @@ function previousCertificatesTotal(projectId, excludePayAppId = null) {
     .reduce((s, pa) => s + Number(pa.current_payment_due || 0), 0);
 }
 
+// Retainage-exempt base per SOV item.
+// Firm rule (William, 2026-07-09): PA#1 is the initial deposit per the contract
+// and holds NO retainage; every pay app AFTER holds 15% CUMULATIVE. In practice
+// that means retainage = 15% × (completed-to-date − the deposit already billed at
+// 0%). A "deposit" pay app is an approved/paid app that held $0 retainage against
+// real completed work. We accumulate each line's completed amount from such apps
+// (by item_no, to bridge SOV versions) and treat it as permanently exempt.
+// Returns { [current_sov_item_id]: exemptCompletedAmount }.
+function depositExemptBySov(projectId, excludePayAppId = null) {
+  const depositPayApps = DATA.payApps.filter(pa =>
+    pa.project_id === projectId &&
+    ['approved','paid','approved_as_noted'].includes(pa.status) &&
+    pa.id !== excludePayAppId &&
+    Number(pa.total_completed || 0) > 0 &&
+    Number(pa.retainage_held || 0) === 0   // deposit = completed work, zero retainage held
+  );
+  const itemNoById = {};
+  DATA.sovItems
+    .filter(i => i.project_id === projectId)
+    .forEach(i => { itemNoById[i.id] = i.item_no; });
+  const byItemNo = {};
+  depositPayApps.forEach(pa => {
+    DATA.payAppLines.filter(l => l.pay_app_id === pa.id).forEach(l => {
+      const itemNo = itemNoById[l.sov_item_id];
+      if (itemNo == null) return;
+      // Exempt base = the largest completed amount booked at 0% retainage on the
+      // deposit app(s) for this line.
+      byItemNo[itemNo] = Math.max(byItemNo[itemNo] || 0, Number(l.total_completed_stored || 0));
+    });
+  });
+  const map = {};
+  currentSovItems(projectId).forEach(i => {
+    if (byItemNo[i.item_no] != null) map[i.id] = byItemNo[i.item_no];
+  });
+  return map;
+}
+
+// Per-line retainage under the firm rule: 15% of completed work ABOVE the
+// deposit-exempt base. exempt defaults to 0 (no deposit) so ordinary projects
+// still get a straight 15% × cumulative.
+function lineRetainage(G, exempt, pct) {
+  const base = Math.max(0, (Number(G) || 0) - (Number(exempt) || 0));
+  return base * ((Number(pct) || 0) / 100);
+}
+
 async function newPayAppFlow() {
   const proj = activeProject();
   if (!proj) { toast('Select a project first'); return; }
@@ -3226,6 +3271,7 @@ async function newPayAppFlow() {
 
   // Pre-create lines from SOV
   const prevMap = previousCompletedBySov(proj.id);
+  const exemptMap = depositExemptBySov(proj.id);   // deposit (0%-retainage) base per line
   const lineRows = sovItems.map(si => ({
     pay_app_id: pa.id,
     sov_item_id: si.id,
@@ -3235,7 +3281,8 @@ async function newPayAppFlow() {
     total_completed_stored: Number(prevMap[si.id] || 0),
     pct_complete: si.scheduled_value > 0 ? (Number(prevMap[si.id] || 0) / Number(si.scheduled_value)) * 100 : 0,
     balance_to_finish: Number(si.scheduled_value) - Number(prevMap[si.id] || 0),
-    retainage: Number(prevMap[si.id] || 0) * (Number(proj.retainage_pct) || 10) / 100,
+    // 15% of completed-to-date ABOVE the deposit-exempt base (firm rule).
+    retainage: lineRetainage(Number(prevMap[si.id] || 0), exemptMap[si.id] || 0, Number(proj.retainage_pct) || 10),
   }));
   const { error: linesErr } = await sb.from('pay_app_lines').insert(lineRows);
   if (linesErr) { handleSbError(linesErr, 'Create pay app lines'); return; }
@@ -3281,6 +3328,10 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   const lineBySov = {};
   lines.forEach(l => { lineBySov[l.sov_item_id] = l; });
 
+  // Deposit-exempt base per line (PA#1 initial deposit held 0% retainage; 15%
+  // applies cumulatively to everything above it). Exclude THIS pay app.
+  const exemptBySov = depositExemptBySov(proj.id, pa.id);
+
   const waiver = DATA.lienWaivers.find(w => w.pay_app_id === pa.id);
   const payAppDocs = (DATA.payAppDocs || []).filter(d => d.pay_app_id === pa.id);
 
@@ -3297,8 +3348,9 @@ async function openPayAppModal(payAppId, forceEdit = false) {
       const G = D + E + F;
       const I = C - G;
       // Locked apps: use stored per-line retainage (Column I variable retainage).
-      // Editable drafts: derive from project rate.
-      const J = financeLocked ? (Number(l.retainage) || 0) : G * ((Number(proj.retainage_pct) || 0) / 100);
+      // Editable drafts: 15% of completed work ABOVE the deposit-exempt base.
+      const J = financeLocked ? (Number(l.retainage) || 0)
+                              : lineRetainage(G, exemptBySov[si.id] || 0, Number(proj.retainage_pct) || 0);
       scheduledTotal += C;
       completedTotal += G;
       prevTotal += D;
@@ -3319,7 +3371,8 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     const G = D + E + F;
     const H = C > 0 ? (G / C) * 100 : 0;
     const I = C - G;
-    const J = financeLocked ? (Number(l.retainage) || 0) : G * ((Number(proj.retainage_pct) || 0) / 100);
+    const J = financeLocked ? (Number(l.retainage) || 0)
+                            : lineRetainage(G, exemptBySov[si.id] || 0, Number(proj.retainage_pct) || 0);
     const over = G > C + 0.01;
     return `
       <tr data-sov="${si.id}" class="${over ? 'overbilled' : ''}">
@@ -3567,7 +3620,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     const G = D + E + F;
     const H = C > 0 ? (G / C) * 100 : 0;
     const I = C - G;
-    const J = G * ((Number(proj.retainage_pct) || 0) / 100);
+    const J = lineRetainage(G, exemptBySov[sovId] || 0, Number(proj.retainage_pct) || 0);
     tr.querySelector('[data-tc]').textContent  = fmt$2(G);
     tr.querySelector('[data-pct]').textContent = H.toFixed(1) + '%';
     tr.querySelector('[data-bal]').textContent = fmt$2(I);
@@ -3617,7 +3670,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     const G = D + E + F;
     const H = C > 0 ? (G / C) * 100 : 0;
     const I = C - G;
-    const J = G * ((Number(proj.retainage_pct) || 0) / 100);
+    const J = lineRetainage(G, exemptBySov[sovId] || 0, Number(proj.retainage_pct) || 0);
     const update = {
       work_completed_this_period: E,
       materials_stored: F,
@@ -3964,6 +4017,8 @@ async function paApply(docId, payAppId) {
     .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1) && !i.is_alternate);
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const byItemNo = {}; sovItems.forEach(i => { byItemNo[norm(i.item_no)] = i; });
+  // Deposit-exempt base (PA#1 held 0% retainage; 15% applies cumulatively above it).
+  const exemptBySov = depositExemptBySov(proj.id, pa.id);
 
   let applied = 0;
   for (const ln of doc.analysis.lines) {
@@ -3983,7 +4038,7 @@ async function paApply(docId, payAppId) {
     const G = D + E + F;
     const H = C > 0 ? (G / C) * 100 : 0;
     const I = C - G;
-    const J = G * ((Number(proj.retainage_pct) || 0) / 100);
+    const J = lineRetainage(G, exemptBySov[match.id] || 0, Number(proj.retainage_pct) || 0);
     const { error } = await sb.from('pay_app_lines').update({
       work_completed_this_period: E,
       materials_stored: F,
