@@ -127,8 +127,24 @@ function toISODate(v: unknown): string | null {
 }
 function workbookToRows(bytes: Uint8Array): Record<string, unknown>[] {
   const wb = XLSX.read(bytes, { type: "array", cellDates: true });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+  const names = wb.SheetNames || [];
+  const multi = names.length > 1;
+  const out: Record<string, unknown>[] = [];
+  for (const name of names) {
+    const sheet = wb.Sheets[name];
+    if (!sheet) continue;
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false }) as Record<string, unknown>[];
+    for (const r of rows) {
+      // Skip completely empty rows.
+      const hasVal = Object.values(r).some((v) => String(v ?? "").trim() !== "");
+      if (!hasVal) continue;
+      // Tag each row with its source tab so the LLM can distinguish tabs
+      // (e.g. tower / building split across sheets).
+      if (multi) out.push({ __sheet: name, ...r });
+      else out.push(r);
+    }
+  }
+  return out;
 }
 
 const SYSTEM_PROMPT =
@@ -158,6 +174,10 @@ const SYSTEM_PROMPT =
   "qty_override to that number and leave length_in/height_in/depth_in null. " +
   "(4) stack_label: the stack identifier as a SHORT label (e.g. 'Stack 1', 'A', '12'). " +
   "Preserve the contractor's naming. tower: 'Park'/'River'/building name or null. " +
+  "If a row has a '__sheet' field, that is the source worksheet TAB name — the workbook " +
+  "has multiple tabs. Treat the tab name as context: if it names a tower/building/stack " +
+  "(e.g. 'River Tower','Stack A','Bldg 2'), use it to fill tower/stack_label when the row " +
+  "itself lacks that column. Do NOT emit '__sheet' as a line item. " +
   "floor_level: e.g. '1F','7F','PH','PENTHOUSE' or null. " +
   "(5) status: map 'done'/'complete'/'repaired'->complete, 'in progress'/'WIP'->in_progress, " +
   "else pending. date_observed/date_repaired -> ISO YYYY-MM-DD or null. " +
