@@ -3233,6 +3233,64 @@ function lineRetainage(G, exempt, pct) {
   return base * ((Number(pct) || 0) / 100);
 }
 
+// -----------------------------------------------------------------------------
+// Change-Order cross-reference guard (William, 2026-07-09).
+// A pay-app line may bill CO work ONLY when a matching APPROVED change order
+// exists in Plazacore (change_orders table) AND has been rolled into the SOV
+// version this pay app bills against. Returns { blocked:[...], ok:bool }.
+//
+// Detection: a billed line is treated as CO work when its item_no starts with a
+// change-order token (CO, C.O., CHANGE ORDER) OR it maps to a SOV item flagged
+// as change-order origin. For each such line we require an approved CO whose
+// number/amount/description reconciles. Blocking reasons are specific so the
+// user knows whether to (a) upload/approve the CO, or (b) fix the line mapping.
+// -----------------------------------------------------------------------------
+function isCoToken(itemNo) {
+  const s = String(itemNo || '').trim().toUpperCase();
+  return /^(C\.?O\.?|CHANGE\s*ORDER)\b|^CO[\s\-_.]*\d/.test(s);
+}
+function coNumberFromItem(itemNo) {
+  const m = String(itemNo || '').toUpperCase().match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+function validateCoBilling(projectId, sovVersion, lines) {
+  const blocked = [];
+  // Approved COs for this project, rolled into the billed SOV version.
+  const approvedCos = (DATA.changeOrders || DATA.change_orders || [])
+    .filter(co => co.project_id === projectId
+               && String(co.status).toLowerCase() === 'approved'
+               && co.applied_to_sov === true);
+  for (const ln of (lines || [])) {
+    const billed = Number(ln.this_period || 0) + Number(ln.stored || 0);
+    if (billed <= 0) continue;                 // only guard lines that actually bill
+    if (!isCoToken(ln.item_no)) continue;      // only guard CO-looking lines
+    const num = coNumberFromItem(ln.item_no);
+    // Match an approved CO by number first, else by amount within $1.
+    let co = approvedCos.find(c => num != null && Number(c.co_number) === num);
+    if (!co) {
+      co = approvedCos.find(c => Math.abs(Number(c.amount || 0) - billed) < 1.0)
+        || approvedCos.find(c => Math.abs(Number(c.amount || 0) - (Number(ln.scheduled_value)||0)) < 1.0);
+    }
+    if (!co) {
+      blocked.push({ item_no: ln.item_no, description: ln.description, this_period: billed,
+        reason: `no APPROVED change order #${num ?? '?'} found in Plazacore (upload & approve the signed CO first)` });
+      continue;
+    }
+    if (Number(co.sov_version_applied || 0) > Number(sovVersion || 0)) {
+      blocked.push({ item_no: ln.item_no, description: ln.description, this_period: billed,
+        reason: `CO #${co.co_number} was applied to SOV v${co.sov_version_applied}, but this pay app bills SOV v${sovVersion} — regenerate the pay app on the current SOV` });
+      continue;
+    }
+    // Guard over-billing beyond the approved CO amount (cumulative would need the
+    // line's prior completed; here we at least flag a single-period overrun).
+    if (billed - Number(co.amount || 0) > 1.0) {
+      blocked.push({ item_no: ln.item_no, description: ln.description, this_period: billed,
+        reason: `billed $${billed.toLocaleString()} exceeds approved CO #${co.co_number} amount $${Number(co.amount||0).toLocaleString()}` });
+    }
+  }
+  return { blocked, ok: blocked.length === 0 };
+}
+
 async function newPayAppFlow() {
   const proj = activeProject();
   if (!proj) { toast('Select a project first'); return; }
@@ -3987,11 +4045,18 @@ function paReview(docId, payAppId) {
   if (h.total_completed_stored != null) hdrBits.push(`Total Completed &amp; Stored: <strong>${fmt$2(h.total_completed_stored)}</strong>`);
   if (h.period_to) hdrBits.push(`Period To: <strong>${escapeHtml(h.period_to)}</strong>`);
 
+  // CO cross-reference: surface unverified change-order billing before Apply.
+  const coCheck = validateCoBilling(proj.id, pa.sov_version, doc.analysis.lines);
+  const coBlockedBanner = coCheck.blocked.length
+    ? `<div class="warn-banner" style="background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.4);">🛑 <strong>Change-order billing not verified — Apply is blocked:</strong><ul style="margin:6px 0 0 18px;">${coCheck.blocked.map(b => `<li>“${escapeHtml(b.item_no)} ${escapeHtml(b.description||'')}” ($${(b.this_period||0).toLocaleString()}) — ${escapeHtml(b.reason)}</li>`).join('')}</ul><div style="margin-top:6px;">Upload &amp; approve the signed CO in the Change Orders tab (or fix the line mapping), then re-analyze.</div></div>`
+    : '';
+
   showModal({
     title: `Review Extracted Pay Application — #${pa.pay_app_number}`,
     wide: true,
     body: `
       ${doc.analysis.warnings && doc.analysis.warnings.length ? `<div class="warn-banner">⚠️ ${doc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
+      ${coBlockedBanner}
       <div class="hint-banner">Extracted <strong>${rows.length}</strong> line(s): <strong>${matched}</strong> matched to the SOV${unmatched ? `, <strong>${unmatched}</strong> unmatched (will be skipped)` : ''}. ${hdrBits.length ? '<br>' + hdrBits.join(' · ') : ''}<br>Applying will set each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>; totals recompute automatically. Review against the PDF before applying.</div>
       <div class="table-wrap" style="max-height:420px;overflow:auto;">
         <table class="data">
@@ -4002,7 +4067,7 @@ function paReview(docId, payAppId) {
     footer: `
       <button class="btn btn-secondary" onclick="openPayAppModal('${pa.id}', true)">Cancel</button>
       <div style="flex:1"></div>
-      <button class="btn btn-primary" onclick="paApply('${docId}','${pa.id}')">Apply ${matched} Matched Line(s)</button>`,
+      <button class="btn btn-primary"${coCheck.blocked.length ? ' disabled title="Resolve change-order verification first"' : ''} onclick="paApply('${docId}','${pa.id}')">Apply ${matched} Matched Line(s)</button>`,
   });
 }
 window.paReview = paReview;
@@ -4019,6 +4084,22 @@ async function paApply(docId, payAppId) {
   const byItemNo = {}; sovItems.forEach(i => { byItemNo[norm(i.item_no)] = i; });
   // Deposit-exempt base (PA#1 held 0% retainage; 15% applies cumulatively above it).
   const exemptBySov = depositExemptBySov(proj.id, pa.id);
+
+  // ---- CO CROSS-REFERENCE GUARD (William, 2026-07-09) ----------------------
+  // A pay app may bill change-order work ONLY if the CO actually exists and is
+  // APPROVED in Plazacore. This catches the failure mode where a contractor
+  // bills "CO #N" that was never uploaded/approved, or bills it against the
+  // wrong SOV line (e.g. an unrelated bid alternate). We block the apply and
+  // tell the user exactly which CO is unverified so it can be resolved.
+  const coCheck = validateCoBilling(proj.id, pa.sov_version, doc.analysis.lines);
+  if (coCheck.blocked.length) {
+    const msg = coCheck.blocked.map(b =>
+      `• “${b.item_no} ${b.description}” ($${(b.this_period||0).toLocaleString()}) — ${b.reason}`).join('\n');
+    alert('⚠️ Cannot apply: change-order billing could not be cross-referenced against approved COs in Plazacore.\n\n' +
+          msg + '\n\nUpload/approve the change order first, or correct the line mapping. No lines were applied.');
+    toast('Blocked: unverified change-order billing — see details', 'error');
+    return;
+  }
 
   let applied = 0;
   for (const ln of doc.analysis.lines) {
