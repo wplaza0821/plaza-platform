@@ -307,25 +307,39 @@ Deno.serve(async (req) => {
   // Tolerance: $1 or 0.1% of the reference, whichever is larger (rounding slack only).
   const tol = (ref: number) => Math.max(1, Math.abs(ref) * 0.001);
 
+  // Hard per-call timeout so a stuck Anthropic request can't wedge the whole
+  // edge function (which would surface to the user as a spinning button).
+  const LLM_CALL_TIMEOUT_MS = 55000;
   async function callLLM(extraUserText: string): Promise<any> {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": LLM_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: LLM_MODEL,
-        max_tokens: 16000,
-        temperature: 0,
-        system: SYSTEM_PROMPT,
-        messages: [{
-          role: "user",
-          content: [docBlock, { type: "text", text: userText + extraUserText }],
-        }],
-      }),
-    });
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), LLM_CALL_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": LLM_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: LLM_MODEL,
+          max_tokens: 16000,
+          temperature: 0,
+          system: SYSTEM_PROMPT,
+          messages: [{
+            role: "user",
+            content: [docBlock, { type: "text", text: userText + extraUserText }],
+          }],
+        }),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      clearTimeout(t);
+      if ((e as any)?.name === "AbortError") throw new Error("llm_timeout: Anthropic call exceeded " + LLM_CALL_TIMEOUT_MS + "ms");
+      throw e;
+    }
+    clearTimeout(t);
     if (!resp.ok) {
       const t = await resp.text();
       throw new Error(`llm_failed status=${resp.status} ${t.slice(0, 400)}`);
@@ -449,9 +463,14 @@ Deno.serve(async (req) => {
     return { ok: disc.length === 0, discrepancies: disc, warnings, hadStrongAnchor };
   }
 
-  // 6. LLM call with self-repair loop (up to 3 passes). We only accept an
-  //    extraction once it reconciles against the sheet's own printed totals.
-  const MAX_PASSES = 3;
+  // 6. LLM call with self-repair loop. We only RETRY a reconciliation failure
+  //    when there is an external anchor to reconcile against (printed totals,
+  //    G702 line 4, or a prior certified pay app). If none exists, retrying
+  //    cannot improve the result — it only burns time and can hang the button —
+  //    so we accept the first extraction and flag it as unverified instead.
+  //    Reduced from 3 to 2 passes: a single targeted repair captures nearly all
+  //    real fixes; a 3rd pass added latency without materially better accuracy.
+  const MAX_PASSES = 2;
   let normalized: any = null;
   let recon: any = null;
   let repairNote = "";
@@ -462,7 +481,7 @@ Deno.serve(async (req) => {
       llmJson = await callLLM(repairNote);
     } catch (e) {
       lastErr = String(e).slice(0, 400);
-      // Truncation/transport errors are worth one more try; parse errors too.
+      // Timeout/transport/parse errors are worth one more try.
       if (pass < MAX_PASSES) { repairNote = "\n\nYour previous response could not be used (" + lastErr + "). Return ONLY valid minified JSON per the schema."; continue; }
       return json({ error: "llm_error", detail: lastErr }, 502);
     }
@@ -475,6 +494,9 @@ Deno.serve(async (req) => {
     const r = reconcile(n);
     normalized = n; recon = r;
     if (r.ok) break;
+    // No external anchor => a retry cannot verify anything. Stop now and let the
+    // downstream "unverified" handling flag it; do not waste a second pass.
+    if (!r.hadStrongAnchor) break;
     // Build a targeted repair prompt with the exact discrepancies.
     if (pass < MAX_PASSES) {
       repairNote =

@@ -3816,7 +3816,12 @@ async function paAnalyze(docId, payAppId) {
   }
   const btn = document.getElementById('paAnalyzeBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…'; }
-  toast('Analyzing pay application… this can take 15–40s', 'info');
+  toast('Analyzing pay application… this can take 15–60s', 'info');
+  // Guard against an indefinitely-hanging request: abort after 130s so the
+  // button never spins forever. The edge fn's own work is bounded well under
+  // this; anything longer is a stuck request we want to surface as an error.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 130000);
   try {
     const res = await fetch(ANALYZE_PAYAPP_FN_URL, {
       method: 'POST',
@@ -3826,7 +3831,9 @@ async function paAnalyze(docId, payAppId) {
         'authorization': 'Bearer ' + (AUTH?.jwt || ''),
       },
       body: JSON.stringify({ doc_id: docId }),
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
     let j = {}; try { j = await res.json(); } catch {}
     if (!res.ok || j?.error) {
       const map = {
@@ -3848,9 +3855,13 @@ async function paAnalyze(docId, payAppId) {
     openPayAppModal(payAppId, true);
     paReview(docId, payAppId);
   } catch (e) {
+    clearTimeout(timer);
     await loadAllData();
     openPayAppModal(payAppId, true);
-    toast('Analyze failed: ' + (e.message || e), 'error');
+    const msg = (e?.name === 'AbortError')
+      ? 'Analyze timed out (>130s). The PDF may be too large/dense — try a clearer scan or fewer pages, then re-analyze.'
+      : ('Analyze failed: ' + (e.message || e));
+    toast(msg, 'error');
   }
 }
 window.paAnalyze = paAnalyze;
