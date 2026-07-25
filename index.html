@@ -5016,7 +5016,7 @@ function openCoModal(id) {
         ${editing?.file_path ? `<div style="margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-sm" onclick="viewCoFile('${editing.id}')">📎 ${escapeHtml(editing.file_name || 'View attachment')}</button></div>` : ''}
         <input type="file" id="co-file" accept=".pdf,image/jpeg,image/png" />
       </div>
-      ${!editing?.is_pco && editing?.analyzed_at ? `<div class="hint-banner" style="margin-top:4px; ${editing.signed ? '' : 'background:#fde8e8;border-color:#f5b5b5;'}">${editing.signed ? '✅ Signature verified' : '⛔ NOT signed'} — ${escapeHtml(editing.signature_summary || '')}${editing.analysis?.line_items?.length ? ` · ${editing.analysis.line_items.length} line item(s), total $${Number(editing.analysis.total||0).toLocaleString()}` : ''}</div>` : ''}
+      ${!editing?.is_pco && editing?.analyzed_at ? `<div class="hint-banner" style="margin-top:4px; ${editing.signed ? '' : 'background:#fde8e8;border-color:#f5b5b5;'}">${editing.signed ? '✅ Fully executed — all signature blocks signed' : '⛔ NOT fully executed — blank signature block(s)'} — ${escapeHtml(editing.signature_summary || '')}${Array.isArray(editing.analysis?.signature_blocks) && editing.analysis.signature_blocks.length ? `<div style="margin-top:4px;">${editing.analysis.signature_blocks.map(b => `${b.signed ? '✅' : '⛔'} ${escapeHtml(b.role || 'Unknown party')}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}${editing.analysis?.line_items?.length ? ` · ${editing.analysis.line_items.length} line item(s), total $${Number(editing.analysis.total||0).toLocaleString()}` : ''}</div>` : ''}
       ${!editing?.is_pco ? `<div class="hint-banner" style="margin-top:4px;">📝 Setting status to <strong>Approved</strong> requires the fully executed (signed) document. On save it is analyzed for signatures; only if signed does it get approved and roll into the SOV as itemized line(s).</div>` : ''}
       ${editing && editing.status === 'approved' && !editing.is_pco && editing.applied_to_sov ? `<div class="hint-banner" style="margin-top:4px;">✓ Rolled into SOV v${editing.sov_version_applied}.</div>` : ''}
     `,
@@ -5044,6 +5044,12 @@ async function saveCo(id) {
   // Are we trying to APPROVE an executed CO that isn't already applied? That path
   // is signature-gated: it must pass document analysis (signed === true) first.
   const wantsApprove = status === 'approved' && !isPco && !(prior?.applied_to_sov);
+  // Detect a document swap on an already-approved executed CO. Replacing the
+  // signed PDF must re-run the signature gate (the old analysis is stale), even
+  // though the CO is already applied to the SOV. We re-verify signatures and
+  // refresh the analysis, but do NOT re-roll SOV lines (already applied).
+  const replacingDocOnApproved = !!(id && !isPco && prior?.status === 'approved'
+    && document.getElementById('co-file')?.files?.[0]);
   const data = {
     project_id: STATE.activeProjectId,
     co_number: Number(document.getElementById('co-number').value) || 1,
@@ -5062,6 +5068,9 @@ async function saveCo(id) {
   // Optional file upload — path by project CODE so contractor storage RLS allows it.
   const fileEl = document.getElementById('co-file');
   const file = fileEl?.files?.[0];
+  // Track a freshly uploaded object so we can roll it back if the DB write is
+  // blocked (e.g. RLS), instead of silently orphaning it in the bucket.
+  let uploadedPath = null;
   if (file) {
     if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
     const proj = getProject(STATE.activeProjectId);
@@ -5070,7 +5079,7 @@ async function saveCo(id) {
     const path = `${codePrefix}/co/${Date.now()}_${safe}`;
     const { error: upErr } = await sb.storage.from('change-orders').upload(path, file, { upsert: false });
     if (upErr) { handleSbError(upErr, 'Upload CO file'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
-    if (prior?.file_path) await sb.storage.from('change-orders').remove([prior.file_path]).catch(()=>{});
+    uploadedPath = path;
     data.file_path = path;
     data.file_name = file.name;
     data.file_size = file.size;
@@ -5078,15 +5087,64 @@ async function saveCo(id) {
     data.signed = false;
   }
 
+  // Roll back a just-uploaded object when the DB write fails/no-ops, so we never
+  // leave an orphaned file pointing at nothing.
+  const rollbackUpload = async () => {
+    if (uploadedPath) await sb.storage.from('change-orders').remove([uploadedPath]).catch(()=>{});
+  };
+
   let res, savedId = id;
   if (id) {
-    res = await sb.from('change_orders').update(data).eq('id', id);
+    // .select() so a zero-row result (RLS block on an approved CO, etc.) is
+    // detectable — a plain update() returns no error even when it changes 0 rows.
+    res = await sb.from('change_orders').update(data).eq('id', id).select();
   } else {
     const ins = await sb.from('change_orders').insert(data).select().single();
     res = ins;
     savedId = ins.data?.id;
   }
-  if (res.error) { handleSbError(res.error, 'Save change order'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
+  if (res.error) { await rollbackUpload(); handleSbError(res.error, 'Save change order'); if (btn) { btn.disabled = false; btn.textContent = 'Save'; } return; }
+  // Update that touched no rows == silently blocked (permissions). Surface it
+  // clearly and undo the orphaned upload rather than reporting false success.
+  if (id && Array.isArray(res.data) && res.data.length === 0) {
+    await rollbackUpload();
+    toast('Could not save — you may not have permission to modify this change order (approved COs are owner-only). No changes were made.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    return;
+  }
+  // The replacement stuck — now it's safe to delete the previous file.
+  if (file && prior?.file_path && prior.file_path !== data.file_path) {
+    await sb.storage.from('change-orders').remove([prior.file_path]).catch(()=>{});
+  }
+
+  // ---- Re-verify signatures when a signed doc is swapped on an approved CO ----
+  // Keeps status='approved' but refreshes signed/analysis against the NEW file so
+  // the record stops contradicting the document (e.g. blank architect block).
+  if (replacingDocOnApproved && savedId && !wantsApprove) {
+    if (btn) btn.innerHTML = '<span class="spinner"></span> Re-verifying signatures…';
+    let reanalysis;
+    try {
+      reanalysis = await analyzeCoDocument(savedId);
+    } catch (e) {
+      toast('New document uploaded, but signature re-verification failed: ' + (e?.message || e) + '. The CO stays approved on the OLD verification — fix and re-save.', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      await loadAllData();
+      openCoModal(savedId);
+      return;
+    }
+    if (!reanalysis.signed) {
+      const missing = Array.isArray(reanalysis.unsigned_blocks) && reanalysis.unsigned_blocks.length
+        ? ' Missing/blank: ' + reanalysis.unsigned_blocks.join(', ') + '.'
+        : '';
+      toast('⚠️ Replacement doc is NOT fully executed — one or more signature blocks are blank.' + missing + ' ' + (reanalysis.signature_summary || '') + ' The CO remains approved but the attached document is unsigned; upload the fully executed version.', 'error');
+    } else {
+      toast('✅ Replacement document verified — all signature blocks signed.');
+    }
+    await loadAllData();
+    closeModal();
+    render();
+    return;
+  }
 
   // ---- Signature-gated approval + itemized SOV roll-in ----
   let rolledVer = null;
@@ -5111,7 +5169,10 @@ async function saveCo(id) {
     }
     // 2. Hard signature gate.
     if (!analysis.signed) {
-      toast('⚠️ NOT APPROVED — no valid signatures detected. ' + (analysis.signature_summary || ''), 'error');
+      const missing = Array.isArray(analysis.unsigned_blocks) && analysis.unsigned_blocks.length
+        ? ' Missing/blank: ' + analysis.unsigned_blocks.join(', ') + '.'
+        : '';
+      toast('⚠️ NOT APPROVED — not fully executed; one or more signature blocks are blank.' + missing + ' ' + (analysis.signature_summary || ''), 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
       await loadAllData();
       openCoModal(savedId);
