@@ -5013,7 +5013,7 @@ function openCoModal(id) {
       </div>
       <div class="form-row">
         <label class="form-label">Change Order Document ${editing?.file_path ? '<span class="text-muted" style="font-weight:400;">(replace to update)</span>' : '<span class="text-muted" style="font-weight:400;">(PDF / image, &lt; 25 MB)</span>'}</label>
-        ${editing?.file_path ? `<div style="margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-sm" onclick="viewCoFile('${editing.id}')">📎 ${escapeHtml(editing.file_name || 'View attachment')}</button></div>` : ''}
+        ${editing?.file_path ? `<div style="margin-bottom:6px; display:flex; gap:6px; flex-wrap:wrap;"><button type="button" class="btn btn-ghost btn-sm" onclick="viewCoFile('${editing.id}')">📎 ${escapeHtml(editing.file_name || 'View attachment')}</button>${!editing.is_pco ? `<button type="button" class="btn btn-secondary btn-sm" id="analyzeCoBtn" onclick="analyzeCoNow('${editing.id}')">🔍 Analyze / verify signatures</button>` : ''}</div>` : ''}
         <input type="file" id="co-file" accept=".pdf,image/jpeg,image/png" />
       </div>
       ${!editing?.is_pco && editing?.analyzed_at ? `<div class="hint-banner" style="margin-top:4px; ${editing.signed ? '' : 'background:#fde8e8;border-color:#f5b5b5;'}">${editing.signed ? '✅ Fully executed — all signature blocks signed' : '⛔ NOT fully executed — blank signature block(s)'} — ${escapeHtml(editing.signature_summary || '')}${Array.isArray(editing.analysis?.signature_blocks) && editing.analysis.signature_blocks.length ? `<div style="margin-top:4px;">${editing.analysis.signature_blocks.map(b => `${b.signed ? '✅' : '⛔'} ${escapeHtml(b.role || 'Unknown party')}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}${editing.analysis?.line_items?.length ? ` · ${editing.analysis.line_items.length} line item(s), total $${Number(editing.analysis.total||0).toLocaleString()}` : ''}</div>` : ''}
@@ -5035,6 +5035,34 @@ async function viewCoFile(id) {
   } catch (e) { handleSbError(e, 'Open attachment'); }
 }
 window.viewCoFile = viewCoFile;
+
+// On-demand signature analysis, independent of the approve flow. Runs the
+// server-side analyzer against the currently attached document and refreshes
+// the per-block roster so the user can SEE why a CO is/isn't fully executed
+// (and re-verify after swapping in a corrected doc) without having to approve.
+async function analyzeCoNow(id) {
+  const co = DATA.changeOrders.find(c => c.id === id);
+  if (!co?.file_path) { toast('Upload the change order document first.', 'error'); return; }
+  const btn = document.getElementById('analyzeCoBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analyzing…'; }
+  try {
+    const a = await analyzeCoDocument(id);
+    await loadAllData();
+    if (a.signed) {
+      toast('✅ Fully executed — all signature blocks signed.');
+    } else {
+      const blanks = (Array.isArray(a.unsigned_blocks) && a.unsigned_blocks.length)
+        ? a.unsigned_blocks.join(', ')
+        : 'one or more blocks';
+      toast('⚠️ Not fully executed — blank: ' + blanks + '. ' + (a.signature_summary || ''), 'error');
+    }
+    openCoModal(id); // reopen with refreshed roster banner
+  } catch (e) {
+    toast('Analysis failed: ' + (e?.message || e), 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '🔍 Analyze / verify signatures'; }
+  }
+}
+window.analyzeCoNow = analyzeCoNow;
 
 async function saveCo(id) {
   const btn = document.getElementById('saveCoBtn');
