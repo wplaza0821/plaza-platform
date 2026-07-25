@@ -920,8 +920,30 @@
       <input id="raName" class="login-input" type="text" placeholder="Full name *" autocomplete="name" />
       <input id="raEmail" class="login-input" type="email" placeholder="Email *" autocomplete="email" />
       <input id="raCompany" class="login-input" type="text" placeholder="Company / Association" autocomplete="organization" />
-      <input id="raPhone" class="login-input" type="tel" placeholder="Phone" autocomplete="tel" />
+      <input id="raPhone" class="login-input" type="tel" placeholder="Phone (mobile, for text updates)" autocomplete="tel" />
       <textarea id="raMessage" class="login-input" rows="3" placeholder="Project name / what access do you need?" style="text-align:left; resize:vertical; font-family:inherit;"></textarea>
+
+      <!-- SMS opt-in (A2P 10DLC Call-to-Action). Unchecked by default — express
+           written consent only. The disclosure text below is stored verbatim
+           with the request as consent evidence; keep the wording and the
+           #raSmsConsentText element in sync. -->
+      <label id="raSmsConsentRow" for="raSmsConsent" style="display:flex; align-items:flex-start; gap:9px; margin:14px 0 4px; cursor:pointer; text-align:left;">
+        <input id="raSmsConsent" type="checkbox" style="margin-top:2px; flex:0 0 auto; width:16px; height:16px; cursor:pointer;" />
+        <span id="raSmsConsentText" style="font-size:11.5px; line-height:1.5; color:var(--gray-600,#666);">
+          I agree to receive text messages from Plaza &amp; Associates, LLC about my
+          project — task assignments, document uploads, and inspection scheduling.
+          Message frequency varies. Message and data rates may apply.
+          Reply STOP to opt out or HELP for help. Consent is not a condition of
+          purchase or of receiving portal access. See our
+          <a href="https://www.plazaandassociates.com/terms-and-conditions" target="_blank" rel="noopener" style="color:var(--gray-600,#666); text-decoration:underline;">Terms &amp; Conditions</a>
+          and
+          <a href="https://www.plazaandassociates.com/privacy-policy" target="_blank" rel="noopener" style="color:var(--gray-600,#666); text-decoration:underline;">Privacy Policy</a>.
+        </span>
+      </label>
+      <div id="raSmsConsentHint" style="font-size:11px; line-height:1.45; color:var(--gray-400,#aaa); margin:0 0 12px 26px; text-align:left;">
+        Optional — leave unchecked to receive email only.
+      </div>
+
       <button type="button" class="login-btn" id="raSubmitBtn" onclick="submitAccessRequest()">Request Access</button>
       <div class="login-error" id="raError"></div>
       <div id="raSuccess" style="display:none; color:var(--green,#27ae60); font-size:13px; margin-top:12px; text-align:center; line-height:1.5;">
@@ -7312,12 +7334,27 @@ async function submitAccessRequest() {
   const company = (document.getElementById('raCompany')?.value || '').trim();
   const phone   = (document.getElementById('raPhone')?.value || '').trim();
   const message = (document.getElementById('raMessage')?.value || '').trim();
+  const smsConsentEl = document.getElementById('raSmsConsent');
+  const smsConsent   = !!(smsConsentEl && smsConsentEl.checked);
   if (name.length < 2) { errEl.textContent = 'Please enter your full name.'; return; }
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { errEl.textContent = 'Please enter a valid email.'; return; }
+  // SMS consent is meaningless without a number to send to, and the RLS policy
+  // rejects consent rows that lack one — catch it here with a clear message.
+  if (smsConsent && phone.replace(/\D/g, '').length < 10) {
+    errEl.textContent = 'Enter a mobile number to receive text messages, or uncheck the SMS box.';
+    return;
+  }
+  // Store the disclosure exactly as displayed — this is the consent evidence.
+  const consentText = smsConsent
+    ? (document.getElementById('raSmsConsentText')?.innerText || '').replace(/\s+/g, ' ').trim()
+    : null;
   _raSubmitting = true; btn.disabled = true; btn.textContent = 'Submitting…';
   const { error } = await sb.from('access_requests').insert({
     full_name: name, email,
     company: company || null, phone: phone || null, message: message || null,
+    sms_consent: smsConsent,
+    sms_consent_at: smsConsent ? new Date().toISOString() : null,
+    sms_consent_text: consentText,
   });
   _raSubmitting = false; btn.disabled = false; btn.textContent = 'Request Access';
   if (error) {
@@ -7331,7 +7368,7 @@ async function submitAccessRequest() {
     return;
   }
   okEl.style.display = ''; btn.style.display = 'none';
-  ['raName','raEmail','raCompany','raPhone','raMessage'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
+  ['raName','raEmail','raCompany','raPhone','raMessage','raSmsConsent'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
 }
 window.submitAccessRequest = submitAccessRequest;
 
