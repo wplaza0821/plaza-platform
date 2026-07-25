@@ -5059,8 +5059,10 @@ async function saveCo(id) {
     reason: document.getElementById('co-reason').value,
     // Hold approval back at first write — the DB trigger rejects status='approved'
     // unless signed=true. We set it to approved only AFTER analysis confirms signatures.
-    status: wantsApprove ? (prior?.status && prior.status !== 'approved' ? prior.status : 'pending') : status,
-    approved_at: status === 'approved' ? (prior?.approved_at || new Date().toISOString()) : null,
+    // Same for a doc swap on an already-approved CO: the new file resets signed=false,
+    // so we must drop to 'pending' for the write, then re-approve after re-analysis.
+    status: (wantsApprove || replacingDocOnApproved) ? 'pending' : status,
+    approved_at: (status === 'approved' && !replacingDocOnApproved) ? (prior?.approved_at || new Date().toISOString()) : null,
   };
   if (!data.description) { toast('Description required'); return; }
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…'; }
@@ -5118,15 +5120,17 @@ async function saveCo(id) {
   }
 
   // ---- Re-verify signatures when a signed doc is swapped on an approved CO ----
-  // Keeps status='approved' but refreshes signed/analysis against the NEW file so
-  // the record stops contradicting the document (e.g. blank architect block).
+  // The row was just written as 'pending' (new file => signed=false, which the
+  // require-signature trigger only allows on non-approved rows). Re-run the gate
+  // against the NEW file, then flip back to 'approved' only if fully executed.
+  // SOV lines are NOT re-rolled (already applied).
   if (replacingDocOnApproved && savedId && !wantsApprove) {
     if (btn) btn.innerHTML = '<span class="spinner"></span> Re-verifying signatures…';
     let reanalysis;
     try {
       reanalysis = await analyzeCoDocument(savedId);
     } catch (e) {
-      toast('New document uploaded, but signature re-verification failed: ' + (e?.message || e) + '. The CO stays approved on the OLD verification — fix and re-save.', 'error');
+      toast('New document uploaded, but signature re-verification failed: ' + (e?.message || e) + '. The CO is now PENDING re-approval — fix and re-save.', 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
       await loadAllData();
       openCoModal(savedId);
@@ -5136,10 +5140,24 @@ async function saveCo(id) {
       const missing = Array.isArray(reanalysis.unsigned_blocks) && reanalysis.unsigned_blocks.length
         ? ' Missing/blank: ' + reanalysis.unsigned_blocks.join(', ') + '.'
         : '';
-      toast('⚠️ Replacement doc is NOT fully executed — one or more signature blocks are blank.' + missing + ' ' + (reanalysis.signature_summary || '') + ' The CO remains approved but the attached document is unsigned; upload the fully executed version.', 'error');
-    } else {
-      toast('✅ Replacement document verified — all signature blocks signed.');
+      toast('⚠️ Replacement doc is NOT fully executed — one or more signature blocks are blank.' + missing + ' ' + (reanalysis.signature_summary || '') + ' The CO is now PENDING — upload the fully executed version to re-approve.', 'error');
+      await loadAllData();
+      closeModal();
+      render();
+      return;
     }
+    // Fully executed — restore approved status (trigger passes: signed=true now).
+    const { error: reApErr } = await sb.from('change_orders')
+      .update({ status: 'approved', approved_at: prior?.approved_at || new Date().toISOString() })
+      .eq('id', savedId).select();
+    if (reApErr) {
+      handleSbError(reApErr, 'Re-approve CO');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      await loadAllData();
+      openCoModal(savedId);
+      return;
+    }
+    toast('✅ Replacement document verified — all signature blocks signed. CO re-approved.');
     await loadAllData();
     closeModal();
     render();
