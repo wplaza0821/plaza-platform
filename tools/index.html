@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>Wonderful — Plaza &amp; Associates Tool Library</title>
+<link rel="icon" href="../icon-192.png">
+<style>
+  :root{
+    --bg:#020000; --panel:#0d0c0c; --panel2:#141313; --line:#262424;
+    --ink:#f4f2f0; --dim:#8f8a86; --dim2:#645f5b;
+    --teal:#1f6581; --teal-lt:#2d87ab;
+    --warn:#b8860b; --danger:#8b3a3a; --ok:#2f6b4f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+  a{color:var(--teal-lt);text-decoration:none}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 18px}
+
+  /* ---------- login ---------- */
+  #gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:30px;width:100%;max-width:390px}
+  .brand{font-size:20px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+  .brand small{display:block;font-size:10.5px;letter-spacing:.22em;color:var(--teal-lt);
+    font-weight:600;margin-top:5px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.09em;
+    color:var(--dim);margin:16px 0 6px}
+  input,select{width:100%;padding:10px 12px;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:7px;font-size:14px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--teal)}
+  button{cursor:pointer;font-family:inherit}
+  .btn{width:100%;margin-top:20px;padding:11px;background:var(--teal);color:#fff;border:0;
+    border-radius:7px;font-size:14px;font-weight:600;letter-spacing:.03em}
+  .btn:hover{background:var(--teal-lt)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .msg{margin-top:14px;font-size:13px;min-height:18px}
+  .msg.err{color:#e08585}
+
+  /* ---------- header ---------- */
+  header{border-bottom:1px solid var(--line);background:var(--panel);
+    position:sticky;top:0;z-index:20}
+  .hrow{display:flex;align-items:center;gap:14px;padding:14px 0;flex-wrap:wrap}
+  .hrow .sp{flex:1}
+  .who{font-size:12px;color:var(--dim)}
+  .who b{color:var(--ink)}
+  .lo{background:none;border:1px solid var(--line);color:var(--dim);padding:6px 12px;
+    border-radius:6px;font-size:12px}
+  .lo:hover{color:var(--ink);border-color:var(--dim)}
+
+  /* ---------- controls ---------- */
+  .controls{display:flex;gap:10px;padding:16px 0 6px;flex-wrap:wrap;align-items:center}
+  .controls input[type=search]{flex:1;min-width:210px}
+  .controls select{width:auto;min-width:132px}
+  .kpis{display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 14px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:7px;
+    padding:7px 13px;font-size:12px;color:var(--dim)}
+  .kpi b{color:var(--ink);font-size:15px;margin-right:5px}
+
+  /* ---------- chips ---------- */
+  .chips{display:flex;gap:7px;flex-wrap:wrap;padding-bottom:16px}
+  .chip{background:var(--panel);border:1px solid var(--line);color:var(--dim);
+    padding:6px 12px;border-radius:20px;font-size:12px}
+  .chip.on{background:var(--teal);border-color:var(--teal);color:#fff}
+  .chip:hover{color:var(--ink)}
+
+  /* ---------- grid ---------- */
+  .grid{display:grid;gap:13px;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));
+    padding-bottom:50px}
+  .tool{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:15px;display:flex;flex-direction:column;gap:9px;transition:border-color .13s}
+  .tool:hover{border-color:var(--teal)}
+  .t-top{display:flex;justify-content:space-between;gap:9px;align-items:flex-start}
+  .t-title{font-size:14.5px;font-weight:650;line-height:1.32}
+  .fav{background:none;border:0;font-size:16px;color:var(--dim2);padding:0;line-height:1}
+  .fav.on{color:var(--warn)}
+  .t-desc{font-size:12.5px;color:var(--dim);flex:1}
+  .t-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:10.5px}
+  .tag{background:var(--panel2);border:1px solid var(--line);color:var(--dim2);
+    padding:2.5px 7px;border-radius:4px;letter-spacing:.03em}
+  .tag.cat{color:var(--teal-lt);border-color:#1f658155}
+  .tag.own{color:#d9a13b;border-color:#b8860b55}
+  .tag.firm{color:#8fa8b8;border-color:#1f658133}
+  .tag.pub{color:#7fa88f;border-color:#2f6b4f55}
+  .tag.arch{color:#b06a6a;border-color:#8b3a3a55}
+  .t-foot{display:flex;gap:8px;align-items:center;margin-top:3px}
+  .open{flex:1;background:var(--teal);color:#fff;border:0;padding:8px;border-radius:6px;
+    font-size:12.5px;font-weight:600}
+  .open:hover{background:var(--teal-lt)}
+  .open:disabled{opacity:.55}
+  .stat{font-size:10.5px;color:var(--dim2);white-space:nowrap}
+  .empty{padding:50px 0;text-align:center;color:var(--dim)}
+  .note{font-size:11.5px;color:var(--dim2);padding:0 0 26px;line-height:1.6}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #ffffff55;
+    border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN GATE ============ -->
+<div id="gate">
+  <div class="card">
+    <div class="brand">Plaza &amp; Associates<small>Wonderful · Tool Library</small></div>
+    <form id="loginForm">
+      <label for="em">Email</label>
+      <input id="em" type="email" autocomplete="username" required>
+      <label for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="current-password" required>
+      <button class="btn" id="loginBtn" type="submit">Sign in</button>
+      <div class="msg" id="loginMsg"></div>
+    </form>
+    <div class="note" style="padding-top:20px">
+      Private library. Tool files are stored in a non-public bucket and served
+      only through short-lived signed links after sign-in.
+    </div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" hidden>
+  <header>
+    <div class="wrap hrow">
+      <div class="brand" style="font-size:15px">Wonderful<small>Tool Library</small></div>
+      <div class="sp"></div>
+      <div class="who" id="who"></div>
+      <button class="lo" id="logout">Sign out</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="kpis" id="kpis"></div>
+
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search title, description, tags…">
+      <select id="sort">
+        <option value="date">Newest first</option>
+        <option value="date_asc">Oldest first</option>
+        <option value="title">Title A–Z</option>
+        <option value="opens">Most opened</option>
+        <option value="never">Never opened first</option>
+      </select>
+      <select id="statusSel">
+        <option value="live">Live only</option>
+        <option value="all">Live + archived</option>
+        <option value="archived">Archived only</option>
+      </select>
+    </div>
+
+    <div class="chips" id="cats"></div>
+    <div class="grid" id="grid"></div>
+    <div class="note" id="foot"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = 'https://xpeppmurxgbqlsabswqn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_rLNpcKk37j6YR0R_jf8EEw_fvB5wHh4';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const CATS = {
+  'reports-field':'Reports & Field',
+  'proposals-bd' :'Proposals & BD',
+  'billing-ar'   :'Billing & A/R',
+  'plazacore'    :'Plazacore',
+  'trading'      :'Trading',
+  'personal'     :'Personal',
+  'research'     :'Research'
+};
+const SENS = {owner_only:['own','Owner only'], firm:['firm','Firm'], public:['pub','Public']};
+
+let TOOLS = [], CAT = 'all', FAVS = new Set();
+try { FAVS = new Set(JSON.parse(localStorage.getItem('wf_favs')||'[]')); } catch(e){}
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- auth ---------- */
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const b = $('loginBtn'), m = $('loginMsg');
+  b.disabled = true; m.className='msg'; m.textContent='Signing in…';
+  const { error } = await sb.auth.signInWithPassword({
+    email: $('em').value.trim(), password: $('pw').value
+  });
+  if (error){ m.className='msg err'; m.textContent = error.message; b.disabled=false; return; }
+  m.textContent = 'Loading library…';
+  await boot();
+});
+
+$('logout').addEventListener('click', async () => {
+  await sb.auth.signOut(); location.reload();
+});
+
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if (!session) return;
+
+  const { data, error } = await sb
+    .from('tools_registry')
+    .select('slug,title,description,category,kind,tags,build_date,storage_path,file_bytes,sensitivity,status,open_count,last_opened_at,usefulness_rating')
+    .order('build_date',{ascending:false});
+
+  if (error){
+    $('loginMsg').className='msg err';
+    $('loginMsg').textContent = 'Signed in, but the library could not load: '+error.message;
+    return;
+  }
+
+  TOOLS = data || [];
+  $('gate').hidden = true; $('app').hidden = false;
+
+  let role = '';
+  try{
+    const { data:p } = await sb.from('profiles').select('app_role,full_name').eq('id',session.user.id).maybeSingle();
+    role = p?.app_role || '';
+    $('who').innerHTML = `<b>${esc(p?.full_name || session.user.email)}</b>${role?' · '+esc(role):''}`;
+  }catch(e){ $('who').innerHTML = `<b>${esc(session.user.email)}</b>`; }
+
+  renderCats(); render();
+}
+
+/* ---------- render ---------- */
+function renderCats(){
+  const counts = {};
+  TOOLS.forEach(t => counts[t.category] = (counts[t.category]||0)+1);
+  const items = [`<button class="chip ${CAT==='all'?'on':''}" data-c="all">All · ${TOOLS.length}</button>`,
+                 `<button class="chip ${CAT==='fav'?'on':''}" data-c="fav">★ Favorites</button>`];
+  Object.keys(CATS).forEach(c => {
+    if (!counts[c]) return;
+    items.push(`<button class="chip ${CAT===c?'on':''}" data-c="${c}">${esc(CATS[c])} · ${counts[c]}</button>`);
+  });
+  $('cats').innerHTML = items.join('');
+  $('cats').querySelectorAll('.chip').forEach(b =>
+    b.onclick = () => { CAT = b.dataset.c; renderCats(); render(); });
+}
+
+function visible(){
+  const q = $('q').value.trim().toLowerCase();
+  const st = $('statusSel').value;
+  let list = TOOLS.filter(t => {
+    if (st==='live' && t.status!=='live') return false;
+    if (st==='archived' && t.status==='live') return false;
+    if (CAT==='fav' && !FAVS.has(t.slug)) return false;
+    if (CAT!=='all' && CAT!=='fav' && t.category!==CAT) return false;
+    if (q){
+      const hay = [t.title,t.description,(t.tags||[]).join(' '),t.category].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const s = $('sort').value;
+  const byDate = (a,b)=> (b.build_date||'').localeCompare(a.build_date||'');
+  if (s==='date') list.sort(byDate);
+  if (s==='date_asc') list.sort((a,b)=>(a.build_date||'').localeCompare(b.build_date||''));
+  if (s==='title') list.sort((a,b)=>(a.title||'').localeCompare(b.title||''));
+  if (s==='opens') list.sort((a,b)=>(b.open_count||0)-(a.open_count||0)||byDate(a,b));
+  if (s==='never') list.sort((a,b)=>(a.open_count||0)-(b.open_count||0)||byDate(a,b));
+  return list;
+}
+
+function render(){
+  const list = visible();
+  const live = TOOLS.filter(t=>t.status==='live').length;
+  const never = TOOLS.filter(t=>!t.open_count).length;
+  $('kpis').innerHTML = `
+    <div class="kpi"><b>${TOOLS.length}</b>in library</div>
+    <div class="kpi"><b>${live}</b>live</div>
+    <div class="kpi"><b>${FAVS.size}</b>favorites</div>
+    <div class="kpi"><b>${never}</b>never opened</div>
+    <div class="kpi"><b>${list.length}</b>showing</div>`;
+
+  if (!list.length){ $('grid').innerHTML = `<div class="empty">No tools match that filter.</div>`; return; }
+
+  $('grid').innerHTML = list.map(t => {
+    const [cls,lbl] = SENS[t.sensitivity] || ['firm','Firm'];
+    const kb = t.file_bytes ? Math.max(1,Math.round(t.file_bytes/1024))+' KB' : '';
+    const opened = t.open_count ? `${t.open_count} open${t.open_count>1?'s':''}` : 'never opened';
+    const zip = (t.storage_path||'').endsWith('.zip');
+    return `<div class="tool">
+      <div class="t-top">
+        <div class="t-title">${esc(t.title)}</div>
+        <button class="fav ${FAVS.has(t.slug)?'on':''}" data-f="${esc(t.slug)}"
+          title="Favorite">${FAVS.has(t.slug)?'★':'☆'}</button>
+      </div>
+      <div class="t-desc">${esc(t.description||'')}</div>
+      <div class="t-meta">
+        <span class="tag cat">${esc(CATS[t.category]||t.category)}</span>
+        <span class="tag ${cls}">${lbl}</span>
+        ${t.status!=='live'?`<span class="tag arch">${esc(t.status)}</span>`:''}
+        ${(t.tags||[]).slice(0,3).map(x=>`<span class="tag">${esc(x)}</span>`).join('')}
+      </div>
+      <div class="t-foot">
+        <button class="open" data-o="${esc(t.slug)}" ${t.storage_path?'':'disabled'}>
+          ${t.storage_path ? (zip?'Download':'Open') : 'No file'}
+        </button>
+        <span class="stat">${esc(t.build_date||'')} · ${kb} · ${opened}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  $('grid').querySelectorAll('.fav').forEach(b => b.onclick = () => {
+    const s = b.dataset.f;
+    FAVS.has(s) ? FAVS.delete(s) : FAVS.add(s);
+    localStorage.setItem('wf_favs', JSON.stringify([...FAVS]));
+    renderCats(); render();
+  });
+  $('grid').querySelectorAll('.open').forEach(b => b.onclick = () => openTool(b, b.dataset.o));
+
+  $('foot').innerHTML = `Files live in the private <code>wonderful-tools</code> bucket.
+    Links are signed and expire after 60 minutes. Owner-only items are restricted by
+    row-level security and are not visible to staff or client accounts.`;
+}
+
+/* ---------- open via signed URL ---------- */
+async function openTool(btn, slug){
+  const t = TOOLS.find(x => x.slug === slug);
+  if (!t || !t.storage_path) return;
+  const label = btn.textContent.trim();
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+
+  // Pop the tab synchronously so Safari/iOS doesn't treat it as a blocked popup.
+  const tab = window.open('', '_blank');
+
+  const { data, error } = await sb.storage
+    .from('wonderful-tools')
+    .createSignedUrl(t.storage_path, 3600);
+
+  if (error || !data?.signedUrl){
+    if (tab) tab.close();
+    btn.disabled = false; btn.textContent = 'Failed — retry';
+    setTimeout(()=>{ btn.textContent = label; }, 2600);
+    console.error('signed url error', error);
+    return;
+  }
+
+  if (tab) tab.location = data.signedUrl;
+  else location.href = data.signedUrl;
+
+  sb.rpc('tools_registry_log_open', { p_slug: slug })
+    .then(() => { t.open_count = (t.open_count||0)+1; render(); })
+    .catch(()=>{});
+
+  btn.disabled = false; btn.textContent = label;
+}
+
+['q','sort','statusSel'].forEach(id => {
+  $(id).addEventListener(id==='q' ? 'input' : 'change', render);
+});
+
+/* resume existing session */
+sb.auth.getSession().then(({data:{session}}) => { if (session) boot(); });
+</script>
+</body>
+</html>
