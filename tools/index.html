@@ -85,6 +85,19 @@
   .tag.firm{color:#8fa8b8;border-color:#1f658133}
   .tag.pub{color:#7fa88f;border-color:#2f6b4f55}
   .tag.arch{color:#b06a6a;border-color:#8b3a3a55}
+  /* ---------- rating ---------- */
+  .rate{display:flex;align-items:center;gap:5px;padding:7px 0 2px;border-top:1px solid var(--line);
+    margin-top:2px}
+  .rate .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim2);
+    margin-right:2px}
+  .star{background:none;border:0;padding:0 1px;font-size:16px;line-height:1;color:var(--dim2)}
+  .star.on{color:var(--teal-lt)}
+  .star:hover{color:var(--teal-lt)}
+  .rate .mine{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--warn);
+    margin-left:auto;white-space:nowrap}
+  .rate .saved{color:var(--ok)}
+  .t-notes{font-size:11.5px;color:var(--dim2);font-style:italic;line-height:1.5;
+    border-left:2px solid var(--line);padding-left:9px}
   .t-foot{display:flex;gap:8px;align-items:center;margin-top:3px}
   .open{flex:1;background:var(--teal);color:#fff;border:0;padding:8px;border-radius:6px;
     font-size:12.5px;font-weight:600}
@@ -141,12 +154,26 @@
         <option value="title">Title A–Z</option>
         <option value="opens">Most opened</option>
         <option value="never">Never opened first</option>
+        <option value="rating">Highest rated</option>
+        <option value="rating_asc">Lowest rated first</option>
       </select>
       <select id="statusSel">
         <option value="live">Live only</option>
         <option value="all">Live + archived</option>
         <option value="archived">Archived only</option>
       </select>
+      <select id="rateSel">
+        <option value="all">Any rating</option>
+        <option value="5">★5 only — core</option>
+        <option value="45">★4–5 — keepers</option>
+        <option value="3">★3 — situational</option>
+        <option value="12">★1–2 — drop candidates</option>
+        <option value="none">Unrated</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:11.5px;
+                    color:var(--dim);text-transform:none;letter-spacing:0;white-space:nowrap">
+        <input type="checkbox" id="showNotes" checked style="width:auto;margin:0"> Show notes
+      </label>
     </div>
 
     <div class="chips" id="cats"></div>
@@ -172,8 +199,9 @@ const CATS = {
 };
 const SENS = {owner_only:['own','Owner only'], firm:['firm','Firm'], public:['pub','Public']};
 
-let TOOLS = [], CAT = 'all', FAVS = new Set();
+let TOOLS = [], CAT = 'all', FAVS = new Set(), MYRATE = new Set(), showNotes = true;
 try { FAVS = new Set(JSON.parse(localStorage.getItem('wf_favs')||'[]')); } catch(e){}
+try { MYRATE = new Set(JSON.parse(localStorage.getItem('wf_myrate')||'[]')); } catch(e){}
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s??'').replace(/[&<>"']/g, c =>
@@ -247,6 +275,12 @@ function visible(){
     if (st==='archived' && t.status==='live') return false;
     if (CAT==='fav' && !FAVS.has(t.slug)) return false;
     if (CAT!=='all' && CAT!=='fav' && t.category!==CAT) return false;
+    const r = $('rateSel').value, ur = t.usefulness_rating;
+    if (r==='none' && ur) return false;
+    if (r==='5'  && ur!==5) return false;
+    if (r==='45' && !(ur===4||ur===5)) return false;
+    if (r==='3'  && ur!==3) return false;
+    if (r==='12' && !(ur===1||ur===2)) return false;
     if (q){
       const hay = [t.title,t.description,(t.tags||[]).join(' '),t.category].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
@@ -260,18 +294,23 @@ function visible(){
   if (s==='title') list.sort((a,b)=>(a.title||'').localeCompare(b.title||''));
   if (s==='opens') list.sort((a,b)=>(b.open_count||0)-(a.open_count||0)||byDate(a,b));
   if (s==='never') list.sort((a,b)=>(a.open_count||0)-(b.open_count||0)||byDate(a,b));
+  if (s==='rating') list.sort((a,b)=>(b.usefulness_rating||0)-(a.usefulness_rating||0)||byDate(a,b));
+  if (s==='rating_asc') list.sort((a,b)=>(a.usefulness_rating||99)-(b.usefulness_rating||99)||byDate(a,b));
   return list;
 }
 
 function render(){
   const list = visible();
   const live = TOOLS.filter(t=>t.status==='live').length;
-  const never = TOOLS.filter(t=>!t.open_count).length;
+  const keep = TOOLS.filter(t=>(t.usefulness_rating||0)>=4).length;
+  const drop = TOOLS.filter(t=>t.usefulness_rating && t.usefulness_rating<=2).length;
+  const mine = TOOLS.filter(t=>MYRATE.has(t.slug)).length;
   $('kpis').innerHTML = `
     <div class="kpi"><b>${TOOLS.length}</b>in library</div>
     <div class="kpi"><b>${live}</b>live</div>
-    <div class="kpi"><b>${FAVS.size}</b>favorites</div>
-    <div class="kpi"><b>${never}</b>never opened</div>
+    <div class="kpi"><b>${keep}</b>rated ★4–5</div>
+    <div class="kpi"><b>${drop}</b>drop candidates</div>
+    <div class="kpi"><b>${mine}</b>you rated</div>
     <div class="kpi"><b>${list.length}</b>showing</div>`;
 
   if (!list.length){ $('grid').innerHTML = `<div class="empty">No tools match that filter.</div>`; return; }
@@ -288,11 +327,20 @@ function render(){
           title="Favorite">${FAVS.has(t.slug)?'★':'☆'}</button>
       </div>
       <div class="t-desc">${esc(t.description||'')}</div>
+      ${(showNotes && t.notes) ? `<div class="t-notes">${esc(t.notes)}</div>` : ''}
       <div class="t-meta">
         <span class="tag cat">${esc(CATS[t.category]||t.category)}</span>
         <span class="tag ${cls}">${lbl}</span>
         ${t.status!=='live'?`<span class="tag arch">${esc(t.status)}</span>`:''}
         ${(t.tags||[]).slice(0,3).map(x=>`<span class="tag">${esc(x)}</span>`).join('')}
+      </div>
+      <div class="rate" data-r="${esc(t.slug)}">
+        <span class="lbl">Rate</span>
+        ${[1,2,3,4,5].map(n=>`<button class="star ${(t.usefulness_rating||0)>=n?'on':''}"
+            data-v="${n}" title="${n} of 5">${(t.usefulness_rating||0)>=n?'★':'☆'}</button>`).join('')}
+        <span class="mine ${MYRATE.has(t.slug)?'saved':''}">${
+          MYRATE.has(t.slug) ? 'your rating ✓' : (t.usefulness_rating?'Lola\u2019s baseline':'unrated')
+        }</span>
       </div>
       <div class="t-foot">
         <button class="open" data-o="${esc(t.slug)}" ${t.storage_path?'':'disabled'}>
@@ -310,10 +358,44 @@ function render(){
     renderCats(); render();
   });
   $('grid').querySelectorAll('.open').forEach(b => b.onclick = () => openTool(b, b.dataset.o));
+  $('grid').querySelectorAll('.rate').forEach(row => {
+    const slug = row.dataset.r;
+    row.querySelectorAll('.star').forEach(s =>
+      s.onclick = () => setRating(slug, +s.dataset.v, row));
+  });
 
   $('foot').innerHTML = `Files live in the private <code>wonderful-tools</code> bucket.
     Links are signed and expire after 60 minutes. Owner-only items are restricted by
     row-level security and are not visible to staff or client accounts.`;
+}
+
+/* ---------- rating write-back ---------- */
+async function setRating(slug, val, row){
+  const t = TOOLS.find(x => x.slug === slug);
+  if (!t) return;
+  const prev = t.usefulness_rating;
+  const tag  = row.querySelector('.mine');
+
+  // toggle off if tapping the same value again
+  const next = (prev === val) ? null : val;
+  t.usefulness_rating = next;
+  tag.textContent = 'saving…'; tag.className = 'mine';
+
+  const { error } = await sb.from('tools_registry')
+    .update({ usefulness_rating: next })
+    .eq('slug', slug);
+
+  if (error){
+    t.usefulness_rating = prev;
+    tag.textContent = 'save failed';
+    console.error('rating save failed', error);
+    setTimeout(render, 1600);
+    return;
+  }
+
+  if (next === null) MYRATE.delete(slug); else MYRATE.add(slug);
+  localStorage.setItem('wf_myrate', JSON.stringify([...MYRATE]));
+  render();
 }
 
 /* ---------- open via signed URL ---------- */
@@ -348,9 +430,10 @@ async function openTool(btn, slug){
   btn.disabled = false; btn.textContent = label;
 }
 
-['q','sort','statusSel'].forEach(id => {
+['q','sort','statusSel','rateSel'].forEach(id => {
   $(id).addEventListener(id==='q' ? 'input' : 'change', render);
 });
+$('showNotes').addEventListener('change', e => { showNotes = e.target.checked; render(); });
 
 /* resume existing session */
 sb.auth.getSession().then(({data:{session}}) => { if (session) boot(); });
