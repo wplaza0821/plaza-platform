@@ -231,6 +231,40 @@
     min-width: 18px; text-align: center;
   }
   .tab.active .count { background: var(--black); color: #fff; }
+  /* Procore-style tool groups on the rail. */
+  .nav-group { display: flex; flex-direction: column; gap: 2px; }
+  .nav-group.empty { display: none !important; }
+  .nav-group-label {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--gray-400); padding: 14px 12px 5px; user-select: none;
+  }
+  .tab .ti { display: inline-flex; align-items: center; justify-content: center; }
+  .tab .ti svg, .rail-toggle .ti svg { display: block; width: 16px; height: 16px; }
+  .tab .tab-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+  /* Fieldwire-style collapse toggle pinned to the rail's bottom (desktop only). */
+  .rail-toggle {
+    margin-top: auto; flex: 0 0 auto; width: 100%; padding: 10px 12px;
+    border: none; border-top: 1px solid var(--gray-200); border-radius: 0;
+    background: transparent; color: var(--gray-400); font-family: inherit;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase;
+    cursor: pointer; display: flex; align-items: center; gap: 10px; text-align: left;
+    transition: color 0.15s, background 0.15s;
+  }
+  .rail-toggle:hover { color: var(--black); background: var(--gray-100); }
+  .rail-toggle .ti { width: 18px; display: inline-flex; justify-content: center; flex: 0 0 auto; }
+  @media (min-width: 769px) {
+    body.rail-collapsed .app { grid-template-columns: 64px 1fr; }
+    body.rail-collapsed .tabs { padding: 12px 8px; }
+    body.rail-collapsed .tab { justify-content: center; padding: 10px 0; gap: 0; }
+    body.rail-collapsed .tab.active { border-radius: 0 4px 4px 0; }
+    body.rail-collapsed .tab .tab-label,
+    body.rail-collapsed .tab .count,
+    body.rail-collapsed .nav-group-label,
+    body.rail-collapsed .rail-toggle .tab-label { display: none; }
+    body.rail-collapsed .nav-group + .nav-group { border-top: 1px solid var(--gray-100); padding-top: 8px; margin-top: 8px; }
+    body.rail-collapsed .rail-toggle { justify-content: center; gap: 0; }
+    body.rail-collapsed .rail-toggle .ti svg { transform: rotate(180deg); }
+  }
   main { grid-area: main; flex: 1; padding: 22px 26px; width: 100%; min-width: 0; }
   .page-header {
     display: flex; justify-content: space-between; align-items: flex-end;
@@ -594,6 +628,12 @@
     .tab { width: auto; flex: 0 0 auto; border-left: none; border-bottom: 3px solid transparent; border-radius: 4px 4px 0 0; padding: 12px 12px; font-size: 12px; }
     .tab.active { border-left-color: transparent; border-bottom-color: var(--black); border-radius: 4px 4px 0 0; }
     .tab .count { margin-left: 6px; }
+    /* Flatten tool groups into the horizontal strip; labels + collapse are desktop-only.
+       (.nav-group.empty keeps display:none — higher specificity than display:contents.) */
+    .nav-group { display: contents; }
+    .nav-group-label { display: none; }
+    .tab .tab-label { flex: 0 0 auto; }
+    .rail-toggle { display: none; }
     main { padding: 14px; }
     .topbar { padding: 12px 14px; flex-wrap: wrap; }
     .brand-logo { width: 90px; }
@@ -1014,21 +1054,38 @@
   </header>
 
   <nav class="tabs" id="tabs">
-    <button class="tab active" data-tab="projects"><span>📋</span> Projects</button>
-    <button class="tab" data-tab="sov"><span>💰</span> Pay Apps <span class="count" id="cnt-sov">0</span></button>
-    <button class="tab" data-tab="rfis"><span>❓</span> RFIs <span class="count" id="cnt-rfis">0</span></button>
-    <button class="tab" data-tab="submittals"><span>📤</span> Submittals <span class="count" id="cnt-subs">0</span></button>
-    <button class="tab" data-tab="cos"><span>🔁</span> Change Orders <span class="count" id="cnt-cos">0</span></button>
-    <button class="tab" data-tab="tasks"><span>✅</span> Tasks <span class="count" id="cnt-tasks">0</span></button>
-    <button class="tab" data-tab="photos"><span>📸</span> Photos <span class="count" id="cnt-photos">0</span></button>
-    <button class="tab" data-tab="field_reports"><span>📋</span> Field Reports <span class="count" id="cnt-fieldreports">0</span></button>
-    <button class="tab" data-tab="deficiencies"><span>⚠️</span> Deficiencies <span class="count" id="cnt-deficiencies">0</span></button>
-    <button class="tab" data-tab="daily"><span>📅</span> Daily Log <span class="count" id="cnt-daily">0</span></button>
-    <button class="tab" data-tab="milestones"><span>🎯</span> Schedule <span class="count" id="cnt-milestones">0</span></button>
-    <button class="tab" data-tab="quantities"><span>📐</span> Quantities</button>
-    <button class="tab" data-tab="docs"><span>📁</span> Documents</button>
-    <button class="tab" data-tab="users" data-role-show="owner"><span>👥</span> Users</button>
-    <button class="tab" data-tab="profile"><span>👤</span> Profile</button>
+    <!-- Procore-style tool groups on a Fieldwire-style rail. Buttons keep the
+         same .tab class, data-tab values and cnt-* ids the JS + role CSS use. -->
+    <div class="nav-group" data-group="home">
+      <button class="tab active" data-tab="projects" title="Projects"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="tab-label">Projects</span></button>
+    </div>
+    <div class="nav-group" data-group="pm">
+      <div class="nav-group-label">Project Management</div>
+      <button class="tab" data-tab="tasks" title="Tasks"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="tab-label">Tasks</span> <span class="count" id="cnt-tasks">0</span></button>
+      <button class="tab" data-tab="rfis" title="RFIs"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span><span class="tab-label">RFIs</span> <span class="count" id="cnt-rfis">0</span></button>
+      <button class="tab" data-tab="submittals" title="Submittals"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></span><span class="tab-label">Submittals</span> <span class="count" id="cnt-subs">0</span></button>
+      <button class="tab" data-tab="milestones" title="Schedule"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h8"/><path d="M7 12h8"/><path d="M11 19h8"/></svg></span><span class="tab-label">Schedule</span> <span class="count" id="cnt-milestones">0</span></button>
+      <button class="tab" data-tab="daily" title="Daily Log"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg></span><span class="tab-label">Daily Log</span> <span class="count" id="cnt-daily">0</span></button>
+    </div>
+    <div class="nav-group" data-group="field">
+      <div class="nav-group-label">Field</div>
+      <button class="tab" data-tab="field_reports" title="Field Reports"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></span><span class="tab-label">Field Reports</span> <span class="count" id="cnt-fieldreports">0</span></button>
+      <button class="tab" data-tab="deficiencies" title="Deficiencies"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span><span class="tab-label">Deficiencies</span> <span class="count" id="cnt-deficiencies">0</span></button>
+      <button class="tab" data-tab="photos" title="Photos"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span><span class="tab-label">Photos</span> <span class="count" id="cnt-photos">0</span></button>
+      <button class="tab" data-tab="quantities" title="Quantities"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21H3v-2L19 3h2v18z"/><path d="M9 21v-2"/><path d="M13 21v-3"/><path d="M17 21v-4"/></svg></span><span class="tab-label">Quantities</span></button>
+    </div>
+    <div class="nav-group" data-group="financials">
+      <div class="nav-group-label">Financials</div>
+      <button class="tab" data-tab="sov" title="Pay Apps"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span><span class="tab-label">Pay Apps</span> <span class="count" id="cnt-sov">0</span></button>
+      <button class="tab" data-tab="cos" title="Change Orders"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span><span class="tab-label">Change Orders</span> <span class="count" id="cnt-cos">0</span></button>
+    </div>
+    <div class="nav-group" data-group="core">
+      <div class="nav-group-label">Core</div>
+      <button class="tab" data-tab="docs" title="Documents"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span class="tab-label">Documents</span></button>
+      <button class="tab" data-tab="users" data-role-show="owner" title="Users"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="tab-label">Users</span></button>
+      <button class="tab" data-tab="profile" title="Profile"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span class="tab-label">Profile</span></button>
+    </div>
+    <button class="rail-toggle" id="railToggle" title="Collapse sidebar" aria-label="Collapse sidebar"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></svg></span><span class="tab-label">Collapse</span></button>
   </nav>
 
   <main id="main">
@@ -2257,7 +2314,36 @@ function applyRoleBodyClasses() {
   if (hideQtyTotals()) {
     body.classList.add('perm-no-qtytotals');
   }
+  updateNavGroups();
 }
+
+/* A rail group (Financials, Core, …) whose every tool is role/perm-hidden must
+   not leave a dangling section label — e.g. no_financials users lose Pay Apps
+   AND Change Orders, so the whole Financials group goes with them. */
+function updateNavGroups() {
+  document.querySelectorAll('#tabs .nav-group').forEach(g => {
+    const anyVisible = [...g.querySelectorAll('.tab')]
+      .some(t => getComputedStyle(t).display !== 'none');
+    g.classList.toggle('empty', !anyVisible);
+  });
+}
+
+const RAIL_COLLAPSED_KEY = 'plaza_rail_collapsed_v1';
+(function initRailToggle() {
+  const btn = document.getElementById('railToggle');
+  if (!btn) return;
+  try {
+    if (localStorage.getItem(RAIL_COLLAPSED_KEY) === '1') {
+      document.body.classList.add('rail-collapsed');
+    }
+  } catch (e) {}
+  btn.addEventListener('click', () => {
+    const collapsed = document.body.classList.toggle('rail-collapsed');
+    btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    btn.setAttribute('aria-label', btn.title);
+    try { localStorage.setItem(RAIL_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) {}
+  });
+})();
 
 function renderRoleIndicator() {
   const el = document.getElementById('roleIndicator');
