@@ -1,2 +1,5 @@
-
 .openclaw/
+tests/node_modules/
+tests/vendor/
+tests/test-results/
+tests/playwright-report/

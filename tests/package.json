@@ -1,0 +1,16 @@
+{
+  "name": "plazacore-tests",
+  "private": true,
+  "description": "Playwright access-matrix + navigation suite for the Plazacore platform",
+  "scripts": {
+    "vendor": "esbuild --bundle --format=esm --minify node_modules/@supabase/supabase-js/dist/index.mjs --outfile=vendor/supabase-js.mjs && cp node_modules/pdfjs-dist/build/pdf.min.mjs node_modules/pdfjs-dist/build/pdf.worker.min.mjs vendor/",
+    "pretest": "npm run vendor",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@supabase/supabase-js": "^2.112.1",
+    "esbuild": "^0.28.1",
+    "pdfjs-dist": "^4.2.67"
+  }
+}
