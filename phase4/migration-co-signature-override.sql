@@ -142,6 +142,11 @@ create trigger trg_co_require_signature
   before insert or update on change_orders
   for each row execute function plz_co_require_signature();
 
+-- Tell PostgREST to reload its schema cache immediately, otherwise the app keeps
+-- reporting "Could not find the 'signature_override' column of 'change_orders'
+-- in the schema cache" until the next automatic reload.
+notify pgrst, 'reload schema';
+
 commit;
 
 -- VERIFY (expect 4 rows, then 1 trigger, then t)
