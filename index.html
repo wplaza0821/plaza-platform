@@ -5438,7 +5438,9 @@ async function saveCo(id) {
     description: document.getElementById('co-desc').value.trim() || null,
     amount: Number(document.getElementById('co-amount').value) || 0,
     reason: document.getElementById('co-reason').value,
-    ...(isOwner() ? {
+    // Only send override columns when an override is actually involved, so ordinary
+    // CO saves keep working even before the override migration has been applied.
+    ...((sigOverride || prior?.signature_override) ? {
       signature_override: sigOverride,
       signature_override_reason: sigOverride ? sigOverrideReason : null,
     } : {}),
@@ -5685,6 +5687,20 @@ async function rollCoIntoSov(projectId, coId, coData, lineItems) {
   const items = (Array.isArray(lineItems) ? lineItems : [])
     .map(li => ({ description: String(li?.description || '').trim(), amount: Number(li?.amount) || 0 }))
     .filter(li => li.description && Math.abs(li.amount) > 0.005);
+
+  // ---- SIGN RECONCILIATION (credit change orders) ----
+  // A credit CO writes its amounts in accounting parentheses — "(  $113,337.44 )".
+  // Document extractors routinely return that as a POSITIVE magnitude. Rolling it in
+  // unflipped would INCREASE the contract sum on a credit, i.e. the exact opposite of
+  // the intent, and would silently corrupt contract-sum-to-date on every later pay app.
+  // The TYPED CO amount is the authority for direction; the document supplies magnitude
+  // and itemization. If the two disagree in sign, flip the extracted lines to match.
+  const typedAmount = Number(coData.amount) || 0;
+  const extractedSum = items.reduce((s, li) => s + li.amount, 0);
+  if (typedAmount !== 0 && extractedSum !== 0
+      && Math.sign(extractedSum) !== Math.sign(typedAmount)) {
+    items.forEach(li => { li.amount = -li.amount; });
+  }
 
   if (items.length >= 2) {
     // Itemized: one SOV sub-line per extracted document line (CO-001.1, .2, ...).
