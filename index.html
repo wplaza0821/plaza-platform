@@ -3565,6 +3565,29 @@ function allocateCoBilling(group, thisPeriod, stored) {
 // can never disagree. CO lines resolve through the CO NUMBER (CO-2 ≡ CO-002 ≡
 // CO-002.1 + CO-002.2) and are never allowed to fuzzy-match a base-bid line —
 // that mismatch previously aimed CO-4's $37,000 at base-bid line GC-1e.
+// Continuation sheets carry SECTION TITLE rows ("B-1 Balcony Slab Edge Repair",
+// "GR-1 Garage Concrete Repairs") that group the sub-items billed beneath them.
+// They are captions, not billable scope: no quantity, no scheduled value, no dollars.
+// The SOV only stores the billable children (B-1a, B-1b, ...), so a header will never
+// match and used to be reported as "unmatched" — noise that buried real problems
+// (William, 2026-08-10). Treat a line as a header only when it carries NO money at
+// all AND the SOV has billable children under its number; anything with dollars stays
+// unmatched so it can never be silently dropped.
+function isSectionHeaderLine(ln, sovItems) {
+  const money = (Number(ln.this_period) || 0) + (Number(ln.stored) || 0) +
+                (Number(ln.previous) || 0) + (Number(ln.total_completed) || 0) +
+                (Number(ln.scheduled_value) || 0);
+  if (Math.abs(money) > 0.005) return false;
+  if (Number(ln.quantity) > 0) return false;
+  const key = String(ln.item_no || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!key) return false;
+  // Children share the header's number and add a letter suffix: B1 -> B1a, GR2 -> GR2c.
+  return sovItems.some(i => {
+    const k = String(i.item_no || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return k.length > key.length && k.startsWith(key) && /[a-z]/.test(k.slice(key.length));
+  });
+}
+
 function matchDocLines(proj, pa, lines) {
   const sovItems = DATA.sovItems
     .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1) && !i.is_alternate)
@@ -3588,6 +3611,9 @@ function matchDocLines(proj, pa, lines) {
     }
     // And the reverse guard: a base-bid doc line must not land on a CO rollup line.
     if (match && (match.source === 'change_order' || match.co_id)) match = null;
+    if (!match && isSectionHeaderLine(ln, sovItems)) {
+      return { idx, ln, kind: 'header', allocations: [] };
+    }
     return { idx, ln, kind: match ? 'sov' : 'unmatched', match,
              allocations: match ? [{ item: match, this_period: Number(ln.this_period) || 0, stored: Number(ln.stored) || 0 }] : [] };
   });
@@ -4378,11 +4404,22 @@ function paReview(docId, payAppId) {
   const priorOf = sovItemId => Number((DATA.payAppLines.find(l =>
     l.pay_app_id === pa.id && l.sov_item_id === sovItemId) || {}).work_completed_previous) || 0;
   const matched = rows.filter(r => r.allocations.length).length;
-  const unmatched = rows.length - matched;
+  const headers = rows.filter(r => r.kind === 'header').length;
+  const unmatched = rows.length - matched - headers;
 
   const bodyRows = rows.map(r => {
     const { ln } = r;
     if (!r.allocations.length) {
+      // Section captions are expected and carry no money — show them greyed out and
+      // out of the way rather than as warnings competing with real problems.
+      if (r.kind === 'header') {
+        return `<tr style="opacity:.55;">
+          <td class="text-sm"><strong>${escapeHtml(ln.item_no || '—')}</strong><div class="text-muted">${escapeHtml(ln.description || '')}</div></td>
+          <td class="num text-sm">—</td>
+          <td class="num text-sm">—</td>
+          <td class="text-sm" colspan="2"><span class="badge badge-gray">Section header</span> — no billable value, nothing to apply</td>
+        </tr>`;
+      }
       const why = r.kind === 'co-missing'
         ? `<span class="badge badge-red">CO #${r.coNum ?? '?'} not in SOV v${pa.sov_version}</span> — skipped`
         : '<span class="badge badge-yellow">No SOV match</span> — skipped';
@@ -4445,7 +4482,7 @@ function paReview(docId, payAppId) {
     body: `
       ${doc.analysis.warnings && doc.analysis.warnings.length ? `<div class="warn-banner">⚠️ ${doc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
       ${coBlockedBanner}
-      <div class="hint-banner">Extracted <strong>${rows.length}</strong> line(s): <strong>${matched}</strong> matched to the SOV${unmatched ? `, <strong>${unmatched}</strong> unmatched (will be skipped)` : ''}. ${hdrBits.length ? '<br>' + hdrBits.join(' · ') : ''}<br>Applying will set each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>; totals recompute automatically. Review against the PDF before applying.</div>
+      <div class="hint-banner">Extracted <strong>${rows.length}</strong> line(s): <strong>${matched}</strong> matched to the SOV${headers ? `, <strong>${headers}</strong> section header(s) ignored` : ''}${unmatched ? `, <strong>${unmatched}</strong> unmatched (will be skipped)` : ''}. ${hdrBits.length ? '<br>' + hdrBits.join(' · ') : ''}<br>Applying will set each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>; totals recompute automatically. Review against the PDF before applying.</div>
       <div class="table-wrap" style="max-height:420px;overflow:auto;">
         <table class="data">
           <thead><tr><th>SOV Item</th><th class="num">E: This Period</th><th class="num">F: Stored</th><th class="num">Completed / Sched</th><th>Check</th></tr></thead>
