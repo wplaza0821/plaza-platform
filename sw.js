@@ -1,13 +1,20 @@
 /* Plazacore service worker — app-shell cache + offline fallback.
  * Strategy:
- *  - App shell (index.html, manifest, icons) + pdf.js libs: cache-first with
- *    background refresh (stale-while-revalidate).
+ *  - index.html / navigations: NETWORK-FIRST, cache only as offline fallback.
+ *    The whole app (all JS) lives inside index.html, so stale-while-revalidate
+ *    served users a one-deploy-old application: a fix could be live on the
+ *    server while the browser still ran the previous build until a second
+ *    reload. That produced a real false alarm on 2026-08-10 — CO-3 reported
+ *    "No SOV match" from cached pre-fix code after the fix was already live.
+ *    Correctness of billing logic beats a few hundred ms of load time.
+ *  - Static assets (manifest, icons) + pdf.js / supabase-js CDN libs:
+ *    cache-first with background refresh (stale-while-revalidate). These are
+ *    immutable-ish and safe to serve stale.
  *  - Supabase REST / auth / storage / functions: NEVER cached or intercepted.
  *    Writes that fail offline are queued by the app in IndexedDB (see app code),
  *    not by the SW. Reads simply fail and the app shows cached DATA.
- *  - Navigation requests: serve cached index.html when offline (SPA shell).
  */
-const CACHE = 'plazacore-shell-v31';
+const CACHE = 'plazacore-shell-v32';
 const SHELL = [
   './',
   './index.html',
@@ -44,16 +51,36 @@ function isSupabaseApi(url) {
          url.includes('.supabase.co/realtime/');
 }
 
+// The application code IS index.html — it must never be served stale.
+function isAppShellDoc(req, url) {
+  if (req.mode === 'navigate') return true;
+  if (req.destination === 'document') return true;
+  const path = url.startsWith(self.location.origin)
+    ? url.slice(self.location.origin.length).split('?')[0]
+    : '';
+  return path === '/' || path === '/index.html';
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;                 // writes pass straight through
   const url = req.url;
   if (isSupabaseApi(url)) return;                   // data plane: no SW involvement
 
-  // SPA navigations -> cached shell when network fails.
-  if (req.mode === 'navigate') {
+  // ---- index.html + SPA navigations: NETWORK-FIRST -------------------------
+  // Always try the network so a deployed fix takes effect on the very next
+  // reload. Cache is refreshed on success and used only when offline.
+  if (isAppShellDoc(req, url)) {
     e.respondWith(
-      fetch(req).catch(() => caches.match('./index.html').then((r) => r || caches.match('./')))
+      fetch(req, { cache: 'no-store' })
+        .then((res) => {
+          if (res && res.status === 200) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put('./index.html', copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match('./index.html').then((r) => r || caches.match('./')))
     );
     return;
   }
