@@ -3620,9 +3620,13 @@ function matchDocLines(proj, pa, lines) {
 }
 function validateCoBilling(projectId, sovVersion, lines) {
   const blocked = [];
+  const warnings = [];
   const sgn = v => (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString();
   const allCos = (DATA.changeOrders || DATA.change_orders || [])
     .filter(co => co.project_id === projectId);
+  // An owner-overridden CO is still an APPROVED CO and is billable — the override is a
+  // documented decision, not a defect. It is surfaced as a visible warning downstream
+  // (see `overridden` below) so an unsigned CO can never be billed invisibly.
   const approvedCos = allCos.filter(co => String(co.status).toLowerCase() === 'approved'
                                        && co.applied_to_sov === true);
   const groups = sovCoGroups(projectId, sovVersion);
@@ -3685,9 +3689,21 @@ function validateCoBilling(projectId, sovVersion, lines) {
         : '';
       blocked.push({ item_no: label, description: desc, this_period: b.period,
         reason: `cumulative billed ${sgn(cumulative)} exceeds approved CO #${co.co_number} total ${sgn(approved)}${sub}` });
+      continue;
+    }
+
+    // Non-blocking notice: this CO was approved by owner override, not by signatures.
+    // Billing it is allowed (the override is a documented decision) but it must never
+    // be invisible on a certified pay application.
+    if (co.signature_override) {
+      warnings.push({ item_no: label, description: desc,
+        reason: `CO #${co.co_number} was approved by OWNER OVERRIDE without all signatures`
+          + (co.signature_override_by ? ` (${co.signature_override_by})` : '')
+          + (co.signature_override_reason ? ` — “${co.signature_override_reason}”` : '')
+          + '. Billing is permitted; the pay application should note it.' });
     }
   }
-  return { blocked, ok: blocked.length === 0 };
+  return { blocked, warnings, ok: blocked.length === 0 };
 }
 
 async function newPayAppFlow() {
@@ -4475,6 +4491,10 @@ function paReview(docId, payAppId) {
   const coBlockedBanner = coCheck.blocked.length
     ? `<div class="warn-banner" style="background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.4);">🛑 <strong>Change-order billing not verified — Apply is blocked:</strong><ul style="margin:6px 0 0 18px;">${coCheck.blocked.map(b => `<li>“${escapeHtml(b.item_no)} ${escapeHtml(b.description||'')}” ($${(b.this_period||0).toLocaleString()}) — ${escapeHtml(b.reason)}</li>`).join('')}</ul><div style="margin-top:6px;">Upload &amp; approve the signed CO in the Change Orders tab (or fix the line mapping), then re-analyze.</div></div>`
     : '';
+  // Owner-override notices: billing is permitted, but never silently.
+  const coWarnBanner = (coCheck.warnings || []).length
+    ? `<div class="warn-banner" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.45);">🔓 <strong>Change order(s) approved by owner override — billing allowed, disclose on the application:</strong><ul style="margin:6px 0 0 18px;">${coCheck.warnings.map(w => `<li>“${escapeHtml(w.item_no)} ${escapeHtml(w.description||'')}” — ${escapeHtml(w.reason)}</li>`).join('')}</ul></div>`
+    : '';
 
   showModal({
     title: `Review Extracted Pay Application — #${pa.pay_app_number}`,
@@ -4482,6 +4502,7 @@ function paReview(docId, payAppId) {
     body: `
       ${doc.analysis.warnings && doc.analysis.warnings.length ? `<div class="warn-banner">⚠️ ${doc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
       ${coBlockedBanner}
+      ${coWarnBanner}
       <div class="hint-banner">Extracted <strong>${rows.length}</strong> line(s): <strong>${matched}</strong> matched to the SOV${headers ? `, <strong>${headers}</strong> section header(s) ignored` : ''}${unmatched ? `, <strong>${unmatched}</strong> unmatched (will be skipped)` : ''}. ${hdrBits.length ? '<br>' + hdrBits.join(' · ') : ''}<br>Applying will set each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>; totals recompute automatically. Review against the PDF before applying.</div>
       <div class="table-wrap" style="max-height:420px;overflow:auto;">
         <table class="data">
@@ -4519,6 +4540,17 @@ async function paApply(docId, payAppId) {
           msg + '\n\nUpload/approve the change order first, or correct the line mapping. No lines were applied.');
     toast('Blocked: unverified change-order billing — see details', 'error');
     return;
+  }
+  // Owner-override notices: allowed, but require an explicit acknowledgement so an
+  // unsigned CO can never reach a certified pay application unnoticed.
+  if ((coCheck.warnings || []).length) {
+    const wmsg = coCheck.warnings.map(w => `• “${w.item_no} ${w.description}” — ${w.reason}`).join('\n');
+    if (!confirm('🔓 This pay application bills change order(s) approved by OWNER OVERRIDE '
+      + 'without all signatures:\n\n' + wmsg
+      + '\n\nThis is permitted, but the pay application should disclose it. Apply anyway?')) {
+      toast('Apply cancelled', 'info');
+      return;
+    }
   }
 
   // Same matcher the review screen used, so what was reviewed is what gets applied.
@@ -5246,7 +5278,7 @@ function renderCos() {
   }
   body.innerHTML = list.map(c => `
     <tr>
-      <td style="font-weight:600;">${c.is_pco ? 'PCO-' : 'CO-'}${String(c.co_number).padStart(3,'0')}${c.file_path ? ' <span title="Document attached">📎</span>' : ''}${c.applied_to_sov ? ` <span class="badge badge-green" title="In SOV v${c.sov_version_applied}">SOV</span>` : ''}</td>
+      <td style="font-weight:600;">${c.is_pco ? 'PCO-' : 'CO-'}${String(c.co_number).padStart(3,'0')}${c.file_path ? ' <span title="Document attached">📎</span>' : ''}${c.applied_to_sov ? ` <span class="badge badge-green" title="In SOV v${c.sov_version_applied}">SOV</span>` : ''}${c.signature_override ? ` <span class="badge badge-red" title="Owner override — approved without all signatures${c.signature_override_by ? ' by ' + escapeHtml(c.signature_override_by) : ''}${c.signature_override_reason ? ': ' + escapeHtml(c.signature_override_reason) : ''}">🔓 OVERRIDE</span>` : ''}</td>
       <td class="text-sm">${fmtDate(c.created_at)}</td>
       <td>${escapeHtml(c.description || '')}</td>
       <td><span class="badge ${c.is_pco ? 'badge-yellow' : 'badge-green'}">${c.is_pco ? 'PCO' : 'Executed CO'}</span></td>
@@ -5308,6 +5340,17 @@ function openCoModal(id) {
       </div>
       ${!editing?.is_pco && editing?.analyzed_at ? `<div class="hint-banner" style="margin-top:4px; ${editing.signed ? '' : 'background:#fde8e8;border-color:#f5b5b5;'}">${editing.signed ? '✅ Fully executed — all signature blocks signed' : '⛔ NOT fully executed — blank signature block(s)'} — ${escapeHtml(editing.signature_summary || '')}${Array.isArray(editing.analysis?.signature_blocks) && editing.analysis.signature_blocks.length ? `<div style="margin-top:4px;">${editing.analysis.signature_blocks.map(b => `${b.signed ? '✅' : '⛔'} ${escapeHtml(b.role || 'Unknown party')}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}${editing.analysis?.line_items?.length ? ` · ${editing.analysis.line_items.length} line item(s), total $${Number(editing.analysis.total||0).toLocaleString()}` : ''}</div>` : ''}
       ${!editing?.is_pco ? `<div class="hint-banner" style="margin-top:4px;">📝 Setting status to <strong>Approved</strong> requires the fully executed (signed) document. On save it is analyzed for signatures; only if signed does it get approved and roll into the SOV as itemized line(s).</div>` : ''}
+      ${!editing?.is_pco && isOwner() ? `<div class="form-row" style="margin-top:8px; border:1px solid rgba(239,68,68,0.35); border-radius:6px; padding:8px 10px; background:rgba(239,68,68,0.06);">
+        <label class="form-label" style="display:flex; align-items:center; gap:8px; margin-bottom:0; cursor:pointer;">
+          <input type="checkbox" id="co-sig-override" ${editing?.signature_override ? 'checked' : ''} onchange="coOverrideToggled()" style="width:auto; margin:0;" />
+          <span>🔓 Owner override — approve without all signatures</span>
+        </label>
+        <div id="co-sig-override-wrap" style="margin-top:8px; ${editing?.signature_override ? '' : 'display:none;'}">
+          <input type="text" id="co-sig-override-reason" maxlength="500" placeholder="Required — why is this being processed unsigned?" value="${escapeHtml(editing?.signature_override_reason || '')}" />
+          ${editing?.signature_override_by ? `<div class="text-muted text-sm" style="margin-top:4px;">Override recorded by <strong>${escapeHtml(editing.signature_override_by)}</strong>${editing.signature_override_at ? ' on ' + new Date(editing.signature_override_at).toLocaleString() : ''}</div>` : ''}
+          <div class="text-muted text-sm" style="margin-top:4px;">This does <strong>not</strong> mark the document signed. <code>signed</code> stays false, the CO carries an <strong>OVERRIDE</strong> flag with your reason, and replacing the document clears the override so the new file is re-verified on its own merits.</div>
+        </div>
+      </div>` : ''}
       ${editing && editing.status === 'approved' && !editing.is_pco && editing.applied_to_sov ? `<div class="hint-banner" style="margin-top:4px;">✓ Rolled into SOV v${editing.sov_version_applied}.</div>` : ''}
     `,
     footer: editing
@@ -5316,6 +5359,15 @@ function openCoModal(id) {
   });
 }
 window.openCoModal = openCoModal;
+
+// Show/hide the mandatory reason field with the override checkbox.
+function coOverrideToggled() {
+  const on = !!document.getElementById('co-sig-override')?.checked;
+  const wrap = document.getElementById('co-sig-override-wrap');
+  if (wrap) wrap.style.display = on ? '' : 'none';
+  if (on) document.getElementById('co-sig-override-reason')?.focus();
+}
+window.coOverrideToggled = coOverrideToggled;
 
 async function viewCoFile(id) {
   const co = DATA.changeOrders.find(c => c.id === id);
@@ -5368,6 +5420,17 @@ async function saveCo(id) {
   // refresh the analysis, but do NOT re-roll SOV lines (already applied).
   const replacingDocOnApproved = !!(id && !isPco && prior?.status === 'approved'
     && document.getElementById('co-file')?.files?.[0]);
+  // ---- Owner-only documented signature override (William, 2026-08-10) ----
+  // Some COs must be processed before every party signs (e.g. a credit CO squaring a
+  // duplicate payment). The gate stays; this is a deliberate, attributable exception.
+  // It never claims the document is signed — `signed` is left untouched.
+  const sigOverride = !!(isOwner() && document.getElementById('co-sig-override')?.checked);
+  const sigOverrideReason = (document.getElementById('co-sig-override-reason')?.value || '').trim();
+  if (sigOverride && !sigOverrideReason) {
+    toast('A written reason is required to override the signature requirement.', 'error');
+    document.getElementById('co-sig-override-reason')?.focus();
+    return;
+  }
   const data = {
     project_id: STATE.activeProjectId,
     co_number: Number(document.getElementById('co-number').value) || 1,
@@ -5375,6 +5438,10 @@ async function saveCo(id) {
     description: document.getElementById('co-desc').value.trim() || null,
     amount: Number(document.getElementById('co-amount').value) || 0,
     reason: document.getElementById('co-reason').value,
+    ...(isOwner() ? {
+      signature_override: sigOverride,
+      signature_override_reason: sigOverride ? sigOverrideReason : null,
+    } : {}),
     // Hold approval back at first write — the DB trigger rejects status='approved'
     // unless signed=true. We set it to approved only AFTER analysis confirms signatures.
     // Same for a doc swap on an already-approved CO: the new file resets signed=false,
@@ -5493,18 +5560,35 @@ async function saveCo(id) {
       return;
     }
     // 1. Analyze the executed document server-side: verify signatures + extract lines.
+    //    Under an owner override we still analyze — the extracted line items drive the
+    //    itemized SOV roll-in — but a failure or a blank block no longer blocks approval.
     if (btn) btn.innerHTML = '<span class="spinner"></span> Analyzing document…';
     let analysis;
     try {
       analysis = await analyzeCoDocument(savedId);
     } catch (e) {
-      toast('Document analysis failed: ' + (e?.message || e), 'error');
-      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
-      await loadAllData();
-      return;
+      if (!sigOverride) {
+        toast('Document analysis failed: ' + (e?.message || e), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+        await loadAllData();
+        return;
+      }
+      analysis = { signed: false, line_items: [], reconciles: null };
     }
-    // 2. Hard signature gate.
-    if (!analysis.signed) {
+    // 2. Hard signature gate — bypassed only by a documented owner override.
+    if (sigOverride && !analysis.signed) {
+      const blanks = (Array.isArray(analysis.unsigned_blocks) && analysis.unsigned_blocks.length)
+        ? analysis.unsigned_blocks.join(', ') : 'one or more blocks';
+      if (!confirm(`🔓 OWNER OVERRIDE — approve CO-${String(data.co_number).padStart(3,'0')} without all signatures?\n\n`
+        + `Blank/unsigned: ${blanks}\n\n`
+        + `Reason on record: “${sigOverrideReason}”\n\n`
+        + `The CO will be approved and rolled into the SOV. It will NOT be marked signed — it stays flagged as an override, attributed to you, and shows on the CO list and pay-app cross-reference. Replacing the document later clears the override.\n\nProceed?`)) {
+        toast('Override cancelled — nothing approved', 'info');
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+        await loadAllData();
+        return;
+      }
+    } else if (!analysis.signed) {
       const missing = Array.isArray(analysis.unsigned_blocks) && analysis.unsigned_blocks.length
         ? ' Missing/blank: ' + analysis.unsigned_blocks.join(', ') + '.'
         : '';

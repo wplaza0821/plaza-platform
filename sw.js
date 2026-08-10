@@ -14,7 +14,7 @@
  *    Writes that fail offline are queued by the app in IndexedDB (see app code),
  *    not by the SW. Reads simply fail and the app shows cached DATA.
  */
-const CACHE = 'plazacore-shell-v32';
+const CACHE = 'plazacore-shell-v33';
 const SHELL = [
   './',
   './index.html',
