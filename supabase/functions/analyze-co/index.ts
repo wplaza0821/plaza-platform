@@ -83,29 +83,41 @@ function bytesToBase64(bytes: Uint8Array): string {
 const SYSTEM_PROMPT =
   "You are a construction contract analyst for Plaza and Associates (structural " +
   "engineering / special inspection). You analyze a CHANGE ORDER document. Two tasks:\n\n" +
-  "(1) SIGNATURE VERIFICATION: determine whether this is a FULLY EXECUTED change order. " +
-  "Rules — read carefully:\n" +
-  "  • A signature block is SIGNED only when it contains a VISIBLE SIGNATURE MARK: a handwritten " +
+  "(1) SIGNATURE VERIFICATION: determine whether this is a FULLY EXECUTED change order.\n" +
+  "  STEP A — ENUMERATE EVERY SIGNATURE BLOCK ON THE DOCUMENT. A signature block is any " +
+  "    designated place for a party to sign: a printed label/role with a signature line, an " +
+  "    'X' line, a 'By:' / 'Signature:' / 'Approved by:' / 'Accepted by:' line, a DocuSign/Adobe " +
+  "    Sign tag, or a titled signing area (e.g. Owner, Contractor, Architect, Engineer, " +
+  "    Special Inspector, Construction Manager, Design Professional, GC, Subcontractor, " +
+  "    Tenant, Witness). Enumerate ALL of them that physically appear on the document — do " +
+  "    not skip any block just because it is blank. If a block appears more than once, list each.\n" +
+  "  STEP B — For EACH enumerated block, decide signed vs. unsigned:\n" +
+  "  • A block is SIGNED only when it contains a VISIBLE SIGNATURE MARK: a handwritten " +
   "    cursive/initials stroke, an e-signature image, a DocuSign/Adobe Sign completion stamp, " +
   "    a wet-ink scan, or a digital certificate badge. " +
-  "  • A typed name, a printed label, or an empty line does NOT constitute a signature. " +
+  "  • A typed name, a printed label, a printed date, or an empty/blank line does NOT count as " +
+  "    a signature. A date filled in next to a blank signature line is still UNSIGNED. " +
+  "  • Be conservative: when in doubt whether a mark is a real signature, treat it as UNSIGNED. " +
   "  • DO NOT attempt to identify or extract the signer's name from the signature image or " +
-  "    cursive mark — cursive is illegible and you will guess wrong. " +
-  "  • Instead, identify the ROLE of each signed block using only the printed LABEL above or " +
-  "    beside it (e.g. 'Owner', 'Contractor', 'Architect', 'Engineer', 'GC', 'Subcontractor'). " +
-  "    If the label is not legible, use 'Unknown party'. " +
-  "  • A change order is considered signed (signed=true) when at minimum the Owner block AND " +
-  "    the Contractor block both have visible signature marks. " +
-  "  • Be conservative: when in doubt whether a mark is a real signature, treat it as unsigned. " +
-  "  • signature_summary must list: which ROLE blocks are signed, and which required blocks " +
-  "    (Owner / Contractor) are missing or blank. Example: " +
-  "    'Owner block: signed. Contractor block: signed. Architect block: not present.' " +
-  "    or 'Owner block: signed. Contractor block: blank — awaiting signature.' " +
-  "    Do NOT include any guessed names — roles only.\n\n" +
+  "    cursive mark — cursive is illegible and you will guess wrong. Identify the ROLE of each " +
+  "    block using only the printed LABEL above/beside it. If the label is not legible, use " +
+  "    'Unknown party'. Never output guessed names — roles only.\n" +
+  "  STEP C — DECISION RULE (STRICT): signed=true ONLY IF EVERY signature block present on the " +
+  "    document has a visible signature mark. If ANY block that appears on the document is blank/" +
+  "    unsigned, signed=false — regardless of which role it is. A change order is 'fully executed' " +
+  "    only when nobody's block is left blank. Do NOT approve on an Owner+Contractor subset if the " +
+  "    form also carries e.g. an Architect, Engineer, or Special Inspector block that is blank.\n" +
+  "  Return a per-block array 'signature_blocks' where each entry is " +
+  '{"role":"string","signed":boolean}. ' +
+  "signature_summary must be a human-readable roster listing each block and its state, and must " +
+  "explicitly name every UNSIGNED/missing block. Example: 'Owner: signed. Contractor: signed. " +
+  "Architect: BLANK — awaiting signature. Special Inspector: BLANK — awaiting signature.' " +
+  "Do NOT include guessed names — roles only.\n\n" +
   "(2) LINE-ITEM EXTRACTION: extract every cost line item with its description and dollar amount, " +
   "plus the document's stated grand total.\n\n" +
   "Respond ONLY with a single minified JSON object, no prose, no markdown, of the exact shape: " +
-  '{"signed":boolean,"signature_summary":"roles-based summary, no names",' +
+  '{"signed":boolean,"signature_blocks":[{"role":"string","signed":boolean}],' +
+  '"signature_summary":"roles-based roster, no names",' +
   '"line_items":[{"description":"string","amount":number}],"total":number,"confidence":number} ' +
   "where confidence is 0..1. amount and total are plain numbers (no $ or commas). If there is a " +
   "single lump-sum value and no breakdown, return one line_item equal to the total.";
@@ -222,8 +234,26 @@ Deno.serve(async (req) => {
   }
 
   // 6. Normalize
-  const signed = llmJson?.signed === true;
-  const signature_summary = String(llmJson?.signature_summary || (signed ? "Signatures detected." : "No valid signatures detected."));
+  //    Server-side hard rule: a CO is 'signed' (fully executed) ONLY when every
+  //    signature block enumerated on the document is signed. We do NOT trust the
+  //    model's top-level `signed` boolean alone — we re-derive it from the
+  //    per-block roster so a stray true can't slip an unsigned block through.
+  const rawBlocks = Array.isArray(llmJson?.signature_blocks) ? llmJson.signature_blocks : [];
+  const signature_blocks = rawBlocks
+    .map((b: any) => ({ role: String(b?.role || "Unknown party").trim() || "Unknown party", signed: b?.signed === true }))
+    .filter((b: any) => b.role);
+  const unsignedBlocks = signature_blocks.filter((b: any) => !b.signed);
+  const modelSigned = llmJson?.signed === true;
+  // Every present block must be signed. If the model enumerated blocks, that roster
+  // is authoritative; if it enumerated none, fall back to the model's boolean but
+  // treat an empty roster as a low-confidence "needs a human look" (unsigned).
+  const signed = signature_blocks.length > 0
+    ? unsignedBlocks.length === 0
+    : (modelSigned && false); // no blocks enumerated -> cannot confirm full execution
+  const autoSummary = signature_blocks.length > 0
+    ? signature_blocks.map((b: any) => `${b.role}: ${b.signed ? "signed" : "BLANK — awaiting signature"}`).join(". ")
+    : (modelSigned ? "Model reported signed but enumerated no signature blocks — treat as unverified." : "No signature blocks detected.");
+  const signature_summary = String(llmJson?.signature_summary || autoSummary);
   const rawItems = Array.isArray(llmJson?.line_items) ? llmJson.line_items : [];
   const line_items = rawItems
     .map((li: any) => ({ description: String(li?.description || "").trim(), amount: Number(li?.amount) || 0 }))
@@ -239,6 +269,8 @@ Deno.serve(async (req) => {
     confidence,
     amount_typed: amountTyped,
     reconciles,
+    signature_blocks,
+    unsigned_blocks: unsignedBlocks.map((b: any) => b.role),
     model: LLM_MODEL,
   };
 
@@ -260,6 +292,8 @@ Deno.serve(async (req) => {
     ok: true,
     signed,
     signature_summary,
+    signature_blocks,
+    unsigned_blocks: unsignedBlocks.map((b: any) => b.role),
     total: extractedTotal,
     line_items,
     amount_typed: amountTyped,
