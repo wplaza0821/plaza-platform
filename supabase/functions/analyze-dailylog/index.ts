@@ -30,7 +30,24 @@ const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPA
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const LLM_API_KEY  = Deno.env.get("CO_LLM_API_KEY") || "";
-const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-5";
+const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-6";
+
+// Emit per-call token usage to the edge-function log so spend is attributable
+// per module instead of arriving as one opaque line on the Anthropic bill.
+// Query with: supabase functions logs analyze-dailylog | grep llm_usage
+function logUsage(fn: string, data: any) {
+  const u = data?.usage || {};
+  console.log(JSON.stringify({
+    evt: "llm_usage",
+    fn,
+    model: data?.model ?? LLM_MODEL,
+    input_tokens: u.input_tokens ?? 0,
+    output_tokens: u.output_tokens ?? 0,
+    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+    stop_reason: data?.stop_reason ?? null,
+  }));
+}
 
 const ALLOWED_ORIGINS = [
   "https://plazacore.plazaandassociates.com",
@@ -223,6 +240,9 @@ Deno.serve(async (req) => {
         model: LLM_MODEL,
         // Many days x many fields — needs considerably more room than a CO.
         max_tokens: 16000,
+        // Deterministic extraction: sampling variance on dates/quantities is
+        // pure downside, and it is what drives truncation + reparse retries.
+        temperature: 0,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: [docBlock, { type: "text", text: userText }] }],
       }),
@@ -232,6 +252,7 @@ Deno.serve(async (req) => {
       return json({ error: "llm_failed", status: resp.status, detail: t.slice(0, 500) }, 502);
     }
     const data = await resp.json();
+    logUsage("analyze-dailylog", data);
     // A truncated response yields invalid JSON; say so plainly instead of half-parsing.
     if (data?.stop_reason === "max_tokens") {
       return json({

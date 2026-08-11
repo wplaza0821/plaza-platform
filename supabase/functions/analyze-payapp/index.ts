@@ -33,7 +33,25 @@ const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPA
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const LLM_API_KEY  = Deno.env.get("CO_LLM_API_KEY") || "";
-const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-5";
+const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-6";
+
+// Emit per-call token usage to the edge-function log so spend is attributable
+// per module instead of arriving as one opaque line on the Anthropic bill.
+// Fires once per pass, so a two-pass repair shows up as two entries.
+// Query with: supabase functions logs analyze-payapp | grep llm_usage
+function logUsage(fn: string, data: any) {
+  const u = data?.usage || {};
+  console.log(JSON.stringify({
+    evt: "llm_usage",
+    fn,
+    model: data?.model ?? LLM_MODEL,
+    input_tokens: u.input_tokens ?? 0,
+    output_tokens: u.output_tokens ?? 0,
+    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+    stop_reason: data?.stop_reason ?? null,
+  }));
+}
 
 const ALLOWED_ORIGINS = [
   "https://plazacore.plazaandassociates.com",
@@ -364,9 +382,18 @@ Deno.serve(async (req) => {
   const mediaType = isPdf ? "application/pdf"
     : name.endsWith(".png") ? "image/png"
     : "image/jpeg";
+  // cache_control on the document: the repair pass below re-sends this exact
+  // PDF/image, and a scanned G703 is the bulk of the input tokens. Caching it
+  // makes pass 2 read at ~10% instead of paying full price twice. A cache
+  // WRITE costs 1.25x, so this is only worth it where a second pass is
+  // realistically likely — true here (MAX_PASSES=2), not in the other
+  // analyzers, which are single-shot. 5-minute TTL is ample: pass 2 fires
+  // seconds later. Requires a >=1024-token prefix to cache at all; a dense
+  // scanned G703 clears that comfortably.
+  const cacheControl = { type: "ephemeral" };
   const docBlock = isPdf
-    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
-    : { type: "image",    source: { type: "base64", media_type: mediaType,        data: b64 } };
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 }, cache_control: cacheControl }
+    : { type: "image",    source: { type: "base64", media_type: mediaType,        data: b64 }, cache_control: cacheControl };
 
   // 5. Pull the pay app's SOV schedule so the model can anchor item numbers.
   const { data: sovItems } = await admin
@@ -469,6 +496,7 @@ Deno.serve(async (req) => {
       throw new Error(`llm_failed status=${resp.status} ${t.slice(0, 400)}`);
     }
     const data = await resp.json();
+    logUsage("analyze-payapp", data);
     if (data?.stop_reason === "max_tokens") {
       throw new Error("llm_truncated: response hit max_tokens — schedule too long to extract in one pass");
     }

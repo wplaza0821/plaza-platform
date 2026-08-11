@@ -44,7 +44,24 @@ const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPA
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const LLM_API_KEY  = Deno.env.get("CO_LLM_API_KEY") || "";
-const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-5";
+const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-6";
+
+// Emit per-call token usage to the edge-function log so spend is attributable
+// per module instead of arriving as one opaque line on the Anthropic bill.
+// Query with: supabase functions logs analyze-schedule | grep llm_usage
+function logUsage(fn: string, data: any) {
+  const u = data?.usage || {};
+  console.log(JSON.stringify({
+    evt: "llm_usage",
+    fn,
+    model: data?.model ?? LLM_MODEL,
+    input_tokens: u.input_tokens ?? 0,
+    output_tokens: u.output_tokens ?? 0,
+    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+    stop_reason: data?.stop_reason ?? null,
+  }));
+}
 
 const ALLOWED_ORIGINS = [
   "https://plazacore.plazaandassociates.com",
@@ -291,8 +308,11 @@ async function llmNormalize(payload: { kind: "rows" | "pdf"; rows?: unknown; b64
       model: LLM_MODEL,
       // Large schedules (hundreds of tasks) can blow past a small ceiling and
       // the JSON response gets truncated mid-string -> JSON.parse throws
-      // "Unterminated string". sonnet-4-5 supports up to 64K output tokens.
+      // "Unterminated string". sonnet-4-6 supports up to 128K output tokens.
       max_tokens: 32000,
+      // Deterministic extraction: sampling variance on dates/durations is pure
+      // downside, and it is what drives truncation + salvage fallbacks.
+      temperature: 0,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content }],
     }),
@@ -302,6 +322,7 @@ async function llmNormalize(payload: { kind: "rows" | "pdf"; rows?: unknown; b64
     throw new Error(`llm_failed ${resp.status}: ${t.slice(0, 400)}`);
   }
   const data = await resp.json();
+  logUsage("analyze-schedule", data);
   const text = (data?.content || []).map((c: any) => c?.text || "").join("").trim();
   const stopReason = data?.stop_reason || null;
   const cleaned = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();

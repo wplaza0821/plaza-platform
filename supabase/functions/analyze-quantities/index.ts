@@ -49,7 +49,24 @@ const SERVICE_ROLE = (Deno.env.get("PLAZACORE_SECRET_KEY") || Deno.env.get("SUPA
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const JWT_SECRET   = Deno.env.get("JWT_SECRET")!;
 const LLM_API_KEY  = Deno.env.get("CO_LLM_API_KEY") || "";
-const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-5";
+const LLM_MODEL    = Deno.env.get("CO_LLM_MODEL") || "claude-sonnet-4-6";
+
+// Emit per-call token usage to the edge-function log so spend is attributable
+// per module instead of arriving as one opaque line on the Anthropic bill.
+// Query with: supabase functions logs analyze-quantities | grep llm_usage
+function logUsage(fn: string, data: any) {
+  const u = data?.usage || {};
+  console.log(JSON.stringify({
+    evt: "llm_usage",
+    fn,
+    model: data?.model ?? LLM_MODEL,
+    input_tokens: u.input_tokens ?? 0,
+    output_tokens: u.output_tokens ?? 0,
+    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+    stop_reason: data?.stop_reason ?? null,
+  }));
+}
 
 const BUCKET = "plans-specs";
 
@@ -205,6 +222,9 @@ async function llmNormalize(rows: unknown, fileName: string): Promise<any> {
     body: JSON.stringify({
       model: LLM_MODEL,
       max_tokens: 32000,
+      // Deterministic extraction: sampling variance on quantities is pure
+      // downside, and it is what drives truncation + salvage fallbacks.
+      temperature: 0,
       system: SYSTEM_PROMPT,
       messages: [{
         role: "user",
@@ -220,6 +240,7 @@ async function llmNormalize(rows: unknown, fileName: string): Promise<any> {
     throw new Error(`llm_failed ${resp.status}: ${t.slice(0, 400)}`);
   }
   const data = await resp.json();
+  logUsage("analyze-quantities", data);
   const text = (data?.content || []).map((c: any) => c?.text || "").join("").trim();
   const stopReason = data?.stop_reason || null;
   const cleaned = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
