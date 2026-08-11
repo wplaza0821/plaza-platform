@@ -1483,8 +1483,14 @@
           <div class="page-subtitle">Day-by-day site record</div>
           <div class="page-context-pill" id="daily-context"></div>
         </div>
-        <button class="btn btn-primary perm-edit-daily" onclick="openDailyModal()">＋ New Entry</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary perm-edit-daily" onclick="document.getElementById('dl-scan-file').click()">📄 Upload Log Scan</button>
+          <input type="file" id="dl-scan-file" accept=".pdf,image/jpeg,image/png" style="display:none" onchange="uploadDailyScan(this)" />
+          <button class="btn btn-primary perm-edit-daily" onclick="openDailyModal()">＋ New Entry</button>
+        </div>
       </div>
+
+      <div id="dailyScanList"></div>
 
       <div class="toolbar">
         <input type="text" class="search" id="dailySearch" placeholder="Search by inspector, work, notes…" />
@@ -2402,6 +2408,7 @@ const DATA = {
   deficiencies: [],
   deficiency_followups: [],
   daily_reports: [],
+  dailyLogDocs: [],   // uploaded daily-log scans; daily_reports link back via source_document_id
   milestones: [],
   scheduleTasks: [],    // Phase 7: MS Project / Gantt task rows
   scheduleImports: [],  // Phase 7: uploaded schedule files + AI analysis
@@ -2430,6 +2437,8 @@ async function loadAllData() {
   const dfP   = sb.from('deficiencies').select('*').order('created_at', { ascending: false });
   const dfuP  = sb.from('deficiency_followups').select('*').order('created_at', { ascending: false });
   const dlP   = sb.from('daily_reports').select('*').order('report_date', { ascending: false });
+  // Uploaded daily-log scans (the record of authority). Soft if not yet deployed.
+  const dldP  = sb.from('daily_log_documents').select('*').order('uploaded_at', { ascending: false });
   const msP   = sb.from('milestones').select('*').order('sort_order', { ascending: true });
   const stP   = sb.from('schedule_tasks').select('*').order('sort_order', { ascending: true });
   const siP   = sb.from('schedule_imports').select('*').order('uploaded_at', { ascending: false });
@@ -2450,8 +2459,8 @@ async function loadAllData() {
   // roles just get an empty result. Table may not exist yet -> soft.
   const arP = sb.from('access_requests').select('*').order('created_at', { ascending: false });
 
-  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, ms, st, si, prf, dash, tpl, usr, pm, sf, ar] = await Promise.all([
-    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, msP, stP, siP, prfP, dashP, tplP, usersP, pmP, sfP, arP
+  const [proj, con, sov, pa, pal, lw, pad, rf, sub, co, doc, tk, ph, fr, df, dfu, dl, dld, ms, st, si, prf, dash, tpl, usr, pm, sf, ar] = await Promise.all([
+    projP, conP, sovP, paP, palP, lwP, padP, rfP, subP, coP, docP, tkP, phP, frP, dfP, dfuP, dlP, dldP, msP, stP, siP, prfP, dashP, tplP, usersP, pmP, sfP, arP
   ]);
   if (proj.error) handleSbError(proj.error, 'Loading projects');
   if (con.error)  handleSbError(con.error, 'Loading contractors');
@@ -2495,6 +2504,8 @@ async function loadAllData() {
   DATA.deficiencies  = df.data || [];
   DATA.deficiency_followups = dfu.data || [];
   DATA.daily_reports = dl.data || [];
+  softErr(dld, 'Loading daily log scans');
+  DATA.dailyLogDocs  = (dld && !dld.error && Array.isArray(dld.data)) ? dld.data : [];
   DATA.milestones    = ms.data || [];
   DATA.scheduleTasks   = st.data || [];
   DATA.scheduleImports = si.data || [];
@@ -2534,6 +2545,7 @@ const RELOADERS = {
   deficiencies:   async () => { const r = await sb.from('deficiencies').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.deficiencies = r.data || []; },
   deficiencyFollowups: async () => { const r = await sb.from('deficiency_followups').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.deficiency_followups = r.data || []; },
   dailyReports:   async () => { const r = await sb.from('daily_reports').select('*').order('report_date', { ascending: false }); if (!r.error) DATA.daily_reports = r.data || []; },
+  dailyLogDocs:   async () => { const r = await sb.from('daily_log_documents').select('*').order('uploaded_at', { ascending: false }); if (!r.error) DATA.dailyLogDocs = r.data || []; },
   milestones:     async () => { const r = await sb.from('milestones').select('*').order('sort_order', { ascending: true }); if (!r.error) DATA.milestones = r.data || []; },
   profiles:       async () => { const r = await sb.from('profiles').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.profiles = r.data || []; },
   accessRequests: async () => { const r = await sb.from('access_requests').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.accessRequests = r.data || []; },
@@ -6807,6 +6819,7 @@ const FINALIZE_FN_URL = SUPABASE_URL + '/functions/v1/finalize-report';
 const QB_FN_URL       = SUPABASE_URL + '/functions/v1/qb-billing';
 const ANALYZE_CO_FN_URL = SUPABASE_URL + '/functions/v1/analyze-co';
 const ANALYZE_PAYAPP_FN_URL = SUPABASE_URL + '/functions/v1/analyze-payapp';
+const ANALYZE_DAILYLOG_FN_URL = SUPABASE_URL + '/functions/v1/analyze-dailylog';
 
 function myProfile() {
   if (!isNative() || !AUTH?.userId) return null;
@@ -10132,6 +10145,8 @@ function renderDailyReports() {
   const ctxEl = document.getElementById('daily-context');
   if (ctxEl) ctxEl.innerHTML = proj ? `📌 ${escapeHtml(proj.code)} · ${escapeHtml(proj.name)}` : '';
 
+  renderDailyScans();
+
   const body = document.getElementById('dailyBody');
   if (!body) return;
   if (!proj) { body.innerHTML = ''; return; }
@@ -10168,6 +10183,269 @@ window.renderDailyReports = renderDailyReports;
 document.getElementById('dailySearch')?.addEventListener('input', e => {
   STATE.dailySearch = e.target.value; renderDailyReports();
 });
+
+/* ================= DAILY LOG SCANS =================
+   William, 2026-08-10: "upload a daily log scan, read it, document the visits, and
+   keep a copy of the PDF log for the record."
+
+   THE SCAN IS THE RECORD. The uploaded PDF is retained permanently and stays linked
+   to every entry extracted from it (daily_reports.source_document_id). The typed rows
+   are a searchable index over the scan, never a replacement for it — a field log can
+   be subpoenaed, and a transcription is not evidence.
+
+   One scan normally holds MANY visit days, so extraction returns an array and Apply
+   upserts per (project, date). Nothing is written until the user reviews and applies. */
+
+async function uploadDailyScan(input) {
+  const file = input?.files?.[0];
+  if (input) input.value = '';           // allow re-picking the same file later
+  if (!file) return;
+  if (!STATE.activeProjectId) { toast('Select a project first', 'error'); return; }
+  const ok = /\.(pdf|jpe?g|png)$/i.test(file.name);
+  if (!ok) { toast('Upload a PDF or photo (JPG/PNG) of the log', 'error'); return; }
+  if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
+
+  const proj = getProject(STATE.activeProjectId);
+  const codePrefix = proj?.code || STATE.activeProjectId;
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${codePrefix}/daily/${Date.now()}_${safeName}`;
+
+  toast('Uploading log scan…', 'info');
+  const { error: upErr } = await sb.storage.from('field-reports').upload(path, file, { upsert: false });
+  if (upErr) { handleSbError(upErr, 'Upload log scan'); return; }
+
+  const { data: ins, error: insErr } = await sb.from('daily_log_documents').insert({
+    project_id: STATE.activeProjectId,
+    file_path: path,
+    file_name: file.name,
+    file_size: file.size,
+    uploaded_by: AUTH?.email || AUTH?.name || 'user',
+  }).select().maybeSingle();
+  if (insErr) {
+    // Don't orphan the object in the bucket if the row write is refused.
+    await sb.storage.from('field-reports').remove([path]).catch(() => {});
+    handleSbError(insErr, 'Save log scan');
+    return;
+  }
+
+  await reloadData('dailyLogDocs');
+  render();
+  toast('Scan stored. Reading it now…', 'success');
+  if (ins?.id) await analyzeDailyScan(ins.id);
+}
+window.uploadDailyScan = uploadDailyScan;
+
+async function analyzeDailyScan(docId) {
+  const btn = document.getElementById('dlAnalyzeBtn-' + docId);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Reading…'; }
+  try {
+    if (!(await ensureFreshPrivilegedSession())) throw new Error('Session expired — sign in again.');
+    const res = await fetch(ANALYZE_DAILYLOG_FN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'authorization': 'Bearer ' + (AUTH?.jwt || ''),
+      },
+      body: JSON.stringify({ doc_id: docId }),
+    });
+    let j = {};
+    try { j = await res.json(); } catch {}
+    if (!res.ok || j?.error) {
+      const map = {
+        analyzer_not_configured: 'Log reader not configured (missing CO_LLM_API_KEY).',
+        too_many_days: j?.message,
+        forbidden: 'You do not have permission to read log scans.',
+        llm_parse_failed: 'Could not read the scan reliably — try a clearer scan.',
+      };
+      throw new Error(map[j?.error] || j?.message || j?.error || ('HTTP ' + res.status));
+    }
+    await reloadData('dailyLogDocs');
+    render();
+    const n = (j.days || []).length;
+    if (!n) { toast('No daily-log days could be read from that scan', 'error'); return; }
+    toast(`Read ${n} day(s) — review before saving`, 'success');
+    reviewDailyScan(docId);
+  } catch (e) {
+    toast('Read failed: ' + (e?.message || e), 'error');
+    render();
+  }
+}
+window.analyzeDailyScan = analyzeDailyScan;
+
+// Review screen: every extracted day, editable date, with the existing-entry
+// collision called out per row. Nothing is written until Save is pressed.
+function reviewDailyScan(docId) {
+  const doc = (DATA.dailyLogDocs || []).find(d => d.id === docId);
+  if (!doc?.analysis?.days) { toast('Nothing extracted yet — read the scan first', 'info'); return; }
+  const days = doc.analysis.days;
+  const existing = new Map(
+    DATA.daily_reports.filter(d => d.project_id === doc.project_id)
+      .map(d => [d.report_date, d]));
+
+  const rows = days.map((d, i) => {
+    const clash = d.report_date ? existing.get(d.report_date) : null;
+    const lowConf = d.confidence > 0 && d.confidence < 0.6;
+    const bits = [];
+    if (d.visitors)  bits.push(`<div><strong>Visitors:</strong> ${escapeHtml(d.visitors)}</div>`);
+    if (d.inspector) bits.push(`<div><strong>Inspector:</strong> ${escapeHtml(d.inspector)}</div>`);
+    if (d.work_performed) bits.push(`<div class="text-muted">${escapeHtml(String(d.work_performed).slice(0, 160))}${String(d.work_performed).length > 160 ? '…' : ''}</div>`);
+    if (d.notes_for_reviewer) bits.push(`<div style="color:var(--amber);">⚠️ ${escapeHtml(d.notes_for_reviewer)}</div>`);
+    return `<tr${!d.report_date ? ' style="background:rgba(245,158,11,0.10);"' : ''}>
+      <td style="vertical-align:top;">
+        <input type="checkbox" id="dlrow-${i}" ${d.report_date ? 'checked' : ''} />
+      </td>
+      <td style="vertical-align:top;">
+        <input type="date" id="dldate-${i}" value="${escapeHtml(d.report_date || '')}" style="min-width:150px;" />
+        <div class="text-muted text-sm">p.${d.page || '?'}${lowConf ? ' · <span style="color:var(--amber);">hard to read</span>' : ''}</div>
+      </td>
+      <td class="text-sm" style="vertical-align:top;">${bits.join('') || '<span class="text-muted">—</span>'}</td>
+      <td class="text-sm" style="vertical-align:top;">${
+        clash ? `<span class="badge badge-yellow">Overwrites existing</span>`
+              : (d.report_date ? '<span class="badge badge-green">New</span>'
+                               : '<span class="badge badge-red">Needs a date</span>')}</td>
+    </tr>`;
+  }).join('');
+
+  const warn = (doc.analysis.warnings || []);
+  showModal({
+    title: `Review Extracted Days — ${escapeHtml(doc.file_name || 'log scan')}`,
+    wide: true,
+    body: `
+      ${warn.length ? `<div class="warn-banner">⚠️ <ul style="margin:4px 0 0 18px;">${warn.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>` : ''}
+      <div class="hint-banner">Read <strong>${days.length}</strong> day(s) from the scan. Verify each against the PDF before saving — this is a field record.
+        Undated rows cannot be saved until you set a date. Saving <strong>updates</strong> an existing entry for the same date rather than duplicating it.
+        <div style="margin-top:4px;">The scan itself is kept as the record of authority and stays linked to every entry.</div></div>
+      <div style="margin:8px 0;"><button class="btn btn-ghost btn-sm" onclick="viewDailyScan('${doc.id}')">📎 Open the scan</button></div>
+      <div class="table-wrap" style="max-height:440px;overflow:auto;">
+        <table class="data">
+          <thead><tr><th style="width:34px;">Save</th><th style="width:180px;">Date</th><th>Visits / Work</th><th style="width:150px;">Effect</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`,
+    footer: `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><div style="flex:1"></div>
+             <button class="btn btn-primary" onclick="applyDailyScan('${doc.id}')">Save Selected Days</button>`,
+  });
+}
+window.reviewDailyScan = reviewDailyScan;
+
+async function applyDailyScan(docId) {
+  const doc = (DATA.dailyLogDocs || []).find(d => d.id === docId);
+  if (!doc?.analysis?.days) return;
+  const days = doc.analysis.days;
+
+  const picked = [];
+  const undated = [];
+  for (let i = 0; i < days.length; i++) {
+    if (!document.getElementById('dlrow-' + i)?.checked) continue;
+    const date = document.getElementById('dldate-' + i)?.value || '';
+    if (!date) { undated.push(i + 1); continue; }
+    picked.push({ ...days[i], report_date: date });
+  }
+  if (undated.length) {
+    toast(`Row(s) ${undated.join(', ')} still need a date — set it or untick them`, 'error');
+    return;
+  }
+  if (!picked.length) { toast('No days selected', 'info'); return; }
+
+  // Two rows resolving to the same date would fight over one record.
+  const dates = picked.map(p => p.report_date);
+  const dupe = dates.find((d, i) => dates.indexOf(d) !== i);
+  if (dupe) { toast(`Two selected rows are both dated ${dupe} — fix one before saving`, 'error'); return; }
+
+  const rows = picked.map(p => ({
+    project_id: doc.project_id,
+    report_date: p.report_date,
+    inspector: p.inspector || null,
+    weather: p.weather || null,
+    temperature: p.temperature || null,
+    crew_count: Number.isFinite(p.crew_count) ? p.crew_count : 0,
+    work_performed: p.work_performed || null,
+    materials_delivered: p.materials_delivered || null,
+    equipment_on_site: p.equipment_on_site || null,
+    visitors: p.visitors || null,
+    delays: p.delays || null,
+    safety_incidents: p.safety_incidents || null,
+    notes: p.notes || null,
+    status: 'draft',
+    source_document_id: doc.id,
+    source_page: p.page || null,
+    extracted: true,
+  }));
+
+  // Upsert on (project_id, report_date) so re-applying a scan corrects the day
+  // instead of duplicating the field record.
+  const { error } = await sb.from('daily_reports')
+    .upsert(rows, { onConflict: 'project_id,report_date' });
+  if (error) { handleSbError(error, 'Save extracted days'); return; }
+
+  await reloadData('dailyReports', 'dashboard');
+  closeModal();
+  render();
+  toast(`Saved ${rows.length} day(s) from the scan`, 'success');
+}
+window.applyDailyScan = applyDailyScan;
+
+async function viewDailyScan(docId) {
+  const d = (DATA.dailyLogDocs || []).find(x => x.id === docId);
+  if (!d?.file_path) { toast('No file on record', 'error'); return; }
+  try { window.open(await signedUrl('field-reports', d.file_path), '_blank'); }
+  catch (e) { handleSbError(e, 'Open scan'); }
+}
+window.viewDailyScan = viewDailyScan;
+
+async function deleteDailyScan(docId) {
+  const d = (DATA.dailyLogDocs || []).find(x => x.id === docId);
+  if (!d) return;
+  const linked = DATA.daily_reports.filter(r => r.source_document_id === docId).length;
+  if (!confirm(`Delete this log scan?\n\n${d.file_name || ''}\n\n`
+    + (linked ? `${linked} log entr${linked === 1 ? 'y' : 'ies'} came from it. Those entries are KEPT — but they will no longer have the scan behind them, so the underlying record of authority is gone.\n\n` : '')
+    + 'This cannot be undone.')) return;
+  const { error } = await sb.from('daily_log_documents').delete().eq('id', docId);
+  if (error) { handleSbError(error, 'Delete scan'); return; }
+  await sb.storage.from('field-reports').remove([d.file_path]).catch(() => {});
+  await reloadData('dailyLogDocs', 'dailyReports');
+  render();
+  toast('Scan deleted', 'success');
+}
+window.deleteDailyScan = deleteDailyScan;
+
+function renderDailyScans() {
+  const el = document.getElementById('dailyScanList');
+  if (!el) return;
+  const proj = activeProject();
+  if (!proj) { el.innerHTML = ''; return; }
+  const list = (DATA.dailyLogDocs || []).filter(d => d.project_id === proj.id);
+  if (!list.length) { el.innerHTML = ''; return; }
+
+  el.innerHTML = `<div class="card" style="margin-bottom:12px;">
+    <div class="card-header" style="display:flex;align-items:center;gap:8px;">
+      <strong>📄 Log Scans on Record</strong>
+      <span class="text-muted text-sm">the uploaded PDF is the record of authority</span>
+    </div>
+    <div class="table-wrap"><table class="data"><tbody>
+      ${list.map(d => {
+        const n = (d.analysis?.days || []).length;
+        const linked = DATA.daily_reports.filter(r => r.source_document_id === d.id).length;
+        return `<tr>
+          <td class="text-sm"><strong>${escapeHtml(d.file_name || 'scan')}</strong>
+            <div class="text-muted">${fmtDate(d.uploaded_at)}${d.uploaded_by ? ' · ' + escapeHtml(d.uploaded_by) : ''}</div></td>
+          <td class="text-sm">${
+            d.analyzed_at
+              ? `${n} day(s) read · ${linked} saved${(d.analysis?.warnings || []).length ? ' · <span style="color:var(--amber);">has warnings</span>' : ''}`
+              : '<span class="text-muted">not read yet</span>'}</td>
+          <td style="width:330px;"><div class="row-actions" style="justify-content:flex-end;">
+            <button class="btn btn-ghost btn-sm" onclick="viewDailyScan('${d.id}')">📎 Open</button>
+            <button class="btn btn-secondary btn-sm" id="dlAnalyzeBtn-${d.id}" onclick="analyzeDailyScan('${d.id}')">${d.analyzed_at ? '🔄 Re-read' : '🔍 Read'}</button>
+            ${d.analyzed_at ? `<button class="btn btn-primary btn-sm" onclick="reviewDailyScan('${d.id}')">Review ${n}</button>` : ''}
+            ${isOwner() ? `<button class="btn btn-ghost btn-sm" onclick="deleteDailyScan('${d.id}')">🗑</button>` : ''}
+          </div></td>
+        </tr>`;
+      }).join('')}
+    </tbody></table></div>
+  </div>`;
+}
+window.renderDailyScans = renderDailyScans;
 
 function openDailyModal(id) {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
