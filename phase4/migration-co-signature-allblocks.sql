@@ -1,3 +1,23 @@
+-- ############################################################################
+-- ## ⛔ SUPERSEDED — DO NOT RUN. Historical record only.                     ##
+-- ##                                                                        ##
+-- ## Superseded by: migration-co-signature-override.sql (2026-08-10)        ##
+-- ##                                                                        ##
+-- ## That later migration CREATE OR REPLACEs plz_co_require_signature() with
+-- ## a superset body: it keeps the all-blocks gate below AND adds the owner
+-- ## signature-override subsystem (owner-only enforcement, mandatory written
+-- ## reason, server-side by/at attribution, override clearing, and automatic
+-- ## invalidation when a replacement document is uploaded).
+-- ##
+-- ## Re-running THIS file would CREATE OR REPLACE the function back to the
+-- ## older body and DESTROY the entire override subsystem in production —
+-- ## silently, with no error. CO #8 was approved under a documented override
+-- ## and would become unupdatable; the override UI in index.html would break.
+-- ##
+-- ## Live function body verified 2026-08-11 to be the override version.
+-- ## To re-assert the gate, run migration-co-signature-override.sql instead.
+-- ############################################################################
+--
 -- PLAZACORE — Change Order signature gate: require EVERY block signed
 -- Hardens the existing signature gate (migration-co-signature-analysis.sql).
 --
