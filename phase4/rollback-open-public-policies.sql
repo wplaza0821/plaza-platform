@@ -74,3 +74,13 @@ CREATE POLICY "anon read submittals" ON public."submittals" AS PERMISSIVE FOR SE
 CREATE POLICY "anon update submittals" ON public."submittals" AS PERMISSIVE FOR UPDATE TO public
   USING (true);
 COMMIT;
+
+-- ---- Appended 2026-09-08: rollback for -03-contractors ----
+-- Only run alongside reverting index.html to the anon-lookup version.
+DROP POLICY IF EXISTS "contractors_participant_read" ON public.contractors;
+CREATE POLICY "anon read contractors" ON public."contractors" AS PERMISSIVE FOR SELECT TO public
+  USING (true);
+CREATE POLICY "anon insert contractors" ON public."contractors" AS PERMISSIVE FOR INSERT TO public
+  WITH CHECK (true);
+CREATE POLICY "anon update contractors" ON public."contractors" AS PERMISSIVE FOR UPDATE TO public
+  USING (true);

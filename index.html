@@ -2065,29 +2065,29 @@ async function tryBootAuth() {
   const params = new URLSearchParams(window.location.search);
   const key = params.get('key');
   if (key) {
-    const { data: contractor, error } = await sb
-      .from('contractors')
-      .select('*, projects(*)')
-      .eq('access_token', key)
-      .eq('active', true)
-      .maybeSingle();
-    if (error) { handleSbError(error, 'Token lookup failed'); return false; }
-    if (contractor) {
-      const out = await mintToken({ mode: 'contractor', token: key });
-      if (!out || !out.jwt) { handleSbError({ message: 'Auth failed' }, 'Token rejected'); return false; }
+    // The access_token lookup happens SERVER-SIDE only. auth-token runs with the
+    // service role, validates the token and returns the contractor's identity.
+    // Doing the lookup here with the anon key would require an open SELECT
+    // policy on `contractors`, which exposed every contractor's access_token to
+    // anyone holding the publishable key (fixed 2026-09-08).
+    const out = await mintToken({ mode: 'contractor', token: key });
+    if (out && out.jwt) {
+      const claims = decodeJwt(out.jwt) || {};
       setSbAuth(out.jwt);
       AUTH = {
         role: 'contractor',
-        name: contractor.name,
-        contractorId: contractor.id,
-        projectId: contractor.project_id,
-        permissions: contractor.permissions || defaultContractorModules(),
+        name: out.name || claims.name || '',
+        contractorId: claims.contractor_id || null,
+        projectId: out.project_id || claims.project_id || null,
+        permissions: out.permissions || claims.perms || defaultContractorModules(),
         token: key,
         jwt: out.jwt,
       };
       sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(AUTH));
       return true;
     }
+    handleSbError({ message: 'Auth failed' }, 'Token rejected');
+    return false;
   }
   // Phase B: native (email/password) session takes priority on boot/restore.
   try {
