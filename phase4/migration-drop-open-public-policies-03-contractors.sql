@@ -52,3 +52,7 @@ COMMIT;
 --   column-level, and index.html does select('*'). Closing that would need
 --   either column privileges plus an explicit select list, or a view.
 --   Tracked, not urgent: those are authenticated, project-scoped users.
+--
+--   CLOSED 2026-09-08 by phase4/migration-column-privileges-contractor-token.sql
+--   (column-level GRANT SELECT minus access_token + owner-only
+--   plz_contractor_token() RPC).

@@ -2420,7 +2420,12 @@ const DATA = {
 
 async function loadAllData() {
   const projP = sb.from('projects').select('*').order('code');
-  const conP  = sb.from('contractors').select('*').order('created_at', { ascending: false });
+  // NEVER select('*') here: access_token is column-revoked from anon/authenticated
+  // (phase4/migration-column-privileges-contractor-token.sql). Owners read a single
+  // token on demand through the plz_contractor_token() RPC instead.
+  const conP  = sb.from('contractors')
+    .select('id,name,contact_email,contact_phone,project_id,permissions,active,created_at,revoked_at')
+    .order('created_at', { ascending: false });
   const sovP  = sb.from('sov_items').select('*').order('sort_order');
   const paP   = sb.from('pay_apps').select('*').order('pay_app_number');
   const palP  = sb.from('pay_app_lines').select('*');
@@ -6671,8 +6676,8 @@ function openAccessModal(contractorId) {
         <div class="form-row">
           <label class="form-label">Share Link</label>
           <div style="display:flex; gap:6px;">
-            <input id="ac-link" type="text" readonly value="${escapeHtml(tokenUrl(editing.access_token))}" />
-            <button class="btn btn-secondary" type="button" onclick="copyAccessLink('${escapeHtml(editing.access_token)}')">Copy</button>
+            <input id="ac-link" type="text" readonly value="Loading…" />
+            <button class="btn btn-secondary" type="button" onclick="copyAccessLinkFor('${escapeHtml(editing.id)}')">Copy</button>
           </div>
         </div>
       ` : ''}
@@ -6685,8 +6690,25 @@ function openAccessModal(contractorId) {
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
          <button class="btn btn-primary" id="save-ac-btn" onclick="generateAccessLink()">Generate Link</button>`,
   });
+
+  // The share link is fetched on demand — the token is not in DATA.contractors.
+  if (editing) {
+    fetchContractorToken(editing.id).then(token => {
+      const f = document.getElementById('ac-link');
+      if (!f) return;                       // modal closed already
+      f.value = token ? tokenUrl(token) : 'Unavailable — owner access required';
+    });
+  }
 }
 window.openAccessModal = openAccessModal;
+
+// Owner-only read of a single contractor's access_token. Enforced server-side by
+// plz_contractor_token(), which is SECURITY DEFINER and gated on plz_is_owner().
+async function fetchContractorToken(contractorId) {
+  const { data, error } = await sb.rpc('plz_contractor_token', { p_id: contractorId });
+  if (error) { handleSbError(error, 'Read access link'); return null; }
+  return data || null;
+}
 
 function makeToken() {
   const bytes = new Uint8Array(18);
@@ -6717,8 +6739,8 @@ async function generateAccessLink(contractorId) {
 
   let res, accessToken;
   if (contractorId) {
-    const existing = DATA.contractors.find(c => c.id === contractorId);
-    accessToken = existing?.access_token || makeToken();
+    // Editing never rotates the token, and we no longer hold it client-side.
+    accessToken = null;
     res = await sb.from('contractors').update({
       name, contact_email: email || null, contact_phone: phone || null,
       project_id: projectId, permissions,
@@ -6739,11 +6761,11 @@ async function generateAccessLink(contractorId) {
 
   await loadAllData();
   closeModal();
-  const url = tokenUrl(accessToken);
   toast(contractorId ? 'Access link updated' : 'Access link created');
 
   // For new links, show the URL in a follow-up modal so owner can copy it.
   if (!contractorId) {
+    const url = tokenUrl(accessToken);
     showModal({
       title: 'Share This Link',
       body: `
@@ -6805,6 +6827,14 @@ async function copyAccessLink(token) {
   }
 }
 window.copyAccessLink = copyAccessLink;
+
+// Copy an existing contractor's link without ever holding the token in the DOM.
+async function copyAccessLinkFor(contractorId) {
+  const token = await fetchContractorToken(contractorId);
+  if (!token) { toast('No token to copy', 'error'); return; }
+  return copyAccessLink(token);
+}
+window.copyAccessLinkFor = copyAccessLinkFor;
 
 /* =========================================================================
    PHASE B — PROFILE (self, native users) + USERS (owner invite admin)

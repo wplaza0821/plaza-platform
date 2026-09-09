@@ -84,3 +84,10 @@ CREATE POLICY "anon insert contractors" ON public."contractors" AS PERMISSIVE FO
   WITH CHECK (true);
 CREATE POLICY "anon update contractors" ON public."contractors" AS PERMISSIVE FOR UPDATE TO public
   USING (true);
+
+-- ---- Appended 2026-09-08: rollback for migration-column-privileges-contractor-token ----
+-- Only run alongside reverting index.html to the select('*') version.
+BEGIN;
+GRANT SELECT ON public.contractors TO anon, authenticated;
+DROP FUNCTION IF EXISTS public.plz_contractor_token(uuid);
+COMMIT;
