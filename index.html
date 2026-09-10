@@ -971,28 +971,40 @@
       <input id="raName" class="login-input" type="text" placeholder="Full name *" autocomplete="name" />
       <input id="raEmail" class="login-input" type="email" placeholder="Email *" autocomplete="email" />
       <input id="raCompany" class="login-input" type="text" placeholder="Company / Association" autocomplete="organization" />
-      <input id="raPhone" class="login-input" type="tel" placeholder="Phone (mobile, for text updates)" autocomplete="tel" />
       <textarea id="raMessage" class="login-input" rows="3" placeholder="Project name / what access do you need?" style="text-align:left; resize:vertical; font-family:inherit;"></textarea>
 
-      <!-- SMS opt-in (A2P 10DLC Call-to-Action). Unchecked by default — express
-           written consent only. The disclosure text below is stored verbatim
-           with the request as consent evidence; keep the wording and the
-           #raSmsConsentText element in sync. -->
-      <label id="raSmsConsentRow" for="raSmsConsent" style="display:flex; align-items:flex-start; gap:9px; margin:14px 0 4px; cursor:pointer; text-align:left;">
-        <input id="raSmsConsent" type="checkbox" style="margin-top:2px; flex:0 0 auto; width:16px; height:16px; cursor:pointer;" />
-        <span id="raSmsConsentText" style="font-size:11.5px; line-height:1.5; color:var(--gray-600,#666);">
-          I agree to receive text messages from Plaza &amp; Associates, LLC about my
-          project — task assignments, document uploads, and inspection scheduling.
-          Message frequency varies. Message and data rates may apply.
-          Reply STOP to opt out or HELP for help. Consent is not a condition of
-          purchase or of receiving portal access. See our
-          <a href="https://www.plazaandassociates.com/terms-and-conditions" target="_blank" rel="noopener" style="color:var(--gray-600,#666); text-decoration:underline;">Terms &amp; Conditions</a>
-          and
-          <a href="https://www.plazaandassociates.com/privacy-policy" target="_blank" rel="noopener" style="color:var(--gray-600,#666); text-decoration:underline;">Privacy Policy</a>.
-        </span>
-      </label>
-      <div id="raSmsConsentHint" style="font-size:11px; line-height:1.45; color:var(--gray-400,#aaa); margin:0 0 12px 26px; text-align:left;">
-        Optional — leave unchecked to receive email only.
+      <!-- SMS opt-in (A2P 10DLC Call-to-Action).
+           The mobile number lives INSIDE this block, immediately above the
+           checkbox, so there is no ambiguity about which number is being given
+           permission — it previously sat three fields higher, separated from the
+           consent by the message box. Both the consumer and a carrier reviewing
+           the campaign now read one grouped statement.
+           Unchecked by default — express written consent only. The disclosure is
+           stored verbatim with the request as consent evidence, and because the
+           number is echoed inside #raSmsConsentText, that evidence records WHICH
+           number consented. Keep the wording and that element in sync. -->
+      <div id="raSmsBlock" style="border:1px solid var(--gray-200,#e5e5e5); border-radius:6px; padding:12px 13px; margin:14px 0 12px; text-align:left;">
+        <div style="font-size:10.5px; font-weight:600; letter-spacing:0.9px; text-transform:uppercase; color:var(--gray-500,#888); margin-bottom:9px;">Text message updates (optional)</div>
+        <label for="raPhone" style="display:block; font-size:12px; color:var(--gray-600,#666); margin-bottom:5px;">Mobile number</label>
+        <input id="raPhone" class="login-input" type="tel" placeholder="(305) 555-0123" autocomplete="tel" inputmode="tel" style="margin-bottom:0;" />
+        <label id="raSmsConsentRow" for="raSmsConsent" style="display:flex; align-items:flex-start; gap:9px; margin:12px 0 4px; cursor:pointer; text-align:left;">
+          <input id="raSmsConsent" type="checkbox" style="margin-top:2px; flex:0 0 auto; width:16px; height:16px; cursor:pointer;" />
+          <span id="raSmsConsentText" style="font-size:11.5px; line-height:1.5; color:var(--gray-600,#666);">
+            I agree to receive text messages from Plaza &amp; Associates, LLC at the
+            mobile number I entered above<span id="raSmsNumberEcho"></span> about my
+            project — task assignments, document uploads, and inspection scheduling.
+            Message frequency varies. Message and data rates may apply.
+            Reply STOP to opt out or HELP for help. Consent is not a condition of
+            purchase or of receiving portal access. See our
+            <a href="https://www.plazaandassociates.com/terms-and-conditions" target="_blank" rel="noopener" style="color:var(--gray-600,#666); text-decoration:underline;">Terms &amp; Conditions</a>
+            and
+            <a href="https://www.plazaandassociates.com/privacy-policy" target="_blank" rel="noopener" style="color:var(--gray-600,#666); text-decoration:underline;">Privacy Policy</a>.
+          </span>
+        </label>
+        <div id="raSmsConsentHint" style="font-size:11px; line-height:1.45; color:var(--gray-400,#aaa); margin:0 0 0 26px; text-align:left;">
+          Optional — leave unchecked to receive email only. A number here is used
+          for text updates only if you check the box.
+        </div>
       </div>
 
       <button type="button" class="login-btn" id="raSubmitBtn" onclick="submitAccessRequest()">Request Access</button>
@@ -7733,6 +7745,24 @@ function hideRequestAccess(e) {
 }
 window.hideRequestAccess = hideRequestAccess;
 
+/* Echo the typed number into the consent sentence. Two reasons this is not
+   cosmetic: the consumer sees exactly which number they are authorising, and
+   submitAccessRequest() captures #raSmsConsentText verbatim as consent
+   evidence — so the stored disclosure names the number that consented, which is
+   what an A2P 10DLC audit or a TCPA dispute actually turns on. */
+function raSyncConsentNumber() {
+  const echo = document.getElementById('raSmsNumberEcho');
+  if (!echo) return;
+  const raw = (document.getElementById('raPhone')?.value || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  // Comma-delimited, not parenthesised: the number usually carries its own
+  // parentheses and "((305) 555-0123)" reads like a typo.
+  echo.textContent = digits.length >= 10 ? `, ${raw},` : '';
+}
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.id === 'raPhone') raSyncConsentNumber();
+});
+
 let _raSubmitting = false;
 async function submitAccessRequest() {
   if (_raSubmitting) return;
@@ -7752,9 +7782,13 @@ async function submitAccessRequest() {
   // SMS consent is meaningless without a number to send to, and the RLS policy
   // rejects consent rows that lack one — catch it here with a clear message.
   if (smsConsent && phone.replace(/\D/g, '').length < 10) {
-    errEl.textContent = 'Enter a mobile number to receive text messages, or uncheck the SMS box.';
+    errEl.textContent = 'Enter the mobile number that should receive texts, or uncheck the box.';
+    document.getElementById('raPhone')?.focus();
     return;
   }
+  // Belt and braces: the disclosure must never be stored claiming a number the
+  // consumer did not give. If the echo somehow lags the field, resync it.
+  if (smsConsent) raSyncConsentNumber();
   // Store the disclosure exactly as displayed — this is the consent evidence.
   const consentText = smsConsent
     ? (document.getElementById('raSmsConsentText')?.innerText || '').replace(/\s+/g, ' ').trim()
