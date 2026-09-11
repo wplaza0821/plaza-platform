@@ -2219,6 +2219,7 @@ async function handleNativeLogin(email, password) {
     return { ok: false, error: 'Account is inactive or not provisioned. Contact the administrator.' };
   }
   AUTH = a;
+  if (a.role === 'contractor') AUTH.contractorId = await resolveNativeContractorId(a);
   return { ok: true };
 }
 
@@ -3539,8 +3540,19 @@ function depositExemptBySov(projectId, excludePayAppId = null) {
 // deposit-exempt base. exempt defaults to 0 (no deposit) so ordinary projects
 // still get a straight 15% × cumulative.
 function lineRetainage(G, exempt, pct) {
-  const base = Math.max(0, (Number(G) || 0) - (Number(exempt) || 0));
+  const g = Number(G) || 0;
+  // Credit lines (negative CO) carry negative retainage — the credit reduces
+  // retainage held, it isn't clamped to zero (William, TRPV CO-008, 2026-09-11).
+  const base = g < 0 ? g : Math.max(0, g - (Number(exempt) || 0));
   return base * ((Number(pct) || 0) / 100);
+}
+
+// Over-billed = billed beyond the scheduled value IN THE LINE'S DIRECTION.
+// Positive line: G > C. Credit line (C < 0): G more negative than C. A $0 bill
+// against a credit was wrongly flagged (G > C) and blocked submit.
+function isOverBilled(G, C) {
+  const g = Number(G) || 0, c = Number(C) || 0;
+  return c < 0 ? g < c - 0.01 : g > c + 0.01;
 }
 
 // -----------------------------------------------------------------------------
@@ -3924,7 +3936,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     const I = C - G;
     const J = financeLocked ? (Number(l.retainage) || 0)
                             : lineRetainage(G, exemptBySov[si.id] || 0, Number(proj.retainage_pct) || 0);
-    const over = G > C + 0.01;
+    const over = isOverBilled(G, C);
     return `
       <tr data-sov="${si.id}" class="${over ? 'overbilled' : ''}">
         <td style="font-weight:600;">${escapeHtml(si.item_no)}</td>
@@ -3958,7 +3970,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
         </div>
         <div>
           <label class="form-label">Contractor</label>
-          <div>${contractor ? escapeHtml(contractor.name) : '<span class="text-muted">Owner-initiated</span>'}</div>
+          <div>${contractor ? escapeHtml(contractor.name) : (isContractor() && pa.contractor_id && pa.contractor_id === AUTH.contractorId ? escapeHtml(AUTH.name || 'You') : '<span class="text-muted">Owner-initiated</span>')}</div>
         </div>
       </div>
       <div class="form-row two-col">
@@ -4176,7 +4188,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
     tr.querySelector('[data-pct]').textContent = H.toFixed(1) + '%';
     tr.querySelector('[data-bal]').textContent = fmt$2(I);
     tr.querySelector('[data-ret]').textContent = fmt$2(J);
-    tr.classList.toggle('overbilled', G > C + 0.01);
+    tr.classList.toggle('overbilled', isOverBilled(G, C));
 
     // Update footer totals
     const t = calcTotals();
@@ -4554,7 +4566,7 @@ function paReview(docId, payAppId) {
     const C = Number(match.scheduled_value) || 0;
     const D = priorOf(match.id);
     const G = D + Number(ln.this_period) + Number(ln.stored);
-    const over = G > C + 0.01;
+    const over = isOverBilled(G, C);
     return `<tr${over ? ' style="background:rgba(239,68,68,0.10);"' : ''}>
       <td class="text-sm"><strong>${escapeHtml(match.item_no)}</strong><div class="text-muted">${escapeHtml(match.description)}</div></td>
       <td class="num text-sm">${fmt$2(ln.this_period)}</td>
@@ -4711,7 +4723,7 @@ async function submitPayApp(payAppId) {
   for (const l of lines) {
     const si = DATA.sovItems.find(s => s.id === l.sov_item_id);
     if (!si) continue;
-    if (Number(l.total_completed_stored) > Number(si.scheduled_value) + 0.01) {
+    if (isOverBilled(Number(l.total_completed_stored), Number(si.scheduled_value))) {
       toast(`Line ${si.item_no} is over-billed — please correct`, 'error');
       return;
     }
@@ -7685,6 +7697,7 @@ document.getElementById('setPasswordForm')?.addEventListener('submit', async (e)
       const a = authFromNativeSession(fresh);
       if (a && a.role && a.role !== 'none') {
         AUTH = a;
+        if (a.role === 'contractor') AUTH.contractorId = await resolveNativeContractorId(a);
         // Clean the token fragment out of the address bar.
         try { history.replaceState({}, '', window.location.pathname); } catch (e) {}
         hideLogin();
