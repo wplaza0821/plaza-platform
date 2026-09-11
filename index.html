@@ -2154,6 +2154,11 @@ async function tryBootAuth() {
         }
         setSbAuth(out.jwt);
         saved.jwt = out.jwt;
+        // Re-derive identity from the fresh claims so a session saved by an
+        // older build never carries a null contractorId into a new draft.
+        const claims = decodeJwt(out.jwt) || {};
+        saved.contractorId = claims.contractor_id || saved.contractorId || null;
+        saved.projectId = out.project_id || claims.project_id || saved.projectId || null;
         sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(saved));
       } else if (saved.role === 'owner' && !saved.jwt) {
         sessionStorage.removeItem(SESSION_AUTH_KEY);
@@ -3745,9 +3750,29 @@ async function newPayAppFlow() {
     return;
   }
 
-  // Determine contractor (if contractor mode, auto; if owner, pick)
+  // Determine contractor. A draft with contractor_id NULL is an orphan: the
+  // contractor can't Analyze/submit it (analyze-payapp 403s "belongs to another
+  // contractor" — Tareec/TRPV PA#4, 2026-09-11). Never create one.
   let contractorId = null;
-  if (isContractor()) contractorId = AUTH.contractorId;
+  if (isContractor()) {
+    contractorId = AUTH.contractorId || (decodeJwt(AUTH.jwt || '').contractor_id) || null;
+    if (!contractorId) {
+      toast('Your session is missing its contractor identity — please sign out and open your access link again.', 'error');
+      return;
+    }
+  } else {
+    // Owner/staff: assign the project's active contractor so they can pick it up.
+    const projContractors = (DATA.contractors || []).filter(c => c.project_id === proj.id && c.active !== false);
+    if (projContractors.length === 1) {
+      contractorId = projContractors[0].id;
+    } else if (projContractors.length > 1) {
+      const pick = prompt('Which contractor is this pay app for?\n' +
+        projContractors.map((c, i) => `${i + 1}. ${c.name}`).join('\n'), '1');
+      const idx = parseInt(pick, 10) - 1;
+      if (!(idx >= 0 && idx < projContractors.length)) { toast('Pay app not created — no contractor selected'); return; }
+      contractorId = projContractors[idx].id;
+    }
+  }
 
   // Compute next pay app number
   const existing = projectPayApps(proj.id);

@@ -357,7 +357,22 @@ Deno.serve(async (req) => {
 
   // Contractors may only analyze docs on their OWN draft pay apps.
   if (callerRole === "contractor") {
-    if (!callerContractorId || pa.contractor_id !== callerContractorId) {
+    if (!callerContractorId) return json({ error: "forbidden_not_your_pay_app" }, 403);
+    // Orphan draft (contractor_id NULL — created by the owner on the contractor's
+    // behalf): adopt it if the caller is a contractor on the same project.
+    // Tareec/TRPV PA#4 2026-09-11.
+    if (!pa.contractor_id && pa.status === "draft") {
+      const { data: c } = await admin
+        .from("contractors")
+        .select("id, project_id, active")
+        .eq("id", callerContractorId)
+        .maybeSingle();
+      if (c && c.active !== false && c.project_id === pa.project_id) {
+        await admin.from("pay_apps").update({ contractor_id: callerContractorId }).eq("id", pa.id);
+        pa.contractor_id = callerContractorId;
+      }
+    }
+    if (pa.contractor_id !== callerContractorId) {
       return json({ error: "forbidden_not_your_pay_app" }, 403);
     }
   }
