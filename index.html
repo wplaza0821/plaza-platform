@@ -4289,8 +4289,14 @@ async function uploadWaiver(pa) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Uploading…';
 
+  // Storage RLS for contractors requires the first folder to be the project
+  // CODE (plz_project_code()), like every other upload. The old UUID-prefixed
+  // path only worked for owners ("new row violates row-level security policy"
+  // — Tareec/TRPV PA#4 waiver, 2026-09-11). Existing rows keep their file_path.
+  const proj = getProject(pa.project_id);
+  const codePrefix = proj?.code || pa.project_id;
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `${pa.project_id}/${pa.id}/${Date.now()}_${safeName}`;
+  const path = `${codePrefix}/payapp/${pa.id}/waiver_${Date.now()}_${safeName}`;
   const { error: upErr } = await sb.storage.from('lien-waivers').upload(path, file, { upsert: false });
   if (upErr) { handleSbError(upErr, 'Upload waiver'); btn.disabled = false; btn.textContent = '📎 Upload Waiver'; return; }
 
