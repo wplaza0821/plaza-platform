@@ -2046,15 +2046,13 @@ function authFromNativeSession(session) {
 async function resolveNativeContractorId(a) {
   try {
     if (!a || !a.projectId) return null;
-    const { data, error } = await sb.from('contractors')
-      .select('id, contact_email, active')
-      .eq('project_id', a.projectId);
-    if (error || !data) return null;
-    const live = data.filter(c => c.active !== false);
-    const em = (a.email || '').trim().toLowerCase();
-    const byEmail = em && live.find(c => (c.contact_email || '').trim().toLowerCase() === em);
-    if (byEmail) return byEmail.id;
-    return live.length === 1 ? live[0].id : null;
+    // Contractors can't SELECT from `contractors` (RLS — the table holds every
+    // contractor's access_token), so a direct query returned [] and this
+    // resolver always came back null. The SECURITY DEFINER RPC does the
+    // email match server-side and returns only the caller's own id.
+    const { data, error } = await sb.rpc('resolve_my_contractor_id');
+    if (error) { console.warn('resolve_my_contractor_id', error); return null; }
+    return data || null;
   } catch (e) { return null; }
 }
 
