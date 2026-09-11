@@ -3544,10 +3544,10 @@ function depositExemptBySov(projectId, excludePayAppId = null) {
 // deposit-exempt base. exempt defaults to 0 (no deposit) so ordinary projects
 // still get a straight 15% × cumulative.
 function lineRetainage(G, exempt, pct) {
-  const g = Number(G) || 0;
-  // Credit lines (negative CO) carry negative retainage — the credit reduces
-  // retainage held, it isn't clamped to zero (William, TRPV CO-008, 2026-09-11).
-  const base = g < 0 ? g : Math.max(0, g - (Number(exempt) || 0));
+  // Credit lines (negative CO) hold $0 retainage — PA#3 basis, William
+  // 2026-09-11: retainage is never negative; the credit reduces total completed
+  // but does not release retainage held on other lines.
+  const base = Math.max(0, (Number(G) || 0) - (Number(exempt) || 0));
   return base * ((Number(pct) || 0) / 100);
 }
 
