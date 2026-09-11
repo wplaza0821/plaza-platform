@@ -2040,6 +2040,24 @@ function authFromNativeSession(session) {
   };
 }
 
+// Map a native contractor session -> contractors.id. Match on contact_email
+// within the session's project; fall back to the project's only active
+// contractor. Returns null if it can't be determined.
+async function resolveNativeContractorId(a) {
+  try {
+    if (!a || !a.projectId) return null;
+    const { data, error } = await sb.from('contractors')
+      .select('id, contact_email, active')
+      .eq('project_id', a.projectId);
+    if (error || !data) return null;
+    const live = data.filter(c => c.active !== false);
+    const em = (a.email || '').trim().toLowerCase();
+    const byEmail = em && live.find(c => (c.contact_email || '').trim().toLowerCase() === em);
+    if (byEmail) return byEmail.id;
+    return live.length === 1 ? live[0].id : null;
+  } catch (e) { return null; }
+}
+
 // Make project/role re-assignments take effect INSTANTLY (on next page load)
 // instead of only after a manual sign-out. The Access Token Hook bakes
 // project_id/user_role/perms into the JWT at mint time, and RLS reads them from
@@ -2131,6 +2149,10 @@ async function tryBootAuth() {
       const a = authFromNativeSession(session);
       if (a && a.role && a.role !== 'none') {
         AUTH = a;
+        // Native (email/password) contractor logins carry NO contractor_id claim
+        // — profiles has no such column. Resolve the contractors row by email so
+        // draft creation / edit gating knows who this is (Tareec 2026-09-11).
+        if (a.role === 'contractor') AUTH.contractorId = await resolveNativeContractorId(a);
         return true;
       }
       // inactive/unknown native user -> drop the session, fall through to login.
@@ -3756,6 +3778,10 @@ async function newPayAppFlow() {
   let contractorId = null;
   if (isContractor()) {
     contractorId = AUTH.contractorId || (decodeJwt(AUTH.jwt || '').contractor_id) || null;
+    if (!contractorId && AUTH.native) {
+      contractorId = await resolveNativeContractorId(AUTH);
+      if (contractorId) AUTH.contractorId = contractorId;
+    }
     if (!contractorId) {
       toast('Your session is missing its contractor identity — please sign out and open your access link again.', 'error');
       return;

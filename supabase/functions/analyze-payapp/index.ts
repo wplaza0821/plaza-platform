@@ -317,13 +317,26 @@ Deno.serve(async (req) => {
     if (userErr || !userData?.user) return json({ error: "invalid_token" }, 401);
     const { data: prof, error: profErr } = await admin
       .from("profiles")
-      .select("app_role, active, full_name, email")
+      .select("app_role, active, full_name, email, project_id")
       .eq("id", userData.user.id)
       .maybeSingle();
     if (profErr) return json({ error: "profile_lookup_failed" }, 500);
     if (!prof || prof.active === false) return json({ error: "forbidden" }, 403);
     callerRole = String(prof.app_role || "");
     analyzedBy = prof.full_name || prof.email || "user";
+    // Native contractor logins have no contractor_id claim (profiles has no such
+    // column). Resolve the contractors row by contact_email on the profile's
+    // project; fall back to the project's only active contractor. Tareec 2026-09-11.
+    if (callerRole === "contractor" && prof.project_id) {
+      const { data: cons } = await admin
+        .from("contractors")
+        .select("id, contact_email, active")
+        .eq("project_id", prof.project_id);
+      const live = (cons || []).filter((c) => c.active !== false);
+      const em = String(prof.email || "").trim().toLowerCase();
+      const byEmail = em ? live.find((c) => String(c.contact_email || "").trim().toLowerCase() === em) : null;
+      callerContractorId = byEmail ? byEmail.id : (live.length === 1 ? live[0].id : "");
+    }
   }
   if (!["owner", "staff", "contractor"].includes(callerRole)) {
     return json({ error: "forbidden" }, 403);
