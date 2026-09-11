@@ -453,7 +453,10 @@ Deno.serve(async (req) => {
       .from("pay_apps")
       .select("id, pay_app_number, status, total_completed")
       .eq("project_id", pa.project_id)
-      .eq("contractor_id", pa.contractor_id)
+      // Include orphan priors (contractor_id NULL — owner-created before the
+      // contractor identity fix). Excluding them made PA#4 compare against
+      // PA#1 instead of PA#3 (Tareec/TRPV, 2026-09-11).
+      .or(`contractor_id.eq.${pa.contractor_id},contractor_id.is.null`)
       .neq("id", pa.id)
       .order("pay_app_number", { ascending: false });
     // Highest-numbered PRIOR pay app that is billed/certified (status !== 'draft').
