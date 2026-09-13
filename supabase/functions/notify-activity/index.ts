@@ -1,7 +1,10 @@
 // Supabase Edge Function: notify-activity
 // Phase 5 · Project-wide activity fan-out. Fires on ANY upload/action in a
 // project and notifies the standing recipients: PM (projects.pm_id) + Client
-// (projects.client_id), plus the explicit assignee when the record has one.
+// (projects.client_id) + the project_members team for that same project_id,
+// plus the explicit assignee when the record has one. Contractors are excluded
+// from pay_apps/change_orders unless assigned. Recipients are always resolved
+// from the record's own project_id — never across projects.
 //
 // Called by Postgres AFTER INSERT/UPDATE triggers via pg_net (service-role
 // context), so it cannot be bypassed by writing through the API directly.
@@ -164,6 +167,29 @@ Deno.serve(async (req) => {
     const a = String((rec as any)[proj.assignee] || "").trim();
     if (a && UUID_RE.test(a)) recipientIds.add(a);
   }
+
+  // Project team: everyone in project_members for THIS project, so the working
+  // team sees uploads and not just PM/client. Strictly scoped by project_id —
+  // a member of another project is never reachable from here.
+  // Contractors are held back on the financial tables (pay apps / change
+  // orders) so one trade can't watch another trade's money; they still get
+  // notified when they are the named assignee (added above).
+  const FINANCIAL = new Set(["pay_apps", "change_orders"]);
+  const { data: members } = await admin.from("project_members")
+    .select("user_id").eq("project_id", projectId);
+  const memberIds = (members || [])
+    .map((m: any) => String(m.user_id || "").trim())
+    .filter((id: string) => UUID_RE.test(id));
+  if (memberIds.length) {
+    const { data: memberProfiles } = await admin.from("profiles")
+      .select("id, app_role, active").in("id", memberIds);
+    for (const mp of memberProfiles || []) {
+      if ((mp as any).active === false) continue;
+      if (FINANCIAL.has(refTable) && (mp as any).app_role === "contractor") continue;
+      recipientIds.add((mp as any).id);
+    }
+  }
+
   // Don't notify whoever performed the action.
   if (actorId && UUID_RE.test(actorId)) recipientIds.delete(actorId);
   if (recipientIds.size === 0) return json({ ok: true, skipped: "no_recipients" });
