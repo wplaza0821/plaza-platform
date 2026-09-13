@@ -7003,6 +7003,72 @@ async function saveProfile() {
 }
 window.saveProfile = saveProfile;
 
+/* -------------------------------------------------------------------------
+   Phone-number prompt (2026-09-13)
+   Members with no phone on file get no SMS from notify-activity / notify-route
+   / notify-task / the due-reminder cron — they silently fall back to email
+   only. Nudge them once a month to add one.
+
+   The "once a month" stamp lives in localStorage, not the profile row: adding
+   a column would need a migration + an RLS write path, and the worst failure
+   mode here is a second prompt on a second device. The stamp is written when
+   the modal is SHOWN, not when it's answered, so dismissing it by any route
+   (Not now / × / Esc / overlay) buys the same month and there is no nag loop.
+   ------------------------------------------------------------------------- */
+const PHONE_PROMPT_KEY    = (uid) => `pc_phone_prompt_${uid}`;
+const PHONE_PROMPT_EVERY  = 30 * 24 * 60 * 60 * 1000;  // ~1 month
+
+function phonePromptDue() {
+  if (!isNative() || !AUTH?.userId) return false;
+  const p = myProfile();
+  if (!p) return false;                              // own row not loaded — nothing to ask about
+  if (String(p.phone || '').trim()) return false;    // already has a number
+  let last = 0;
+  try { last = Number(localStorage.getItem(PHONE_PROMPT_KEY(AUTH.userId)) || 0); } catch (e) {}
+  return !last || (Date.now() - last) >= PHONE_PROMPT_EVERY;
+}
+
+function maybePromptForPhone() {
+  if (!phonePromptDue()) return;
+  // Never stomp a modal the user already has open (e.g. a deep-link route).
+  const root = document.getElementById('modalRoot');
+  if (root && root.innerHTML.trim()) return;
+
+  try { localStorage.setItem(PHONE_PROMPT_KEY(AUTH.userId), String(Date.now())); } catch (e) {}
+
+  showModal({
+    title: 'Add your mobile number',
+    body: `
+      <p style="margin:0 0 12px;">Plazacore can text you when something needs your
+      attention — an RFI routed to you, a task assigned, or a due date coming up.
+      Right now you only get email.</p>
+      <div class="form-row"><label class="form-label">Mobile number</label>
+        <input id="pp-phone" type="tel" placeholder="+13055551234" autocomplete="tel" />
+        <div class="text-sm text-muted" style="margin-top:4px;">E.164 format, e.g. +13055551234. Standard message rates apply. You can change or remove it any time under Profile.</div>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" type="button" onclick="closeModal()">Not now</button>
+      <button class="btn btn-primary" type="button" onclick="savePromptedPhone()">Save number</button>`,
+  });
+  setTimeout(() => { try { document.getElementById('pp-phone')?.focus(); } catch (e) {} }, 50);
+}
+window.maybePromptForPhone = maybePromptForPhone;
+
+async function savePromptedPhone() {
+  const phone = (document.getElementById('pp-phone')?.value || '').trim();
+  if (!phone) { toast('Enter a number, or choose Not now', 'error'); return; }
+  if (!/^\+[1-9]\d{6,14}$/.test(phone)) {
+    toast('Phone must be E.164, e.g. +13055551234', 'error'); return;
+  }
+  const { error } = await sb.from('profiles').update({ phone }).eq('id', AUTH.userId);
+  if (error) { handleSbError(error, 'Saving phone number'); return; }
+  closeModal();
+  toast('Mobile number saved');
+  await reloadData('profiles');
+  if (STATE.activeTab === 'profile') renderProfile();
+}
+window.savePromptedPhone = savePromptedPhone;
+
 function renderAccessRequests() {
   const panel = document.getElementById('accessRequestsPanel');
   const body  = document.getElementById('accessRequestsBody');
@@ -8219,6 +8285,10 @@ async function init() {
 
   // Phase 4: flush any writes queued while offline, once we're authed + online.
   flushOutbox();
+
+  // Once a month, ask members with no phone on file to add one (SMS opt-in).
+  // Deferred so it lands after the first paint, never during boot.
+  setTimeout(() => { try { maybePromptForPhone(); } catch (e) {} }, 1500);
 }
 
 /* =========================================================================
