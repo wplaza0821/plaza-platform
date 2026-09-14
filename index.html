@@ -2592,6 +2592,7 @@ const RELOADERS = {
   milestones:     async () => { const r = await sb.from('milestones').select('*').order('sort_order', { ascending: true }); if (!r.error) DATA.milestones = r.data || []; },
   profiles:       async () => { const r = await sb.from('profiles').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.profiles = r.data || []; },
   accessRequests: async () => { const r = await sb.from('access_requests').select('*').order('created_at', { ascending: false }); if (!r.error) DATA.accessRequests = r.data || []; },
+  payApps:        async () => { const r = await sb.from('pay_apps').select('*').order('pay_app_number'); if (!r.error) DATA.payApps = r.data || []; },
   dashboard:      async () => { const r = await sb.rpc('plz_dashboard'); if (r && !r.error && r.data) DATA.dashboard = r.data; },
 };
 async function reloadData(...keys) {
@@ -3900,7 +3901,14 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   const exemptBySov = depositExemptBySov(proj.id, pa.id);
 
   const waiver = DATA.lienWaivers.find(w => w.pay_app_id === pa.id);
-  const payAppDocs = (DATA.payAppDocs || []).filter(d => d.pay_app_id === pa.id);
+  const allPayAppDocs = (DATA.payAppDocs || []).filter(d => d.pay_app_id === pa.id);
+  // The executed (signed + notarized) copy gets its own section after approval,
+  // so keep it out of the generic Supporting Documents list.
+  const executedDocs = allPayAppDocs.filter(d => d.doc_type === 'executed_payapp');
+  const payAppDocs   = allPayAppDocs.filter(d => d.doc_type !== 'executed_payapp');
+  // Certification review state: both confirmations are required before approval.
+  const paUnderReview  = ['submitted','under_review'].includes(pa.status);
+  const signoffComplete = !!pa.signature_verified_at && !!pa.notary_verified_at;
 
   // Calc totals
   function calcTotals() {
@@ -4082,6 +4090,68 @@ async function openPayAppModal(payAppId, forceEdit = false) {
         ` : '<span class="text-muted">No waiver attached.</span>')}
       </div>
 
+      <!-- Certification review: engineer/architect signature + notary seal.
+           Both must be confirmed before Approve unlocks (also enforced by the
+           trg_enforce_signoff_before_approve DB trigger). -->
+      ${pa.status !== 'draft' ? `
+      <div class="sov-section-head" style="margin-top:22px;">
+        <div class="sov-section-title">Required: Certification Review</div>
+        <div class="sov-meta">Confirm the submitted G702 before approving</div>
+      </div>
+      <div id="paSignoffZone" class="waiver-zone ${signoffComplete ? 'uploaded' : (isOwner() && paUnderReview ? 'missing' : '')}">
+        ${!signoffComplete && isOwner() && paUnderReview ? `
+          <div style="margin-bottom:10px; color:var(--red); font-weight:600;">⚠️ Both items must be verified before this pay application can be approved.</div>
+        ` : ''}
+        <div style="text-align:left;">
+          <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:10px; ${isOwner() && paUnderReview ? 'cursor:pointer;' : ''}">
+            <input type="checkbox" id="pa-sig-verified" style="margin-top:3px;"
+                   ${pa.signature_verified_at ? 'checked' : ''}
+                   ${isOwner() && paUnderReview ? '' : 'disabled'} />
+            <span>
+              <strong>Engineer / Architect signature verified</strong>
+              <div class="text-sm text-muted">The certification block on the submitted G702 is signed.</div>
+              ${pa.signature_verified_at ? `<div class="text-sm text-muted">✅ ${escapeHtml(pa.signature_verified_by || 'Verified')} · ${new Date(pa.signature_verified_at).toLocaleString()}</div>` : ''}
+            </span>
+          </label>
+          <label style="display:flex; align-items:flex-start; gap:8px; ${isOwner() && paUnderReview ? 'cursor:pointer;' : ''}">
+            <input type="checkbox" id="pa-notary-verified" style="margin-top:3px;"
+                   ${pa.notary_verified_at ? 'checked' : ''}
+                   ${isOwner() && paUnderReview ? '' : 'disabled'} />
+            <span>
+              <strong>Notary seal verified</strong>
+              <div class="text-sm text-muted">A notary seal is present on the submitted G702.</div>
+              ${pa.notary_verified_at ? `<div class="text-sm text-muted">✅ ${escapeHtml(pa.notary_verified_by || 'Verified')} · ${new Date(pa.notary_verified_at).toLocaleString()}</div>` : ''}
+            </span>
+          </label>
+        </div>
+      </div>
+      ` : ''}
+
+      <!-- Executed (signed + notarized) pay application, uploaded after approval -->
+      ${['approved','approved_as_noted','paid'].includes(pa.status) ? `
+      <div class="sov-section-head" style="margin-top:22px;">
+        <div class="sov-section-title">Executed Pay Application</div>
+        <div class="sov-meta">The fully signed &amp; notarized copy</div>
+      </div>
+      <div id="paExecutedZone" class="waiver-zone ${executedDocs.length ? 'uploaded' : ''}">
+        ${executedDocs.length ? executedDocs.map(d => `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;text-align:left;">
+            <span>✅ <strong>${escapeHtml(d.file_name || 'Executed pay application')}</strong>
+              <span class="text-muted text-sm">(uploaded ${d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : ''}${d.uploaded_by ? ' by ' + escapeHtml(d.uploaded_by) : ''})</span>
+            </span>
+            <button class="btn btn-secondary btn-sm" onclick="viewPayAppDoc('${d.id}')">View</button>
+            ${isOwner() ? `<button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${d.id}','${pa.id}')">Remove</button>` : ''}
+          </div>
+        `).join('') : '<div class="text-muted" style="margin-bottom:10px;">No executed copy on file yet.</div>'}
+        ${isOwner() ? `
+          <div style="text-align:left;margin-top:8px;">
+            <input type="file" id="paExecFile" accept=".pdf,image/jpeg,image/png" />
+            <button class="btn btn-primary btn-sm" id="uploadExecBtn" style="margin-top:10px;">📎 Upload Signed &amp; Notarized Pay App</button>
+          </div>
+        ` : ''}
+      </div>
+      ` : ''}
+
       <!-- Supporting documents: formal Change Order PDF + other backup -->
       <div class="sov-section-head" style="margin-top:22px;">
         <div class="sov-section-title">Supporting Documents</div>
@@ -4162,6 +4232,22 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   const uploadPadBtn = document.getElementById('uploadPadBtn');
   if (uploadPadBtn) {
     uploadPadBtn.addEventListener('click', () => uploadPayAppDoc(pa));
+  }
+
+  // Wire certification-review checkboxes (engineer/architect signature, notary)
+  const sigBox = document.getElementById('pa-sig-verified');
+  if (sigBox && !sigBox.disabled) {
+    sigBox.addEventListener('change', () => setPayAppSignoff(pa.id, 'signature', sigBox.checked));
+  }
+  const notBox = document.getElementById('pa-notary-verified');
+  if (notBox && !notBox.disabled) {
+    notBox.addEventListener('change', () => setPayAppSignoff(pa.id, 'notary', notBox.checked));
+  }
+
+  // Wire executed (signed + notarized) pay app upload
+  const uploadExecBtn = document.getElementById('uploadExecBtn');
+  if (uploadExecBtn) {
+    uploadExecBtn.addEventListener('click', () => uploadExecutedPayApp(pa));
   }
 
   // Wire pay-application PDF import upload
@@ -4266,12 +4352,22 @@ function payAppFooter(pa, editable, hasWaiver) {
     buttons.push(`<button class="btn btn-secondary" onclick="closeModal()">Save &amp; Close</button>`);
     buttons.push(`<button class="btn btn-primary" id="submitPaBtn" ${hasWaiver ? '' : 'disabled'} onclick="submitPayApp('${pa.id}')">${hasWaiver ? 'Submit for Review' : 'Upload Waiver to Submit'}</button>`);
   } else if (isOwner() && ['submitted','under_review'].includes(pa.status)) {
-    const approveGate = hasWaiver ? '' : 'disabled title="Upload the release of lien before approving"';
+    // Approval needs the lien waiver AND both certification confirmations
+    // (engineer/architect signature block + notary seal).
+    const signedOff = !!pa.signature_verified_at && !!pa.notary_verified_at;
+    let blockLabel = '';
+    if (!hasWaiver && !signedOff)      blockLabel = 'Waiver & Certification Required';
+    else if (!hasWaiver)               blockLabel = 'Waiver Required to Approve';
+    else if (!pa.signature_verified_at && !pa.notary_verified_at) blockLabel = 'Verify Signature & Notary';
+    else if (!pa.signature_verified_at) blockLabel = 'Verify Signature Block';
+    else if (!pa.notary_verified_at)    blockLabel = 'Verify Notary Seal';
+    const approveOk  = hasWaiver && signedOff;
+    const approveGate = approveOk ? '' : `disabled title="${escapeHtml(blockLabel)}"`;
     buttons.push(`<button class="btn btn-danger" onclick="rejectPayApp('${pa.id}')">Reject</button>`);
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" ${approveGate} onclick="approveAsNoted('${pa.id}')">Approve as Noted</button>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
-    buttons.push(`<button class="btn btn-primary" ${approveGate} onclick="approvePayApp('${pa.id}')">${hasWaiver ? 'Approve' : 'Waiver Required to Approve'}</button>`);
+    buttons.push(`<button class="btn btn-primary" ${approveGate} onclick="approvePayApp('${pa.id}')">${approveOk ? 'Approve' : blockLabel}</button>`);
   } else if (isOwner() && pa.status === 'approved') {
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
@@ -4332,6 +4428,60 @@ async function uploadWaiver(pa) {
   openPayAppModal(pa.id, true);
 }
 window.uploadWaiver = uploadWaiver;
+
+// ---- Certification review (engineer/architect signature + notary seal) ----
+// Owner attestation, stamped with who and when. Both are required before the
+// Approve buttons unlock; the DB trigger trg_enforce_signoff_before_approve
+// enforces the same rule for any non-UI caller.
+async function setPayAppSignoff(payAppId, which, checked) {
+  const now = new Date().toISOString();
+  const patch = which === 'signature'
+    ? { signature_verified_at: checked ? now : null, signature_verified_by: checked ? AUTH.name : null }
+    : { notary_verified_at:    checked ? now : null, notary_verified_by:    checked ? AUTH.name : null };
+  const { error } = await sb.from('pay_apps').update(patch).eq('id', payAppId);
+  if (error) { handleSbError(error, 'Saving certification review'); return; }
+  await reloadData('payApps');
+  toast(checked ? 'Verification recorded' : 'Verification cleared');
+  openPayAppModal(payAppId, false);
+}
+window.setPayAppSignoff = setPayAppSignoff;
+
+// ---- Executed (fully signed + notarized) pay application ----
+// Uploaded after approval as the record copy. Same bucket/path convention as
+// the other pay-app documents so the project-code storage policy applies.
+async function uploadExecutedPayApp(pa) {
+  const file = document.getElementById('paExecFile')?.files?.[0];
+  if (!file) { toast('Choose a file first', 'error'); return; }
+  if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
+  const allowed = ['application/pdf','image/jpeg','image/png'];
+  if (!allowed.includes(file.type)) { toast('Only PDF/JPG/PNG allowed', 'error'); return; }
+
+  const btn = document.getElementById('uploadExecBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
+  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = '📎 Upload Signed &amp; Notarized Pay App'; } };
+
+  const proj = getProject(pa.project_id);
+  const codePrefix = proj?.code || pa.project_id;
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${codePrefix}/payapp/${pa.id}/executed_${Date.now()}_${safeName}`;
+  const { error: upErr } = await sb.storage.from('change-orders').upload(path, file, { upsert: false });
+  if (upErr) { handleSbError(upErr, 'Upload executed pay application'); restore(); return; }
+
+  const { error: insErr } = await sb.from('pay_app_documents').insert({
+    pay_app_id: pa.id,
+    doc_type: 'executed_payapp',
+    file_path: path,
+    file_name: file.name,
+    file_size: file.size,
+    uploaded_by: AUTH.name,
+  });
+  if (insErr) { handleSbError(insErr, 'Record executed pay application'); restore(); return; }
+
+  await loadAllData();
+  toast('Executed pay application uploaded');
+  openPayAppModal(pa.id, false);
+}
+window.uploadExecutedPayApp = uploadExecutedPayApp;
 
 async function viewWaiver(waiverId) {
   const w = DATA.lienWaivers.find(x => x.id === waiverId);
@@ -4800,11 +4950,23 @@ window.deletePayApp = deletePayApp;
 function payAppHasWaiver(payAppId) {
   return DATA.lienWaivers.some(w => w.pay_app_id === payAppId);
 }
+// Both certification confirmations must be on file before approval. Mirrors
+// the trg_enforce_signoff_before_approve DB trigger.
+function payAppSignoffError(payAppId) {
+  const pa = DATA.payApps.find(p => p.id === payAppId);
+  if (!pa) return 'Pay application not found.';
+  if (!pa.signature_verified_at) return 'Verify the engineer/architect signature block before approving.';
+  if (!pa.notary_verified_at)    return 'Verify the notary seal before approving.';
+  return null;
+}
+
 async function approvePayApp(payAppId) {
   if (!payAppHasWaiver(payAppId)) {
     toast('A release of lien must be uploaded before this pay app can be approved.', 'error');
     return;
   }
+  const sErr = payAppSignoffError(payAppId);
+  if (sErr) { toast(sErr, 'error'); return; }
   const { error } = await sb.from('pay_apps').update({
     status: 'approved',
     reviewed_at: new Date().toISOString(),
@@ -4823,6 +4985,8 @@ async function approveAsNoted(payAppId) {
     toast('A release of lien must be uploaded before this pay app can be approved.', 'error');
     return;
   }
+  const sErr2 = payAppSignoffError(payAppId);
+  if (sErr2) { toast(sErr2, 'error'); return; }
   const notes = prompt('Approval notes:');
   if (notes === null) return;
   const { error } = await sb.from('pay_apps').update({
