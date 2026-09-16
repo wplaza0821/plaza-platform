@@ -4364,11 +4364,13 @@ function payAppFooter(pa, editable, hasWaiver) {
     const approveOk  = hasWaiver && signedOff;
     const approveGate = approveOk ? '' : `disabled title="${escapeHtml(blockLabel)}"`;
     buttons.push(`<button class="btn btn-danger" onclick="rejectPayApp('${pa.id}')">Reject</button>`);
+    buttons.push(`<button class="btn btn-danger" onclick="deletePayApp('${pa.id}')" title="Permanently remove this pay application">Delete</button>`);
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" ${approveGate} onclick="approveAsNoted('${pa.id}')">Approve as Noted</button>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
     buttons.push(`<button class="btn btn-primary" ${approveGate} onclick="approvePayApp('${pa.id}')">${approveOk ? 'Approve' : blockLabel}</button>`);
   } else if (isOwner() && pa.status === 'approved') {
+    buttons.push(`<button class="btn btn-danger" onclick="deletePayApp('${pa.id}')" title="Permanently remove this pay application">Delete</button>`);
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
     buttons.push(`<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
@@ -4378,6 +4380,8 @@ function payAppFooter(pa, editable, hasWaiver) {
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
   } else {
+    // Owner can remove a pay app in any remaining state (paid, or a draft opened read-only).
+    if (isOwner()) buttons.push(`<button class="btn btn-danger" onclick="deletePayApp('${pa.id}')" title="Permanently remove this pay application">Delete</button>`);
     buttons.push(`<div style="flex:1"></div>`);
     if (['approved','paid'].includes(pa.status)) {
       buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
@@ -4920,25 +4924,37 @@ window.submitPayApp = submitPayApp;
 async function deletePayApp(payAppId) {
   const pa = DATA.payApps.find(x => x.id === payAppId);
   if (!pa) return;
-  // Deletable states: own draft (contractor/owner) or a rejected app (owner only).
+  // Deletable states: contractors may delete their own draft; the owner may delete a
+  // pay app in ANY status (DB policy pa_owner_delete; lines/docs/waivers cascade).
   const isDraft = pa.status === 'draft';
-  const isRejected = pa.status === 'rejected';
-  if (!(isDraft || (isRejected && isOwner()))) {
-    toast('Only draft or rejected pay apps can be deleted', 'error');
+  if (!(isDraft || isOwner())) {
+    toast('Only draft pay apps can be deleted', 'error');
     return;
   }
-  if (!confirm(isRejected
-      ? `Permanently delete rejected Pay App #${pa.pay_app_number}? This removes its line items, uploaded documents, and lien waiver.`
-      : 'Delete this draft pay app?')) return;
+  if (isDraft) {
+    if (!confirm('Delete this draft pay app?')) return;
+  } else {
+    // Removing an approved/paid application rewrites billing history: previous-certificates
+    // and completed-to-date on every later application are derived from it.
+    const later = projectPayApps(pa.project_id).filter(x => x.pay_app_number > pa.pay_app_number);
+    const warn = later.length
+      ? `\n\nWARNING: ${later.length} later pay app(s) (#${later.map(x => x.pay_app_number).join(', #')}) will have their previous-certificates and completed-to-date figures recalculated.`
+      : '';
+    const typed = prompt(`Permanently delete Pay App #${pa.pay_app_number} (status: ${pa.status})?\nThis removes its line items, uploaded documents and lien waivers and cannot be undone.${warn}\n\nType the pay app number (${pa.pay_app_number}) to confirm:`);
+    if (typed === null) return;
+    if (String(typed).trim() !== String(pa.pay_app_number)) { toast('Pay app number did not match — nothing deleted', 'error'); return; }
+  }
   // remove lien waiver files
   const ws = DATA.lienWaivers.filter(w => w.pay_app_id === payAppId);
   for (const w of ws) await sb.storage.from('lien-waivers').remove([w.file_path]).catch(()=>{});
   // remove supporting/pay-application document files
   const ds = (DATA.payAppDocs || []).filter(d => d.pay_app_id === payAppId);
   for (const d of ds) { if (d.file_path) await sb.storage.from('change-orders').remove([d.file_path]).catch(()=>{}); }
-  await sb.from('pay_apps').delete().eq('id', payAppId);
+  const { error: delErr } = await sb.from('pay_apps').delete().eq('id', payAppId);
+  if (delErr) { toast('Delete failed: ' + delErr.message, 'error'); return; }
   await loadAllData();
-  toast('Pay app deleted');
+  if (DATA.payApps.find(x => x.id === payAppId)) { toast('Delete was blocked by the database policy', 'error'); return; }
+  toast(`Pay App #${pa.pay_app_number} deleted`);
   closeModal();
   render();
 }
