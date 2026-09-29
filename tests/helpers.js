@@ -31,15 +31,34 @@ async function stubCdn(page) {
   });
 }
 
-const PROJECT_FIXTURE = [{
-  id: 'p1',
-  code: 'TP-01',
-  name: 'Test Project',
-  status: 'active',
-  client: 'Test Client',
-  address: '1 Test St',
-  created_at: '2026-01-01T00:00:00Z',
-}];
+/* A portfolio, not a single row. The landing sorts, groups and filters across
+   projects, so one fixture project could not tell a working sort from a broken
+   one. p1 stays first and keeps its id because the contractor sessions below
+   are scoped to it. */
+const PROJECT_FIXTURE = [
+  { id: 'p1', code: 'TP-01', name: 'Test Project', status: 'active',
+    client: 'Test Client', address: '1 Test St', created_at: '2026-01-01T00:00:00Z' },
+  { id: 'p2', code: 'TP-02', name: 'Bayfront Tower', status: 'active',
+    client: 'Bayfront COA', address: '2 Bay Rd', created_at: '2026-02-01T00:00:00Z' },
+  { id: 'p3', code: 'TP-03', name: 'Harbour Bidding', status: 'bidding',
+    client: 'Harbour LLC', address: '3 Harbour Way', created_at: '2026-03-01T00:00:00Z' },
+  { id: 'p4', code: 'TP-04', name: 'Old Closed Job', status: 'archived',
+    client: 'Past Client', address: '4 Old Ave', created_at: '2025-01-01T00:00:00Z' },
+];
+
+/* plz_dashboard() rollup. p2 is the project in trouble (overdue RFI + critical
+   defect) and must sort above p1; p1 is live but silent this month, which is
+   what the "quiet projects" tile counts. */
+const DASHBOARD_FIXTURE = [
+  { project_id: 'p1', open_rfis: 1, pending_submittals: 0, open_deficiencies: 0,
+    overdue_rfis: 0, critical_defs: 0, reports_this_month: 0 },
+  { project_id: 'p2', open_rfis: 3, pending_submittals: 2, open_deficiencies: 1,
+    overdue_rfis: 2, critical_defs: 1, reports_this_month: 4 },
+  { project_id: 'p3', open_rfis: 0, pending_submittals: 1, open_deficiencies: 0,
+    overdue_rfis: 0, critical_defs: 0, reports_this_month: 1 },
+  { project_id: 'p4', open_rfis: 0, pending_submittals: 0, open_deficiencies: 0,
+    overdue_rfis: 0, critical_defs: 0, reports_this_month: 0 },
+];
 
 const SESSIONS = {
   owner:      { role: 'owner',  name: 'Test Owner',  jwt: FAKE_JWT },
@@ -61,7 +80,7 @@ const SESSIONS = {
   },
 };
 
-async function stubSupabase(page) {
+async function stubSupabase(page, opts = {}) {
   await page.route('**/*.supabase.co/**', (route) => {
     const url = new URL(route.request().url());
     const method = route.request().method();
@@ -73,6 +92,13 @@ async function stubSupabase(page) {
       });
     }
     if (url.pathname.startsWith('/rest/v1/')) {
+      // RPCs are POSTs. plz_dashboard drives the attention strip and the card
+      // rollups, so answering it '[]' like any other write would silently test
+      // only the fallback path.
+      if (url.pathname.startsWith('/rest/v1/rpc/plz_dashboard')) {
+        return route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify(opts.dashboard !== undefined ? opts.dashboard : DASHBOARD_FIXTURE) });
+      }
       if (method !== 'GET') {
         return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
       }
@@ -86,14 +112,14 @@ async function stubSupabase(page) {
 }
 
 // Boot the app as a given role. Returns collected uncaught page errors.
-async function bootAs(page, roleKey, { viewport } = {}) {
+async function bootAs(page, roleKey, { viewport, dashboard } = {}) {
   const session = SESSIONS[roleKey];
   if (!session) throw new Error('unknown role: ' + roleKey);
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   if (viewport) await page.setViewportSize(viewport);
   await stubCdn(page);
-  await stubSupabase(page);
+  await stubSupabase(page, { dashboard });
   await page.addInitScript((s) => {
     sessionStorage.setItem('plaza_session_auth_v3', JSON.stringify(s));
   }, session);
@@ -107,4 +133,5 @@ async function bootAs(page, roleKey, { viewport } = {}) {
 const tabVisible = (page, tab) =>
   page.locator(`#tabs .tab[data-tab="${tab}"]`).isVisible();
 
-module.exports = { SESSIONS, FAKE_JWT, PROJECT_FIXTURE, stubSupabase, stubCdn, bootAs, tabVisible };
+module.exports = { SESSIONS, FAKE_JWT, PROJECT_FIXTURE, DASHBOARD_FIXTURE,
+  stubSupabase, stubCdn, bootAs, tabVisible };
