@@ -329,7 +329,92 @@
   .chip:hover { color: var(--black); border-color: var(--black); }
   .chip.active { background: var(--black); color: #fff; border-color: var(--black); }
 
+  /* ---------- Portfolio attention strip ----------
+     Sits above the grid and is a FILTER, not a readout. Each tile narrows the
+     grid to the projects contributing to that number, which is the only reason
+     a count on a landing page earns its space: it has to lead somewhere. */
+  .attn-strip {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px; margin-bottom: 18px;
+  }
+  .attn-tile {
+    background: #fff; border: 1px solid var(--gray-200); border-radius: var(--radius);
+    padding: 12px 14px; cursor: pointer; text-align: left; font-family: inherit;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+    box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+  }
+  .attn-tile:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); border-color: var(--gray-300); }
+  .attn-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .attn-tile.on { border-color: var(--black); box-shadow: 0 0 0 1px var(--black), var(--shadow-md); }
+  .attn-tile[data-empty="1"] { opacity: .55; cursor: default; }
+  .attn-tile[data-empty="1"]:hover { transform: none; box-shadow: var(--shadow-sm); border-color: var(--gray-200); }
+  .attn-n { font-size: 22px; font-weight: 700; color: var(--black); line-height: 1.1; letter-spacing: -0.5px; }
+  .attn-n.alert { color: var(--red); }
+  .attn-k { font-size: 10px; text-transform: uppercase; letter-spacing: .7px;
+    font-weight: 600; color: var(--gray-400); margin-top: 3px; }
+  .attn-sub { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+
   .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  /* A project that needs something gets a left edge, so the grid can be skimmed
+     down one column rather than read card by card. */
+  .project-card.needs::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--red); border-radius: var(--radius) 0 0 var(--radius);
+  }
+  .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 999px;
+    background: var(--gray-300); margin-right: 6px; vertical-align: middle; }
+  .status-dot.active   { background: var(--accent); }
+  .status-dot.bidding  { background: var(--gray-400); }
+  .status-dot.closeout { background: var(--black); }
+  .status-dot.archived { background: var(--gray-300); }
+  .archived-toggle {
+    background: none; border: none; font-family: inherit; font-size: 12px;
+    color: var(--gray-500); cursor: pointer; padding: 10px 0; text-decoration: underline;
+  }
+  .archived-toggle:hover { color: var(--black); }
+
+  /* ---------- Project switcher ----------
+     Replaces a bare <select> that listed every project, archived included, with
+     no search and no status. Opens on click or Cmd/Ctrl-K from anywhere. */
+  .psw-wrap { position: relative; }
+  .psw-btn {
+    display: flex; align-items: center; gap: 8px; max-width: 280px;
+    background: #FFFFFF; color: var(--black); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm); padding: 8px 12px; font-family: inherit;
+    font-size: 12px; font-weight: 500; letter-spacing: .3px; cursor: pointer;
+  }
+  .psw-btn:hover { border-color: var(--gray-300); }
+  .psw-btn .psw-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .psw-kbd {
+    font-size: 9.5px; color: var(--gray-400); border: 1px solid var(--gray-200);
+    border-radius: 3px; padding: 1px 4px; margin-left: auto; white-space: nowrap;
+  }
+  .psw-panel {
+    display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 70;
+    width: min(380px, 92vw); background: #fff; border: 1px solid var(--gray-200);
+    border-radius: var(--radius); box-shadow: var(--shadow-lg, 0 10px 30px rgba(2,0,0,.16));
+    overflow: hidden;
+  }
+  .psw-panel.on { display: block; }
+  .psw-search {
+    width: 100%; border: 0; border-bottom: 1px solid var(--gray-200); padding: 11px 13px;
+    font-family: inherit; font-size: 13px; outline: none; color: var(--black);
+  }
+  .psw-list { max-height: 320px; overflow-y: auto; padding: 4px; }
+  .psw-sec { font-size: 9.5px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--gray-400); font-weight: 600; padding: 8px 9px 4px; }
+  .psw-item {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: none; border: 0; font-family: inherit; padding: 8px 9px;
+    border-radius: var(--radius-sm); cursor: pointer; color: var(--black);
+  }
+  .psw-item:hover, .psw-item.cur { background: var(--gray-100); }
+  .psw-item[aria-selected="true"] { background: var(--accent-bg); }
+  .psw-item .code { font-size: 10.5px; color: var(--gray-400); font-weight: 600;
+    letter-spacing: .6px; min-width: 56px; }
+  .psw-item .nm { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .psw-item .mk { font-size: 10px; color: var(--gray-400); margin-left: auto; white-space: nowrap; }
+  .psw-none { padding: 18px 13px; font-size: 12px; color: var(--gray-500); text-align: center; }
   .project-card {
     background: #fff; border-radius: var(--radius); border: 1px solid var(--gray-200);
     padding: 18px; cursor: pointer; transition: all 0.15s ease;
@@ -1059,7 +1144,19 @@
         <input type="search" id="gsearchInput" class="gsearch-input" placeholder="Search reports &amp; documents…" autocomplete="off" aria-label="Global search" />
         <div class="gsearch-panel" id="gsearchPanel" role="listbox" aria-label="Search results"></div>
       </div>
-      <select id="projectSelect" class="project-select" aria-label="Active project" data-role-hide="contractor"></select>
+      <div class="psw-wrap" id="pswWrap" data-role-hide="contractor">
+        <button type="button" id="pswBtn" class="psw-btn" aria-haspopup="listbox"
+                aria-expanded="false" aria-label="Switch active project">
+          <span class="status-dot" id="pswDot"></span>
+          <span class="psw-name" id="pswName">No project</span>
+          <span class="psw-kbd" id="pswKbd">⌘K</span>
+        </button>
+        <div class="psw-panel" id="pswPanel" role="dialog" aria-label="Switch project">
+          <input type="search" id="pswSearch" class="psw-search" autocomplete="off"
+                 placeholder="Search projects by name, code or client…" aria-label="Search projects" />
+          <div class="psw-list" id="pswList" role="listbox" aria-label="Projects"></div>
+        </div>
+      </div>
       <span id="contractorProjectLabel" class="role-pill contractor" data-role-hide="owner" style="display:none;"></span>
       <span class="bell-wrap" id="bellWrap" style="display:none;">
         <button type="button" class="btn-bell" id="bellBtn" aria-label="Notifications" onclick="toggleNotifPanel(event)">🔔<span class="bell-badge" id="bellBadge">0</span></button>
@@ -1122,14 +1219,17 @@
         <button class="btn btn-primary perm-edit-projects" onclick="openProjectModal()">＋ New Project</button>
       </div>
 
+      <div class="attn-strip" id="attnStrip"></div>
+
       <div class="filter-bar" id="projectFilters">
-        <span class="chip active" data-filter="all">All</span>
-        <span class="chip" data-filter="active">Active</span>
+        <span class="chip" data-filter="all">All</span>
+        <span class="chip active" data-filter="active">Active</span>
         <span class="chip" data-filter="bidding">Bidding</span>
         <span class="chip" data-filter="closeout">Closeout</span>
       </div>
 
       <div id="projectGrid" class="project-grid"></div>
+      <div id="archivedRow"></div>
     </section>
 
     <!-- ========== SOV / PAY APPS ========== -->
@@ -1958,7 +2058,14 @@ let AUTH = null;
 const STATE = {
   activeProjectId: null,
   activeTab: 'projects',
-  projectFilter: 'all',
+  /* A "current projects" landing opens on current projects. 'all' put archived
+     work in front of live work on every load. */
+  projectFilter: 'active',
+  attnFilter: null,        // which attention tile is narrowing the grid, if any
+  attnPrevFilter: null,    // status chip a tile overrode, restored when it clears
+  showArchived: false,
+  pswOpen: false,
+  pswIdx: -1,            // highlighted row in the switcher, -1 = none
   rfiFilter: 'all',
   subFilter: 'all',
   docFilter: 'all',
@@ -2738,24 +2845,148 @@ CSV_EXPORTS.forEach(([tableId, label, searchId]) => {
 /* =========================================================================
    PROJECT SELECTOR
    ========================================================================= */
-function renderProjectSelect() {
-  const sel = document.getElementById('projectSelect');
-  const list = isContractor()
+/* The project a user can act on. Contractors are scoped to exactly one. */
+function switchableProjects() {
+  return isContractor()
     ? DATA.projects.filter(p => p.id === AUTH.projectId)
     : DATA.projects;
-  if (!list.length) { sel.innerHTML = '<option>No projects</option>'; return; }
+}
+
+/* Recently-opened projects, most recent first. A working week touches three or
+   four projects out of a book of dozens, so the list you actually need is short
+   and it is not alphabetical. Per-browser only; nothing here is worth a table. */
+const PSW_RECENT_KEY = 'plaza_recent_projects_v1';
+const PSW_RECENT_MAX = 5;
+function pswRecent() {
+  try { const v = JSON.parse(localStorage.getItem(PSW_RECENT_KEY) || '[]');
+        return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+function pswPushRecent(id) {
+  if (!id) return;
+  try {
+    const next = [id, ...pswRecent().filter(x => x !== id)].slice(0, PSW_RECENT_MAX);
+    localStorage.setItem(PSW_RECENT_KEY, JSON.stringify(next));
+  } catch (e) { /* private window / blocked storage — the switcher still works */ }
+}
+
+function renderProjectSelect() {
+  const list = switchableProjects();
   if (!STATE.activeProjectId || !list.some(p => p.id === STATE.activeProjectId)) {
-    STATE.activeProjectId = list[0].id;
+    STATE.activeProjectId = list[0] ? list[0].id : null;
   }
-  sel.innerHTML = list.map(p =>
-    `<option value="${p.id}" ${p.id === STATE.activeProjectId ? 'selected' : ''}>${escapeHtml(p.code)} — ${escapeHtml(p.name)}</option>`
-  ).join('');
+  const cur = list.find(p => p.id === STATE.activeProjectId) || null;
+  const nameEl = document.getElementById('pswName');
+  const dotEl  = document.getElementById('pswDot');
+  if (nameEl) nameEl.textContent = cur ? `${cur.code} — ${cur.name}` : 'No project';
+  if (dotEl)  dotEl.className = 'status-dot ' + (cur ? (cur.status || '') : '');
+  const btn = document.getElementById('pswBtn');
+  if (btn) btn.title = cur ? `${cur.code} — ${cur.name}` : 'No project selected';
+  if (STATE.pswOpen) pswRenderList();
   renderRoleIndicator();
 }
-document.getElementById('projectSelect').addEventListener('change', e => {
-  STATE.activeProjectId = e.target.value;
+
+function pswRenderList() {
+  const box = document.getElementById('pswList');
+  if (!box) return;
+  const q = (document.getElementById('pswSearch')?.value || '').trim().toLowerCase();
+  const all = switchableProjects();
+  const match = p => !q || [p.code, p.name, p.client, p.address]
+    .some(v => String(v || '').toLowerCase().includes(q));
+  const hits = all.filter(match);
+  if (!hits.length) {
+    box.innerHTML = `<div class="psw-none">No project matches “${escapeHtml(q)}”.</div>`;
+    STATE.pswIdx = -1;
+    return;
+  }
+  /* Recents lead, but only when the user has not typed: once there is a query
+     the ranking that matters is "does it match", and a recents section on top
+     of search results just hides the answer. */
+  const recents = q ? [] : pswRecent().map(id => hits.find(p => p.id === id)).filter(Boolean);
+  const rest = hits.filter(p => !recents.includes(p));
+  const row = (p) => {
+    const cur = p.id === STATE.activeProjectId;
+    return `<button type="button" class="psw-item${cur ? ' cur' : ''}" role="option"
+        aria-selected="false" data-id="${escapeHtml(p.id)}" onclick="pswPick('${escapeHtml(p.id)}')">
+      <span class="status-dot ${escapeHtml(p.status || '')}"></span>
+      <span class="code">${escapeHtml(p.code || '')}</span>
+      <span class="nm">${escapeHtml(p.name || '')}</span>
+      ${cur ? '<span class="mk">current</span>' : ''}
+    </button>`;
+  };
+  let h = '';
+  if (recents.length) {
+    h += `<div class="psw-sec">Recent</div>` + recents.map(row).join('');
+    if (rest.length) h += `<div class="psw-sec">All projects</div>`;
+  }
+  h += rest.map(row).join('');
+  box.innerHTML = h;
+  STATE.pswIdx = -1;
+}
+
+function pswOpen() {
+  const panel = document.getElementById('pswPanel');
+  const wrap  = document.getElementById('pswWrap');
+  if (!panel || !wrap || wrap.offsetParent === null) return;   // hidden for contractors
+  STATE.pswOpen = true;
+  panel.classList.add('on');
+  document.getElementById('pswBtn')?.setAttribute('aria-expanded', 'true');
+  const box = document.getElementById('pswSearch');
+  if (box) { box.value = ''; box.focus(); }
+  pswRenderList();
+}
+function pswClose() {
+  STATE.pswOpen = false;
+  document.getElementById('pswPanel')?.classList.remove('on');
+  document.getElementById('pswBtn')?.setAttribute('aria-expanded', 'false');
+}
+function pswPick(id) {
+  if (isContractor() && id !== AUTH.projectId) return;
+  STATE.activeProjectId = id;
+  pswPushRecent(id);
+  pswClose();
   render();
+}
+window.pswPick = pswPick;
+
+/* Keyboard: ArrowUp/Down move a highlight, Enter takes it, Escape closes.
+   The highlight is tracked on STATE rather than read back off the DOM so that
+   retyping a query cannot leave it pointing at a row that no longer exists. */
+function pswNav(delta) {
+  const items = [...document.querySelectorAll('#pswList .psw-item')];
+  if (!items.length) return;
+  STATE.pswIdx = (STATE.pswIdx + delta + items.length) % items.length;
+  items.forEach((el, i) => el.setAttribute('aria-selected', String(i === STATE.pswIdx)));
+  items[STATE.pswIdx].scrollIntoView({ block: 'nearest' });
+}
+
+document.getElementById('pswBtn')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  STATE.pswOpen ? pswClose() : pswOpen();
 });
+document.getElementById('pswSearch')?.addEventListener('input', pswRenderList);
+document.getElementById('pswPanel')?.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); pswNav(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); pswNav(-1); }
+  else if (e.key === 'Enter') {
+    const items = [...document.querySelectorAll('#pswList .psw-item')];
+    const el = items[STATE.pswIdx] || items[0];
+    if (el) { e.preventDefault(); pswPick(el.dataset.id); }
+  } else if (e.key === 'Escape') { e.preventDefault(); pswClose(); document.getElementById('pswBtn')?.focus(); }
+});
+document.addEventListener('click', (e) => {
+  if (STATE.pswOpen && !e.target.closest('#pswWrap')) pswClose();
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    STATE.pswOpen ? pswClose() : pswOpen();
+  }
+});
+/* Windows and Linux read ⌘ as a Mac key and would be told the wrong shortcut. */
+if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+  const k = document.getElementById('pswKbd');
+  if (k) k.textContent = 'Ctrl K';
+}
 
 /* =========================================================================
    PROJECTS PAGE
@@ -2775,34 +3006,152 @@ function projectProgress(p) {
   return 0;
 }
 
-function renderProjects() {
-  const grid = document.getElementById('projectGrid');
-  const filter = STATE.projectFilter;
-  const base = isContractor()
+/* The authoritative per-project rollup from the plz_dashboard() RPC, with the
+   local fallback the card has always used when the RPC has not answered yet. */
+function projectRollup(p) {
+  const d = (DATA.dashboard || []).find(x => x.project_id === p.id) || null;
+  if (d) return {
+    rfis:     d.open_rfis || 0,
+    subs:     d.pending_submittals || 0,
+    defs:     d.open_deficiencies || 0,
+    overdue:  d.overdue_rfis || 0,
+    critical: d.critical_defs || 0,
+    reports:  d.reports_this_month || 0,
+    live: true,
+  };
+  return {
+    rfis: DATA.rfis.filter(r => r.project_id === p.id && r.status === 'open').length,
+    subs: DATA.submittals.filter(x => x.project_id === p.id && x.status === 'pending').length,
+    defs: 0, overdue: 0, critical: 0, reports: 0, live: false,
+  };
+}
+
+/* The four things that actually pull a principal back into a project. "Quiet"
+   is in the list on purpose: a live project with no field report this month is
+   the failure nobody gets alerted about, because nothing happened. */
+const ATTN_DEFS = [
+  { key: 'overdue',  label: 'Overdue RFIs',   sub: 'past due date',        alert: true,
+    n: r => r.overdue },
+  { key: 'critical', label: 'Critical defects', sub: 'need a decision',    alert: true,
+    n: r => r.critical },
+  { key: 'subs',     label: 'Submittals',     sub: 'awaiting review',      alert: false,
+    n: r => r.subs },
+  { key: 'quiet',    label: 'Quiet projects', sub: 'no report this month', alert: false,
+    n: r => 0, project: (p, r) => p.status === 'active' && r.live && r.reports === 0 },
+];
+
+function visibleProjects() {
+  return isContractor()
     ? DATA.projects.filter(p => p.id === AUTH.projectId)
     : DATA.projects;
-  const list = base.filter(p => filter === 'all' || p.status === filter);
+}
+
+function renderAttentionStrip() {
+  const el = document.getElementById('attnStrip');
+  if (!el) return;
+  /* Counted across the whole portfolio, never the current filter: the point of
+     the strip is to show what you would otherwise not be looking at. */
+  const base = visibleProjects().filter(p => p.status !== 'archived');
+  const totals = {};
+  for (const def of ATTN_DEFS) {
+    totals[def.key] = base.reduce((a, p) => {
+      const r = projectRollup(p);
+      return a + (def.project ? (def.project(p, r) ? 1 : 0) : def.n(r));
+    }, 0);
+  }
+  el.innerHTML = ATTN_DEFS.map(def => {
+    const n = totals[def.key];
+    const on = STATE.attnFilter === def.key;
+    return `<button type="button" class="attn-tile${on ? ' on' : ''}"
+        data-attn="${def.key}" data-empty="${n ? 0 : 1}" ${n ? '' : 'tabindex="-1"'}
+        aria-pressed="${on}"
+        title="${n ? 'Show only the projects behind this number' : 'Nothing outstanding'}">
+      <div class="attn-n${def.alert && n ? ' alert' : ''}">${n}</div>
+      <div class="attn-k">${escapeHtml(def.label)}</div>
+      <div class="attn-sub">${escapeHtml(def.sub)}</div>
+    </button>`;
+  }).join('');
+}
+
+/* Does this project contribute to the selected attention tile? */
+function matchesAttn(p) {
+  if (!STATE.attnFilter) return true;
+  const def = ATTN_DEFS.find(d => d.key === STATE.attnFilter);
+  if (!def) return true;
+  const r = projectRollup(p);
+  return def.project ? def.project(p, r) : def.n(r) > 0;
+}
+
+function renderProjects() {
+  renderAttentionStrip();
+  const grid = document.getElementById('projectGrid');
+  const filter = STATE.projectFilter;
+  const base = visibleProjects();
+  /* Archived work is real history but it is not "current projects". It stays
+     one click away instead of competing for the top of the grid.
+
+     Archived rows bypass the status chip rather than being filtered by it: the
+     chip says which CURRENT work to show, and running archived through it too
+     meant "Show 1 archived project" revealed nothing whenever the chip was set
+     to anything but All. */
+  const archived = base.filter(p => p.status === 'archived');
+  let list = base
+    .filter(p => p.status === 'archived'
+      ? (STATE.showArchived || filter === 'archived')
+      : (filter === 'all' || p.status === filter))
+    .filter(matchesAttn);
+
+  /* Projects that need something sort to the front. Within each group, most
+     pressing first, then by code so the order is stable between renders. */
+  const urgency = p => { const r = projectRollup(p); return (r.overdue * 10) + (r.critical * 5) + r.subs; };
+  list = list.slice().sort((a, b) => {
+    const ua = urgency(a), ub = urgency(b);
+    if (ua !== ub) return ub - ua;
+    return String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true });
+  });
+
+  const archRow = document.getElementById('archivedRow');
+  if (archRow) {
+    archRow.innerHTML = (archived.length && filter !== 'archived')
+      ? `<button type="button" class="archived-toggle" id="archToggle">
+           ${STATE.showArchived ? 'Hide' : 'Show'} ${archived.length} archived project${archived.length === 1 ? '' : 's'}
+         </button>`
+      : '';
+    const t = document.getElementById('archToggle');
+    if (t) t.onclick = () => { STATE.showArchived = !STATE.showArchived; renderProjects(); };
+  }
+
   if (!list.length) {
-    grid.innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">No projects</div><div class="empty-sub">Add a new project to get started.</div></div>`;
+    /* An empty grid has three quite different causes and the fix differs for
+       each. Saying "No projects" for all three sends people to the wrong place. */
+    const why = STATE.attnFilter
+      ? `Nothing outstanding in ${escapeHtml((ATTN_DEFS.find(d => d.key === STATE.attnFilter) || {}).label || 'that')}.`
+      : (base.length ? `No ${escapeHtml(filter)} projects right now.` : 'Add a new project to get started.');
+    const clear = (STATE.attnFilter || filter !== 'all')
+      ? `<button class="btn btn-ghost btn-sm" onclick="clearProjectFilters()">Show all projects</button>` : '';
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">📋</div>
+      <div class="empty-title">${base.length ? 'Nothing here' : 'No projects'}</div>
+      <div class="empty-sub">${why}</div><div style="margin-top:10px;">${clear}</div></div>`;
     return;
   }
   grid.innerHTML = list.map(p => {
     const isActive = p.id === STATE.activeProjectId;
-    // Phase 4: prefer authoritative rollup from plz_dashboard(); fall back to local counts.
-    const d = (DATA.dashboard || []).find(x => x.project_id === p.id) || null;
-    const rfiCount = d ? (d.open_rfis || 0) : DATA.rfis.filter(r => r.project_id === p.id && r.status === 'open').length;
-    const subCount = d ? (d.pending_submittals || 0) : DATA.submittals.filter(s => s.project_id === p.id && s.status === 'pending').length;
-    const openItems = d ? ((d.open_rfis||0) + (d.pending_submittals||0) + (d.open_deficiencies||0)) : (rfiCount + subCount);
-    const overdue = d ? (d.overdue_rfis || 0) : 0;
-    const crit    = d ? (d.critical_defs || 0) : 0;
-    const reportsMtd = d ? (d.reports_this_month || 0) : 0;
-    const rollupBadges = d ? `<div class="project-rollup">` +
-        (overdue > 0 ? `<span class="badge-overdue">Overdue ${overdue}</span> ` : '') +
-        (crit > 0 ? `<span class="badge-crit">Critical ${crit}</span> ` : '') +
-        `<span class="text-sm text-muted">Reports MTD ${reportsMtd}</span></div>` : '';
+    const r = projectRollup(p);
+    const openItems = r.rfis + r.subs + r.defs;
+    const needs = r.overdue > 0 || r.critical > 0;
+    const quiet = p.status === 'active' && r.live && r.reports === 0;
+    const rollupBadges = r.live ? `<div class="project-rollup">` +
+        (r.overdue > 0 ? `<span class="badge-overdue">Overdue ${r.overdue}</span> ` : '') +
+        (r.critical > 0 ? `<span class="badge-crit">Critical ${r.critical}</span> ` : '') +
+        `<span class="text-sm text-muted">${quiet
+           ? 'No report this month'
+           : `Reports MTD ${r.reports}`}</span></div>` : '';
     const pct = projectProgress(p);
     return `
-      <div class="project-card ${isActive ? 'active' : ''}" onclick="selectProject('${p.id}')">
+      <div class="project-card ${isActive ? 'active' : ''}${needs ? ' needs' : ''}"
+           onclick="selectProject('${p.id}')" tabindex="0" role="button"
+           aria-pressed="${isActive}"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}');}">
         <div class="project-card-head">
           <div>
             <div class="project-number">#${escapeHtml(p.code)}</div>
@@ -2839,15 +3188,52 @@ function renderProjects() {
 function selectProject(id) {
   if (isContractor() && id !== AUTH.projectId) return;
   STATE.activeProjectId = id;
+  pswPushRecent(id);   // picking from the grid counts as opening it
   render();
 }
 window.selectProject = selectProject;
+
+function setProjectChip(filter) {
+  STATE.projectFilter = filter;
+  document.querySelectorAll('#projectFilters .chip')
+    .forEach(c => c.classList.toggle('active', c.dataset.filter === filter));
+}
+function clearProjectFilters() {
+  STATE.attnFilter = null;
+  STATE.attnPrevFilter = null;
+  setProjectChip('all');
+  renderProjects();
+}
+window.clearProjectFilters = clearProjectFilters;
 
 document.getElementById('projectFilters').addEventListener('click', e => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
   STATE.projectFilter = chip.dataset.filter;
   document.querySelectorAll('#projectFilters .chip').forEach(c => c.classList.toggle('active', c === chip));
+  renderProjects();
+});
+
+/* The attention tiles are filters. Clicking the active one clears it, so the
+   strip cannot trap you in a narrowed grid with no visible way back. */
+document.getElementById('attnStrip').addEventListener('click', e => {
+  const tile = e.target.closest('.attn-tile');
+  if (!tile || tile.dataset.empty === '1') return;
+  const engaging = STATE.attnFilter !== tile.dataset.attn;
+  STATE.attnFilter = engaging ? tile.dataset.attn : null;
+  /* A tile counts across the portfolio, so honouring a status chip at the same
+     time would show fewer projects than the number promises. The tile wins —
+     and puts the chip back when it is switched off, so a tile pressed twice
+     returns you to the view you started from rather than a third one. */
+  if (engaging) {
+    if (STATE.projectFilter !== 'all') {
+      STATE.attnPrevFilter = STATE.projectFilter;
+      setProjectChip('all');
+    }
+  } else if (STATE.attnPrevFilter) {
+    setProjectChip(STATE.attnPrevFilter);
+    STATE.attnPrevFilter = null;
+  }
   renderProjects();
 });
 
