@@ -5313,7 +5313,12 @@ function renderSubmittals() {
       <td class="text-sm">${fmtDate(s.submitted_at)}</td>
       <td class="text-sm">${fmtDate(s.reviewed_at)}</td>
       <td>${statusBadge(s.status)}</td>
-      <td>${(s.status === 'approved' || s.status === 'rejected' || s.status === 'approved_as_noted') ? '<span class="badge badge-green">Completed</span>' : `<span class="badge ${s.ball_in_court === 'engineer' ? 'badge-yellow' : s.ball_in_court === 'owner' ? 'badge-purple' : 'badge-blue'}">${escapeHtml(lbl(s.ball_in_court))}</span>`}</td>
+      <td>${SUB_CLOSED.includes(s.status) ? '<span class="badge badge-green">Completed</span>'
+        : SUB_RETURNED.includes(s.status)
+          ? (DATA.submittals.some(x => x.project_id === s.project_id && x.submittal_number === s.submittal_number && (Number(x.revision) || 0) > (Number(s.revision) || 0))
+              ? '<span class="badge badge-gray">Superseded</span>'
+              : '<span class="badge badge-red">Contractor · Resubmit</span>')
+          : `<span class="badge ${s.ball_in_court === 'engineer' ? 'badge-yellow' : s.ball_in_court === 'owner' ? 'badge-purple' : 'badge-blue'}">${escapeHtml(lbl(s.ball_in_court))}</span>`}${s.due_date && !SUB_CLOSED.includes(s.status) ? `<div class="text-sm ${s.due_date < todayStr() ? '' : 'text-muted'}" style="${s.due_date < todayStr() ? 'color:var(--red);' : ''}">Due ${fmtDate(s.due_date)}</div>` : ''}</td>
       <td><div class="row-actions"><button class="btn btn-ghost btn-sm" onclick="openSubmittalModal('${s.id}')">View</button></div></td>
     </tr>
   `;
@@ -5338,38 +5343,105 @@ function nextSubNumber() {
   return 'SUB-' + String(next).padStart(3, '0');
 }
 
-function openSubmittalModal(id) {
+// Submittal workflow (Procore-style, 2026-10-03): a returned submittal
+// (Rejected / Revise & Resubmit) puts the ball in the contractor's court and is
+// NOT closed — the contractor answers it with a new revision. Only Approved and
+// Approved as Noted close it.
+const SUB_RETURNED = ['rejected', 'revise_resubmit'];
+const SUB_CLOSED = ['approved', 'approved_as_noted'];
+
+// Responsible-contractor choices: contractors on the active project's team.
+// Falls back to the whole team if no contractor is assigned to the project.
+function subContractorChoices(currentId) {
+  const pid = STATE.activeProjectId;
+  const memberIds = new Set((DATA.projectMembers || []).filter(m => m.project_id === pid).map(m => m.user_id));
+  const team = (DATA.profiles || []).filter(p => memberIds.has(p.id) && p.active !== false);
+  let list = team.filter(p => p.app_role === 'contractor');
+  if (!list.length) list = team;
+  if (isContractor() && AUTH.userId && !list.some(p => p.id === AUTH.userId)) {
+    list = [{ id: AUTH.userId, full_name: AUTH.name, company: '' }, ...list];
+  }
+  if (currentId && !list.some(p => p.id === currentId)) {
+    const p = (DATA.profiles || []).find(x => x.id === currentId);
+    list = [p || { id: currentId, full_name: 'Assigned user', company: '' }, ...list];
+  }
+  return list;
+}
+
+// Owner picks a decision → move the ball and stamp the review date, the way
+// Procore does. Both stay editable before saving.
+function onSubmittalStatusChange() {
+  const st = document.getElementById('sb-status').value;
+  const bic = document.getElementById('sb-bic');
+  if (SUB_RETURNED.includes(st) || SUB_CLOSED.includes(st)) bic.value = 'contractor';
+  else if (st === 'pending') bic.value = 'engineer';
+  const drev = document.getElementById('sb-drev');
+  if (st !== 'pending' && drev && !drev.value) drev.value = todayStr();
+}
+window.onSubmittalStatusChange = onSubmittalStatusChange;
+
+function openSubmittalModal(id, opts) {
   if (!STATE.activeProjectId) { toast('Select a project first'); return; }
   const editing = id ? DATA.submittals.find(s => s.id === id) : null;
+  // "Create Revision": a new row with the same number at revision + 1, back in
+  // the engineer's court. Carries description/spec/contractor; clears review.
+  const reviseFrom = (!editing && opts && opts.reviseFrom) ? DATA.submittals.find(s => s.id === opts.reviseFrom) : null;
+  const seed = editing || (reviseFrom ? {
+    submittal_number: reviseFrom.submittal_number, spec_section: reviseFrom.spec_section,
+    description: reviseFrom.description, submitted_by: reviseFrom.submitted_by,
+    reviewer: reviseFrom.reviewer, revision: (Number(reviseFrom.revision) || 0) + 1,
+    ball_in_court: 'engineer', assigned_to: reviseFrom.assigned_to,
+  } : null);
   const canEditFully = isOwner();
+  const defaultAssignee = seed?.assigned_to || (isContractor() ? AUTH.userId : (() => {
+    const c = subContractorChoices(null).filter(p => p.app_role === 'contractor');
+    return c.length === 1 ? c[0].id : '';
+  })());
+  const contractorOpts = subContractorChoices(seed?.assigned_to).map(p =>
+    `<option value="${escapeHtml(p.id)}" ${p.id === defaultAssignee ? 'selected' : ''}>${escapeHtml(p.full_name || p.email || 'User')}${p.company ? ' — ' + escapeHtml(p.company) : ''}</option>`).join('');
+  const returned = editing && SUB_RETURNED.includes(editing.status);
+  const hasNewerRev = editing && DATA.submittals.some(s => s.project_id === editing.project_id
+    && s.submittal_number === editing.submittal_number && (Number(s.revision) || 0) > (Number(editing.revision) || 0));
   showModal({
-    title: editing ? `${editing.submittal_number} — ${editing.description || ''}` : 'New Submittal',
+    title: editing ? `${editing.submittal_number} Rev ${editing.revision || 0} — ${editing.description || ''}`
+      : (reviseFrom ? `Resubmit ${reviseFrom.submittal_number} — Revision ${seed.revision}` : 'New Submittal'),
     body: `
+      ${returned ? `<div class="form-row" style="border-left:4px solid var(--red);padding:8px 12px;background:rgba(239,68,68,.08);border-radius:4px;">
+        <strong>${escapeHtml(lbl(editing.status))}</strong> — ${hasNewerRev ? 'a newer revision has been submitted.' : 'returned to the contractor. Respond with a new revision.'}
+      </div>` : ''}
       <div class="form-row two-col">
-        <div><label class="form-label">Submittal #</label><input id="sb-number" value="${escapeHtml(editing?.submittal_number || nextSubNumber())}" /></div>
-        <div><label class="form-label">Spec Section</label><input id="sb-spec" value="${escapeHtml(editing?.spec_section || '')}" /></div>
+        <div><label class="form-label">Submittal #</label><input id="sb-number" value="${escapeHtml(seed?.submittal_number || nextSubNumber())}" ${reviseFrom ? 'readonly' : ''} /></div>
+        <div><label class="form-label">Spec Section</label><input id="sb-spec" value="${escapeHtml(seed?.spec_section || '')}" /></div>
       </div>
-      <div class="form-row"><label class="form-label">Description</label><input id="sb-desc" value="${escapeHtml(editing?.description || '')}" /></div>
+      <div class="form-row"><label class="form-label">Description</label><input id="sb-desc" value="${escapeHtml(seed?.description || '')}" /></div>
       <div class="form-row two-col">
-        <div><label class="form-label">Submitted By</label><input id="sb-by" value="${escapeHtml(editing?.submitted_by || (isContractor() ? AUTH.name : ''))}" /></div>
-        <div><label class="form-label">Reviewer</label><input id="sb-reviewer" value="${escapeHtml(editing?.reviewer || 'William Plaza')}" /></div>
+        <div><label class="form-label">Submitted By</label><input id="sb-by" value="${escapeHtml(seed?.submitted_by || (isContractor() ? AUTH.name : ''))}" /></div>
+        <div><label class="form-label">Reviewer</label><input id="sb-reviewer" value="${escapeHtml(seed?.reviewer || 'William Plaza')}" /></div>
+      </div>
+      <div class="form-row two-col">
+        <div><label class="form-label">Responsible Contractor</label>
+          <select id="sb-assignee" ${!canEditFully && !isContractor() ? 'disabled' : ''}>
+            <option value="">— None —</option>${contractorOpts}
+          </select>
+        </div>
+        <div><label class="form-label">Response Due</label><input id="sb-due" type="date" value="${escapeHtml(editing?.due_date || '')}" ${!canEditFully?'readonly':''} /></div>
       </div>
       <div class="form-row two-col">
         <div><label class="form-label">Date Submitted</label><input id="sb-dsub" type="date" value="${editing?.submitted_at ? editing.submitted_at.slice(0,10) : todayStr()}" /></div>
         <div><label class="form-label">Date Reviewed</label><input id="sb-drev" type="date" value="${editing?.reviewed_at ? editing.reviewed_at.slice(0,10) : ''}" ${!canEditFully?'readonly':''} /></div>
       </div>
       <div class="form-row two-col">
-        <div><label class="form-label">Revision</label><input id="sb-rev" type="number" min="0" value="${editing?.revision || 0}" /></div>
+        <div><label class="form-label">Revision</label><input id="sb-rev" type="number" min="0" value="${seed?.revision || 0}" ${reviseFrom ? 'readonly' : ''} /></div>
         <div><label class="form-label">Ball-in-Court</label>
           <select id="sb-bic">
-            <option value="contractor" ${editing?.ball_in_court === 'contractor' ? 'selected' : ''}>Contractor</option>
-            <option value="engineer" ${editing?.ball_in_court === 'engineer' ? 'selected' : ''}>Engineer</option>
-            <option value="owner" ${editing?.ball_in_court === 'owner' ? 'selected' : ''}>Owner</option>
+            <option value="contractor" ${seed?.ball_in_court === 'contractor' ? 'selected' : ''}>Contractor</option>
+            <option value="engineer" ${(seed ? seed.ball_in_court === 'engineer' : true) ? 'selected' : ''}>Engineer</option>
+            <option value="owner" ${seed?.ball_in_court === 'owner' ? 'selected' : ''}>Owner</option>
           </select>
         </div>
       </div>
       <div class="form-row"><label class="form-label">Status</label>
-        <select id="sb-status" ${!canEditFully ? 'disabled' : ''}>
+        <select id="sb-status" onchange="onSubmittalStatusChange()" ${!canEditFully || reviseFrom ? 'disabled' : ''}>
           <option value="pending" ${editing?.status === 'pending' ? 'selected' : ''}>Pending</option>
           <option value="approved" ${editing?.status === 'approved' ? 'selected' : ''}>Approved</option>
           <option value="approved_as_noted" ${editing?.status === 'approved_as_noted' ? 'selected' : ''}>Approved as Noted</option>
@@ -5406,7 +5478,7 @@ function openSubmittalModal(id) {
       })() : '<div class="form-row"><div class="text-muted" style="font-size:13px;">&#128221; Save the submittal first, then attach files.</div></div>'}
     `,
     footer: editing
-      ? `${canEditFully ? `<button class="btn btn-danger" onclick="deleteSubmittal('${editing.id}')">Delete</button>` : ''}<div style="flex:1"></div><button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="saveSubmittal('${editing.id}')">Save</button>`
+      ? `${canEditFully ? `<button class="btn btn-danger" onclick="deleteSubmittal('${editing.id}')">Delete</button>` : ''}<div style="flex:1"></div>${returned && !hasNewerRev ? `<button class="btn btn-secondary" onclick="closeModal(); openSubmittalModal(null, { reviseFrom: '${editing.id}' })">↻ Create Revision ${(Number(editing.revision) || 0) + 1}</button>` : ''}<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" onclick="saveSubmittal('${editing.id}')">Save</button>`
       : `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveSubmittal()">Create Submittal</button>`
   });
 }
@@ -5427,18 +5499,30 @@ async function saveSubmittal(id) {
     ball_in_court: document.getElementById('sb-bic').value,
     status: statusEl.disabled ? undefined : statusEl.value,
     notes: document.getElementById('sb-notes').value.trim() || null,
+    due_date: document.getElementById('sb-due').value || null,
   };
+  const assigneeEl = document.getElementById('sb-assignee');
+  if (assigneeEl && !assigneeEl.disabled) data.assigned_to = assigneeEl.value || null;
   if (!data.description) { toast('Description required'); return; }
+  // Notifications: the DB trigger (notify-activity) emails the whole project
+  // team on create and on every status change, with the workflow-specific
+  // message. The client only pings the assignee (notify-route) for a
+  // ball-in-court move that happens WITHOUT a status change, so nobody gets
+  // the same event twice.
   let res, newId = id;
   if (id) {
     if (data.status === undefined) delete data.status;
     const prev = DATA.submittals.find(s => s.id === id) || {};
+    const statusChanged = data.status !== undefined && data.status !== prev.status;
     res = await sb.from('submittals').update(data).eq('id', id);
-    if (!res.error && prev.ball_in_court !== data.ball_in_court) notifyRoute('submittals', id, 'ball_in_court_change');
+    if (!res.error && !statusChanged && prev.ball_in_court !== data.ball_in_court) notifyRoute('submittals', id, 'ball_in_court_change');
   } else {
     if (data.status === undefined) data.status = 'pending';
     res = await sb.from('submittals').insert(data).select('id').single();
-    if (!res.error && res.data) { newId = res.data.id; notifyRoute('submittals', newId, 'created'); }
+    if (!res.error && res.data) {
+      newId = res.data.id;
+      logActivity('submittal_created', { ref_table: 'submittals', ref_id: newId, project_id: STATE.activeProjectId || null });
+    }
   }
   if (res.error) { handleSbError(res.error, 'Save submittal'); return; }
   await reloadData('submittals','dashboard');
