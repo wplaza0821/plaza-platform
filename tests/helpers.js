@@ -63,6 +63,13 @@ const DASHBOARD_FIXTURE = [
 const SESSIONS = {
   owner:      { role: 'owner',  name: 'Test Owner',  jwt: FAKE_JWT },
   staff:      { role: 'staff',  name: 'Test Staff',  jwt: FAKE_JWT },
+  /* A Supabase-auth owner rather than a legacy access-code one. canUseBell()
+     needs both native and userId, so the notification bell only exists on a
+     session like this. Kept separate from `owner` on purpose: the access
+     matrix asserts the legacy session hides Profile, and flipping `native`
+     there would quietly rewrite what those tests check. */
+  owner_native: { role: 'owner', name: 'Test Owner', jwt: FAKE_JWT,
+                  native: true, userId: 'u-owner' },
   member:     { role: 'member', name: 'Test Member', jwt: FAKE_JWT },
   member_nofin: {
     role: 'member', name: 'Field Member', jwt: FAKE_JWT,
@@ -80,6 +87,19 @@ const SESSIONS = {
   },
 };
 
+/* PostgREST returns ONLY the columns named in select=. A stub that hands back
+   every column regardless will pass a test whose whole point is that a column
+   is missing — which is precisely how the notifications query shipped without
+   project_id, silently disabling the project switch on every notification.
+   Project the response so a dropped column fails here instead of in the app. */
+function project(url, rows) {
+  const sel = url.searchParams.get('select');
+  if (!sel || sel === '*' || !Array.isArray(rows)) return rows;
+  const cols = sel.split(',').map((c) => c.trim().split(':').pop()).filter((c) => c && c !== '*');
+  return rows.map((r) => Object.fromEntries(
+    cols.filter((c) => c in r).map((c) => [c, r[c]])));
+}
+
 async function stubSupabase(page, opts = {}) {
   await page.route('**/*.supabase.co/**', (route) => {
     const url = new URL(route.request().url());
@@ -95,6 +115,14 @@ async function stubSupabase(page, opts = {}) {
       // RPCs are POSTs. plz_dashboard drives the attention strip and the card
       // rollups, so answering it '[]' like any other write would silently test
       // only the fallback path.
+      // Global search. Stubbed so the search-result click path can be driven
+      // for real rather than through a stand-in: that path switches the active
+      // project WITHOUT calling render(), so it is the one place a stale
+      // header can survive unnoticed.
+      if (url.pathname.startsWith('/rest/v1/rpc/plz_global_search')) {
+        return route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify(opts.searchResults !== undefined ? opts.searchResults : []) });
+      }
       if (url.pathname.startsWith('/rest/v1/rpc/plz_dashboard')) {
         return route.fulfill({ status: 200, contentType: 'application/json',
           body: JSON.stringify(opts.dashboard !== undefined ? opts.dashboard : DASHBOARD_FIXTURE) });
@@ -103,7 +131,10 @@ async function stubSupabase(page, opts = {}) {
         return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
       }
       const table = url.pathname.replace('/rest/v1/', '').split('/')[0];
-      const body = table === 'projects' ? JSON.stringify(PROJECT_FIXTURE) : '[]';
+      let rows = [];
+      if (table === 'projects') rows = PROJECT_FIXTURE;
+      else if (table === 'notifications' && opts.notifications) rows = opts.notifications;
+      const body = JSON.stringify(project(url, rows));
       return route.fulfill({ status: 200, contentType: 'application/json', body });
     }
     // auth/storage/realtime — respond blandly so nothing hangs or throws.
@@ -112,14 +143,15 @@ async function stubSupabase(page, opts = {}) {
 }
 
 // Boot the app as a given role. Returns collected uncaught page errors.
-async function bootAs(page, roleKey, { viewport, dashboard } = {}) {
+async function bootAs(page, roleKey,
+  { viewport, dashboard, searchResults, notifications } = {}) {
   const session = SESSIONS[roleKey];
   if (!session) throw new Error('unknown role: ' + roleKey);
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   if (viewport) await page.setViewportSize(viewport);
   await stubCdn(page);
-  await stubSupabase(page, { dashboard });
+  await stubSupabase(page, { dashboard, searchResults, notifications });
   await page.addInitScript((s) => {
     sessionStorage.setItem('plaza_session_auth_v3', JSON.stringify(s));
   }, session);

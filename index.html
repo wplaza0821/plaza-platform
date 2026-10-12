@@ -191,16 +191,6 @@
   .bell-item-arrow { flex: 0 0 auto; font-size: 11px; color: var(--gray-300); align-self: center; margin-left: 2px; }
   .bell-item:hover .bell-item-arrow { color: var(--gray-500); }
   .bell-empty { padding: 26px 14px; text-align: center; color: var(--gray-400); font-size: 12px; }
-  .project-select {
-    background: #FFFFFF; color: var(--black);
-    border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
-    padding: 8px 30px 8px 12px; font-family: inherit; font-size: 12px;
-    font-weight: 500; letter-spacing: 0.3px; cursor: pointer;
-    appearance: none; -webkit-appearance: none;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%23020000' d='M0 0l5 6 5-6z' opacity='0.6'/></svg>");
-    background-repeat: no-repeat; background-position: right 10px center;
-    max-width: 280px; text-overflow: ellipsis;
-  }
   /* Left vertical navigation rail (Fieldwire-style). */
   .tabs {
     grid-area: sidebar;
@@ -736,7 +726,8 @@
     .brand-sub { display: none; }
     .brand-tag { display: none; }
     .brand-divider { display: none; }
-    .project-select { max-width: 160px; font-size: 11px; }
+    .psw-btn { max-width: 170px; font-size: 11px; }
+    .psw-kbd { display: none; }
     .role-pill { font-size: 9px; padding: 5px 9px; letter-spacing: 1px; }
     .btn-logout { padding: 5px 9px; font-size: 10px; }
     .page-title { font-size: 19px; }
@@ -8680,7 +8671,12 @@ async function loadNotifications() {
   // RLS already scopes SELECT to user_id = auth.uid() (or owner). Limit 30.
   const { data, error } = await sb
     .from('notifications')
-    .select('id, kind, title, body, link, ref_table, ref_id, read_at, created_at')
+    /* project_id is written by notify-activity on every row and was never
+       selected, so openNotification's "switch to the notification's project
+       first" branch could not fire: nf.project_id was always undefined. A
+       notification about another project opened its tab and modal while the
+       app stayed pointed at the project you were already in. */
+    .select('id, kind, title, body, link, ref_table, ref_id, project_id, read_at, created_at')
     .order('created_at', { ascending: false })
     .limit(30);
   if (error) {
@@ -8817,9 +8813,8 @@ async function openNotification(id) {
   // If the notification carries a project_id and it differs from the active one, switch first.
   if (nf.project_id && nf.project_id !== STATE.activeProjectId) {
     STATE.activeProjectId = nf.project_id;
-    const sel = document.getElementById('projectSelect');
-    if (sel) sel.value = nf.project_id;
-    render();
+    pswPushRecent(nf.project_id);
+    render();                      // repaints the switcher label with the rest
   }
 
   switchTab(route.tab);
@@ -10232,8 +10227,10 @@ async function openSearchResult(r) {
   if (r.project_id && r.project_id !== STATE.activeProjectId &&
       (DATA.projects || []).some(p => p.id === r.project_id)) {
     STATE.activeProjectId = r.project_id;
-    const sel = document.getElementById('projectSelect');
-    if (sel) sel.value = r.project_id;
+    pswPushRecent(r.project_id);
+    /* No render() on this path — without this the switcher would keep naming
+       the project you came from while every other tab had already moved. */
+    renderProjectSelect();
   }
   if (!r.file_path) { toast('No file on record for this result'); return; }
   const bucket = r.kind === 'document' ? 'plans-specs' : 'field-reports';

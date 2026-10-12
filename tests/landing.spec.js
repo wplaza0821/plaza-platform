@@ -181,3 +181,38 @@ test.describe('project switcher', () => {
     expect(errors).toEqual([]);
   });
 });
+
+/* The switcher label is the only thing telling you which project you are in.
+   Two paths move the active project without going through the grid, and both
+   reached into the <select> this work removed. One of them does not call
+   render(), so the header would have kept naming the project you came from
+   while every other tab had already moved. */
+test.describe('the header follows the active project everywhere', () => {
+  test('a notification for another project repoints the switcher', async ({ page }) => {
+    // Seeded through the data layer rather than poked onto the page: DATA is
+    // module-scoped, and routing a real row is the path that actually ships.
+    const errors = await bootAs(page, 'owner_native', {
+      notifications: [{ id: 'n1', link: '#rfis', ref_table: null, ref_id: null,
+                        project_id: 'p2', title: 'RFI answered', body: '',
+                        read_at: null, created_at: '2026-09-29T00:00:00Z' }],
+    });
+    await expect(page.locator('#pswName')).toHaveText('TP-01 — Test Project');
+    await page.evaluate(() => window.openNotification('n1'));
+    await expect(page.locator('#pswName')).toHaveText('TP-02 — Bayfront Tower');
+    expect(errors).toEqual([]);
+  });
+
+  test('opening a search result in another project repoints the switcher', async ({ page }) => {
+    const errors = await bootAs(page, 'owner', {
+      searchResults: [{ id: 'd1', kind: 'document', title: 'Bayfront elevation',
+                        project_id: 'p2', file_path: null }],
+    });
+    await expect(page.locator('#pswName')).toHaveText('TP-01 — Test Project');
+    await page.locator('#gsearchInput').fill('bayfront');
+    await page.locator('#gsearchPanel button').first().click();
+    // file_path is null so the viewer bails early — the project switch must
+    // still have been painted before that return.
+    await expect(page.locator('#pswName')).toHaveText('TP-02 — Bayfront Tower');
+    expect(errors).toEqual([]);
+  });
+});
