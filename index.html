@@ -343,6 +343,11 @@
   .attn-k { font-size: 10px; text-transform: uppercase; letter-spacing: .7px;
     font-weight: 600; color: var(--gray-400); margin-top: 3px; }
   .attn-sub { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+  .attn-note {
+    grid-column: 1 / -1; font-size: 11.5px; color: var(--gray-500);
+    background: var(--gray-50); border: 1px solid var(--gray-200);
+    border-radius: var(--radius); padding: 9px 12px; line-height: 1.45;
+  }
 
   .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   /* A project that needs something gets a left edge, so the grid can be skimmed
@@ -3064,9 +3069,33 @@ function visibleProjects() {
     : DATA.projects;
 }
 
+/* plz_dashboard() returns one row per non-archived project. No rows while
+   projects exist means the RPC errored, was denied by RLS, or has not been
+   installed — and loadAll() swallows all three into an empty array.
+
+   This matters more than it looks: without the check every tile renders 0, and
+   "0 overdue RFIs" reads as "nothing is overdue" when the truth is "I never
+   got the data". A number nobody can distinguish from a failure is worse than
+   no number. */
+function rollupMissing() {
+  const live = visibleProjects().filter(p => p.status !== 'archived');
+  return live.length > 0 && (DATA.dashboard || []).length === 0;
+}
+
 function renderAttentionStrip() {
   const el = document.getElementById('attnStrip');
   if (!el) return;
+  if (rollupMissing()) {
+    el.innerHTML = ATTN_DEFS.map(def => `<div class="attn-tile" data-empty="1">
+        <div class="attn-n" style="color:var(--gray-300)">—</div>
+        <div class="attn-k">${escapeHtml(def.label)}</div>
+        <div class="attn-sub">unavailable</div>
+      </div>`).join('') +
+      `<div class="attn-note" role="status">Portfolio rollup unavailable — these are
+        not zeros. The per-project counts below fall back to locally loaded records,
+        which do not include overdue or critical flags.</div>`;
+    return;
+  }
   /* Counted across the whole portfolio, never the current filter: the point of
      the strip is to show what you would otherwise not be looking at. */
   const base = visibleProjects().filter(p => p.status !== 'archived');
@@ -3093,7 +3122,7 @@ function renderAttentionStrip() {
 
 /* Does this project contribute to the selected attention tile? */
 function matchesAttn(p) {
-  if (!STATE.attnFilter) return true;
+  if (!STATE.attnFilter || rollupMissing()) return true;
   const def = ATTN_DEFS.find(d => d.key === STATE.attnFilter);
   if (!def) return true;
   const r = projectRollup(p);

@@ -58,11 +58,30 @@ test.describe('attention strip', () => {
   });
 
   test('a zero tile is inert rather than filtering to nothing', async ({ page }) => {
-    await bootAs(page, 'owner', { dashboard: [] });
+    // genuinely nothing outstanding: the rollup answered, every count is zero
+    await bootAs(page, 'owner', { dashboard: [
+      { project_id: 'p1', open_rfis: 0, pending_submittals: 0, open_deficiencies: 0,
+        overdue_rfis: 0, critical_defs: 0, reports_this_month: 3 },
+    ] });
     await expect(tile(page, 'overdue').locator('.attn-n')).toHaveText('0');
     await expect(tile(page, 'overdue')).toHaveAttribute('data-empty', '1');
     await tile(page, 'overdue').click({ force: true });
     await expect(tile(page, 'overdue')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('a rollup that never arrived shows dashes, not zeros', async ({ page }) => {
+    /* loadAll() turns an errored, denied or missing plz_dashboard() into an
+       empty array. Rendering 0 there tells the reader nothing is overdue when
+       the truth is that nothing is known — the same failure that had the CRM
+       reporting billed work as never billed. */
+    const errors = await bootAs(page, 'owner', { dashboard: [] });
+    await expect(page.locator('.attn-strip')).toContainText('these are not zeros');
+    await expect(page.locator('.attn-strip .attn-n').first()).toHaveText('—');
+    await expect(page.locator('.attn-strip')).not.toContainText('0');
+    // and the grid must still list every project rather than filtering on
+    // counts that do not exist
+    await expect(cards(page)).toHaveCount(2);
+    expect(errors).toEqual([]);
   });
 });
 
