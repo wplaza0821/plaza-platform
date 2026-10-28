@@ -307,6 +307,10 @@ Deno.serve(async (req) => {
   const created = event === "insert" || event === "created";
   const dryRun = req.headers.get("x-notify-dry-run") === "1";
 
+  // Photo uploads never notify (William, 2026-10-28): a bulk backfill of Tomas'
+  // SI photos fired one email + SMS per photo to every project member.
+  if (refTable === "photos") return json({ ok: true, skipped: "photos_silent" });
+
   const proj = projectionFor(refTable);
   if (!proj) return json({ ok: true, skipped: "unmapped_table" });
   if (!UUID_RE.test(refId)) return json({ error: "valid_ref_id_required" }, 400);
