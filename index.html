@@ -5399,6 +5399,7 @@ function payAppAuditTrailHtml(pa) {
         ${a.file_sha256 ? `<span class="text-sm text-muted" title="SHA-256 ${escapeHtml(a.file_sha256)}">· ${escapeHtml(a.file_sha256.slice(0, 12))}…</span>` : ''}
         ${bl ? `<span class="badge badge-red">${bl} blocking</span>` : ''}
         ${ex ? `<span class="badge badge-yellow">${ex} exception(s)</span>` : ''}
+        ${isOwner() ? `<button class="btn btn-ghost btn-sm" style="margin-left:auto;" title="Delete this entry (owner only)" onclick="paDeleteAuditEntries('${pa.id}','${a.id}')">🗑</button>` : ''}
       </div>
       ${a.note ? `<div class="text-sm" style="margin-top:4px;">📝 ${escapeHtml(a.note)}</div>` : ''}
       ${f.length ? `<details style="margin-top:4px;"><summary class="text-sm text-muted" style="cursor:pointer;">${f.length} finding(s)${acks.length ? ` · ${acks.length} accepted with the reason above` : ''}</summary>
@@ -5408,10 +5409,31 @@ function payAppAuditTrailHtml(pa) {
   return `
     <div class="sov-section-head" style="margin-top:22px;">
       <div class="sov-section-title">🔒 Import Audit Trail</div>
-      <div class="sov-meta">Permanent record; entries cannot be edited or deleted</div>
+      <div class="sov-meta">Entries cannot be edited${isOwner() ? '; only you can delete them' : ' or deleted'}</div>
     </div>
-    <div class="waiver-zone" style="max-height:260px;overflow:auto;">${body}</div>`;
+    <div class="waiver-zone" style="max-height:260px;overflow:auto;">${body}</div>
+    ${isOwner() && rows.length ? `<div style="text-align:right;margin-top:6px;"><button class="btn btn-danger btn-sm" onclick="paDeleteAuditEntries('${pa.id}')">Delete entire trail (${rows.length})</button></div>` : ''}`;
 }
+
+// Owner-only (DB-enforced): remove one entry, or every entry for a pay app.
+// Entries are never edited; deletion is the only change permitted.
+async function paDeleteAuditEntries(payAppId, entryId) {
+  if (!isOwner()) { toast('Owner only', 'error'); return; }
+  const pa = DATA.payApps.find(x => x.id === payAppId);
+  const n = entryId ? 1 : (DATA.payAppAudits || []).filter(a => a.pay_app_id === payAppId).length;
+  const what = entryId ? 'this audit entry' : `all ${n} audit entries for Pay App #${pa?.pay_app_number ?? ''}`;
+  const typed = prompt(`Permanently delete ${what}? This cannot be undone.\n\nType DELETE to confirm:`);
+  if (typed === null) return;
+  if (typed.trim() !== 'DELETE') { toast('Not confirmed — nothing deleted', 'error'); return; }
+  let q = sb.from('pay_app_import_audits').delete();
+  q = entryId ? q.eq('id', entryId) : q.eq('pay_app_id', payAppId);
+  const { data, error } = await q.select('id');
+  if (error) { handleSbError(error, 'Delete audit trail'); return; }
+  await loadAllData();
+  toast(`Deleted ${(data || []).length} audit entr${(data || []).length === 1 ? 'y' : 'ies'}`, 'success');
+  if (pa) openPayAppModal(payAppId, false);
+}
+window.paDeleteAuditEntries = paDeleteAuditEntries;
 
 async function viewPayAppDoc(docId) {
   const d = (DATA.payAppDocs || []).find(x => x.id === docId);
@@ -5514,7 +5536,13 @@ async function deletePayApp(payAppId) {
   }
   // The audit trail keeps a snapshot of the pay app and its lines; it is not
   // linked to pay_apps, so it survives the delete below.
-  if (!(await paAuditEvent(pa, 'deleted'))) { toast('The audit record could not be written, so nothing was deleted.', 'error'); return; }
+  // Owner may take the audit trail with it; otherwise a 'deleted' snapshot is kept.
+  const dropTrail = isOwner() && (DATA.payAppAudits || []).some(a => a.pay_app_id === pa.id) &&
+    confirm(`Also delete Pay App #${pa.pay_app_number}'s import audit trail?\n\nOK = delete the trail too\nCancel = keep the trail (recommended)`);
+  if (dropTrail) {
+    const { error: tErr } = await sb.from('pay_app_import_audits').delete().eq('pay_app_id', pa.id);
+    if (tErr) { handleSbError(tErr, 'Delete audit trail'); return; }
+  } else if (!(await paAuditEvent(pa, 'deleted'))) { toast('The audit record could not be written, so nothing was deleted.', 'error'); return; }
   // remove lien waiver files
   const ws = DATA.lienWaivers.filter(w => w.pay_app_id === payAppId);
   for (const w of ws) await sb.storage.from('lien-waivers').remove([w.file_path]).catch(()=>{});
