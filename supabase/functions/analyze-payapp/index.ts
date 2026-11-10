@@ -207,12 +207,88 @@ function parseG703Spreadsheet(bytes: Uint8Array): {
     printed_stored_total: sum("stored"),
     printed_total_completed: sum("total_completed"),
   };
+  // G702 cover figures, when the workbook carries the cover sheet. Read, never
+  // trusted: the review screen compares each one to Plazacore's own calculation.
+  const cover = parseG702Cover(wb);
   const header = {
-    application_no: null, period_to: null, contract_sum_orig: null, change_order_net: null,
-    contract_sum_to_date: null, total_completed_stored: printed_totals.printed_total_completed,
-    retainage_amount: null, earned_less_retainage: null, previous_certificates: null, current_payment_due: null,
+    application_no: cover.application_no ?? null, period_to: cover.period_to ?? null,
+    contract_sum_orig: cover.contract_sum_orig ?? null, change_order_net: cover.change_order_net ?? null,
+    contract_sum_to_date: cover.contract_sum_to_date ?? null,
+    // Line 4 from the cover when present, so the G703↔G702 cross-check is real;
+    // otherwise fall back to the continuation-sheet total as before.
+    total_completed_stored: cover.total_completed_stored ?? printed_totals.printed_total_completed,
+    retainage_amount: cover.retainage_amount ?? null, earned_less_retainage: cover.earned_less_retainage ?? null,
+    previous_certificates: cover.previous_certificates ?? null, current_payment_due: cover.current_payment_due ?? null,
+    balance_to_finish: cover.balance_to_finish ?? null,
+    g702_read: cover.found,
   };
   return { lines, printed_totals, header };
+}
+
+// AIA G702 cover lines 1–9, located by label text on any sheet. The amount is the
+// FIRST numeric cell to the right of the label: the right half of a G702 carries
+// other tables (change-order summary), so "rightmost" would pick up the wrong
+// number. First occurrence of each label wins (line 2 precedes the CO summary).
+// Real contractor covers wrap a label over two or three rows ("7. LESS PREVIOUS
+// CERTIFICATES FOR" / "PAY (Line 6 from prior Certificate) ... $") and misspell
+// it ("ORIGNAL CONTRACT SUM", Terrazas PA#6), so when the label row has no amount
+// we look at the next two rows, but never past the start of another numbered line.
+function parseG702Cover(wb: any): Record<string, any> {
+  const out: Record<string, any> = { found: [] as string[] };
+  const labels: [string, RegExp][] = [
+    ["contract_sum_orig", /orig\w* contract sum/],
+    ["change_order_net", /net change by change orders?/],
+    ["contract_sum_to_date", /contract sum to date/],
+    ["total_completed_stored", /total completed (&|and) stored to date/],
+    ["retainage_amount", /total retainage/],
+    ["earned_less_retainage", /total earned less retainage/],
+    ["previous_certificates", /less previous certificates/],
+    ["current_payment_due", /current payment due/],
+    ["balance_to_finish", /balance to finish,? (including|plus) retainage/],
+  ];
+  const norm = (v: unknown) => String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  const isNum = (v: unknown) =>
+    typeof v === "number" ? Number.isFinite(v)
+      : /^\(?\$?\s*-?[\d,]+(\.\d+)?\)?$/.test(String(v ?? "").trim()) && /\d/.test(String(v));
+  for (const sheetName of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "", raw: true }) as any[][];
+    const amountRightOf = (row: any[], c: number): number | null => {
+      for (let k = c + 1; k < row.length; k++) {
+        if (row[k] === "" || row[k] == null || !isNum(row[k])) continue;
+        const neg = typeof row[k] !== "number" && /^\(.*\)$/.test(String(row[k]).trim());
+        return (neg ? -1 : 1) * parseMoney(row[k]);
+      }
+      return null;
+    };
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      for (let c = 0; c < row.length; c++) {
+        const cell = norm(row[c]);
+        if (!cell) continue;
+        for (const [key, rx] of labels) {
+          if (out[key] !== undefined || !rx.test(cell)) continue;
+          let amt = amountRightOf(row, c);
+          for (let n = 1; amt === null && n <= 2 && r + n < rows.length; n++) {
+            const next = rows[r + n] || [];
+            if (/^\d+\s*\./.test(norm(next[c]))) break; // next numbered G702 line
+            amt = amountRightOf(next, c);
+          }
+          if (amt === null) continue;
+          out[key] = amt;
+          out.found.push(key);
+        }
+        if (out.application_no === undefined && /application no/.test(cell)) {
+          const v = row.slice(c + 1).find((x) => x !== "" && x != null);
+          if (v !== undefined) out.application_no = String(v).trim();
+        }
+        if (out.period_to === undefined && /period to/.test(cell)) {
+          const v = row.slice(c + 1).find((x) => x !== "" && x != null);
+          if (v !== undefined) out.period_to = v instanceof Date ? v.toISOString().slice(0, 10) : String(v).trim();
+        }
+      }
+    }
+  }
+  return out;
 }
 
 const SYSTEM_PROMPT =
@@ -389,8 +465,11 @@ Deno.serve(async (req) => {
       return json({ error: "forbidden_not_your_pay_app" }, 403);
     }
   }
-  // Values can only be applied to drafts; analyzing a locked app is pointless.
-  if (pa.status !== "draft") {
+  // Values can only be applied to drafts. A submitted/approved app can still be
+  // AUDITED by the owner or staff: the file is read and cross-checked, nothing is
+  // applied. Contractors never get audit mode.
+  const auditOnly = pa.status !== "draft";
+  if (auditOnly && !(callerRole === "owner" || callerRole === "staff")) {
     return json({ error: "not_draft", message: "Pay app is no longer in draft — values cannot be imported." }, 422);
   }
 
@@ -402,6 +481,10 @@ Deno.serve(async (req) => {
 
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.length > 30 * 1024 * 1024) return json({ error: "file_too_large" }, 422);
+  // Fingerprint of the exact bytes read. Recorded on the analysis and the audit
+  // trail, so any later dispute can prove which file the figures came from.
+  const fileSha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
   const name = (doc.file_name || doc.file_path).toLowerCase();
   const isSpreadsheet = /\.(xlsx|xls|csv)$/.test(name);
   const isPdf = name.endsWith(".pdf");
@@ -756,20 +839,60 @@ Deno.serve(async (req) => {
     reconciliation_discrepancies: recon.discrepancies,
     prior_pay_app_number: priorPayAppNumber, prior_total_completed: priorTotalCompleted,
     source, model: fromSpreadsheet ? "native-xlsx-parser" : LLM_MODEL, sov_version: ver,
+    file_sha256: fileSha256, file_size: bytes.length, audit_only: auditOnly,
+    pay_app_status: pa.status, analyzed_by: analyzedBy, analyzed_role: callerRole,
   };
 
-  // 8. Persist onto the document row (frontend reads it for review/apply)
-  const { error: upErr } = await admin
-    .from("pay_app_documents")
-    .update({
-      analysis,
-      analyzed_at: new Date().toISOString(),
-      analyzed_by: analyzedBy,
-    })
-    .eq("id", docId);
-  if (upErr) return json({ error: "save_failed", detail: upErr.message }, 500);
+  // 8. Persist onto the document row (frontend reads it for review/apply).
+  //    An audit run on a submitted/approved app does NOT overwrite the stored
+  //    analysis the figures were applied from; the audit row below carries it.
+  if (!auditOnly) {
+    const { error: upErr } = await admin
+      .from("pay_app_documents")
+      .update({
+        analysis,
+        analyzed_at: new Date().toISOString(),
+        analyzed_by: analyzedBy,
+      })
+      .eq("id", docId);
+    if (upErr) return json({ error: "save_failed", detail: upErr.message }, 500);
+  }
+
+  // 9. Immutable audit record of this read (append-only table, service role).
+  //    A failure here fails the request: an analysis without its audit record
+  //    must not be usable.
+  const { error: auditErr } = await admin.from("pay_app_import_audits").insert({
+    project_id: pa.project_id,
+    pay_app_id: pa.id,
+    pay_app_number: pa.pay_app_number,
+    doc_id: doc.id,
+    event: "analyzed",
+    actor_name: analyzedBy,
+    actor_role: callerRole,
+    file_name: doc.file_name,
+    file_path: doc.file_path,
+    file_sha256: fileSha256,
+    summary: {
+      source, audit_only: auditOnly, pay_app_status: pa.status, sov_version: ver,
+      line_count: lines.length, reconciled: recon.ok,
+      verified: recon.ok && (fromSpreadsheet || recon.hadStrongAnchor),
+      confidence, header, printed_totals,
+      prior_pay_app_number: priorPayAppNumber, prior_total_completed: priorTotalCompleted,
+      // Every extracted line, verbatim: the record must stand on its own even if
+      // the document row is later re-analyzed or deleted.
+      lines,
+    },
+    findings: [
+      ...recon.discrepancies.map((d: string) => ({ severity: "exception", code: "reconciliation", message: d })),
+      ...warnings.map((w: string) => ({ severity: "info", code: "analyzer_warning", message: w })),
+    ],
+  });
+  if (auditErr) return json({ error: "audit_write_failed", detail: auditErr.message }, 500);
 
   return json({
+    audit_only: auditOnly,
+    analysis,
+    file_sha256: fileSha256,
     ok: true,
     line_count: lines.length,
     header,

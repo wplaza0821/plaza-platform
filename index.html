@@ -473,6 +473,7 @@
     box-shadow: var(--shadow-lg); animation: slideUp 0.2s ease;
   }
   .modal.wide { max-width: 920px; }
+  .modal.xl { max-width: 1240px; }
   .modal-head {
     padding: 16px 20px; border-bottom: 1px solid var(--gray-200);
     display: flex; justify-content: space-between; align-items: center;
@@ -2487,6 +2488,9 @@ async function loadAllData() {
   const siP   = sb.from('schedule_imports').select('*').order('uploaded_at', { ascending: false });
   // Quantity reconciliation mapping (repair_type -> SOV item_no). Soft if absent.
   const qrmP  = sb.from('qty_recon_map').select('*');
+  const paaP  = sb.from('pay_app_import_audits')
+    .select('id,created_at,project_id,pay_app_id,pay_app_number,doc_id,event,actor_name,actor_email,actor_role,file_name,file_sha256,findings,acknowledgments,note')
+    .order('created_at', { ascending: false });
   // Phase B: profiles. RLS returns own row to anyone; owner/staff get the full
   // list (for the invite admin + assignee pickers). Table may not exist yet.
   const prfP  = sb.from('profiles').select('*').order('created_at', { ascending: false });
@@ -2553,6 +2557,10 @@ async function loadAllData() {
   DATA.scheduleTasks   = st.data || [];
   DATA.scheduleImports = si.data || [];
   const qrm = await qrmP; softErr(qrm, 'Loading qty reconciliation map');
+  // Pay-app import audit trail (append-only). The full summary (every extracted
+  // line) is read on demand, not on every load.
+  const paa = await paaP; softErr(paa, 'Loading pay app audit trail');
+  DATA.payAppAudits = (paa && !paa.error && Array.isArray(paa.data)) ? paa.data : [];
   DATA.qtyReconMap = (qrm && !qrm.error && Array.isArray(qrm.data)) ? qrm.data : [];
   softErr(prf, 'Loading profiles');
   DATA.profiles      = prf.data || [];
@@ -4041,6 +4049,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
               <span class="text-muted text-sm">(uploaded ${d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : ''}${d.uploaded_by ? ' by ' + escapeHtml(d.uploaded_by) : ''})</span>
             </span>
             <button class="btn btn-secondary btn-sm" onclick="viewPayAppDoc('${d.id}')">View</button>
+            ${isOwner() || isStaff() ? `<button class="btn btn-primary btn-sm" id="paAnalyzeBtn" onclick="paAnalyze('${d.id}','${pa.id}')" title="Read this file and compare every line with the certified figures">🔎 Audit vs Plazacore</button>` : ''}
             ${isOwner() ? `<button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${d.id}','${pa.id}')">Remove</button>` : ''}
           </div>
         `).join('') : '<div class="text-muted" style="margin-bottom:10px;">No pay application file on record.</div>'}
@@ -4222,6 +4231,8 @@ async function openPayAppModal(payAppId, forceEdit = false) {
           <button class="btn btn-primary btn-sm" id="uploadPadBtn" style="margin-top:10px;">📎 Upload Document</button>
         ` : ''}
       </div>
+
+      ${payAppAuditTrailHtml(pa)}
 
       ${pa.status !== 'draft' ? `
         <div class="sov-section-head" style="margin-top:22px;">
@@ -4637,6 +4648,9 @@ async function uploadPayAppImport(pa, { fileOnly = false } = {}) {
   if (fileOnly) {
     toast('Pay application file uploaded');
     openPayAppModal(pa.id, false);
+    // A swapped file is audited against the certified figures straight away, so a
+    // replacement can never sit on record unchecked.
+    if (ins?.id && (isOwner() || isStaff())) paAnalyze(ins.id, pa.id);
     return;
   }
   toast('Pay application uploaded — analyzing…');
@@ -4688,17 +4702,27 @@ async function paAnalyze(docId, payAppId) {
         no_lines_extracted: 'No line items could be read from the PDF. Check that it is a G703 continuation sheet.',
         llm_failed: 'AI analysis failed. ' + (j?.detail || ''),
         llm_parse_failed: 'AI returned an unreadable result. Try re-analyzing.',
+        audit_write_failed: 'The audit record could not be written, so the analysis was not saved. ' + (j?.detail || ''),
       };
       throw new Error(map[j?.error] || j?.detail || j?.message || j?.error || ('HTTP ' + res.status));
     }
     await loadAllData();
+    if (j.audit_only) {
+      // Submitted/approved app: compared against the certified figures, nothing applied.
+      PA_AUDIT_ANALYSIS[docId] = j.analysis;
+      toast(`Read ${j.line_count} line item(s) — comparing with the certified figures`, 'success');
+      openPayAppModal(payAppId, false);
+      paReview(docId, payAppId, j.analysis);
+      return;
+    }
     toast(`Extracted ${j.line_count} line item(s) — review, then Apply`, 'success');
     openPayAppModal(payAppId, true);
     paReview(docId, payAppId);
   } catch (e) {
     clearTimeout(timer);
     await loadAllData();
-    openPayAppModal(payAppId, true);
+    const _pa = DATA.payApps.find(x => x.id === payAppId);
+    openPayAppModal(payAppId, _pa?.status === 'draft');
     const msg = (e?.name === 'AbortError')
       ? 'Analyze timed out (>210s). The PDF is very large/dense — try a clearer scan or split it into fewer pages, then re-analyze.'
       : ('Analyze failed: ' + (e.message || e));
@@ -4707,119 +4731,501 @@ async function paAnalyze(docId, payAppId) {
 }
 window.paAnalyze = paAnalyze;
 
-// Review screen: match extracted lines to the pay app's SOV items and let the
-// user apply E (this period) + F (stored) per line. Matching: exact item_no
-// first, then normalized description.
-function paReview(docId, payAppId) {
+// ══ PAY APP IMPORT AUDIT (William, 2026-11-10: "make this audit proof") ═══════
+// Every figure on the contractor's sheet is cross-checked against Plazacore's own
+// record BEFORE anything is applied, and every decision is written to the
+// append-only pay_app_import_audits table (no update/delete for any role):
+//   • scheduled value (C) per line vs the SOV
+//   • previous (D) per line vs what Plazacore certified, so prior billing can't
+//     be shifted between lines and still net to the same total
+//   • over-billing, duplicate targets, unmatched money, lines missing from the sheet
+//   • the G702 cover (lines 1–9) vs Plazacore's own calculation
+//   • billed quantities vs inspector-verified quantities (owner; ±5%)
+// Severity: 'block' = Apply disabled; 'exception' = Apply requires a written
+// reason, recorded with the user's identity; 'info' = recorded only.
+// Review and Apply run the SAME paAudit(), so what was reviewed is what is applied.
+const PA_AUDIT_TOL = 1.00;          // $ — rounding slack per comparison
+const PA_ACK_MIN_CHARS = 15;        // written reason for accepted exceptions
+const PA_AUDIT_ANALYSIS = {};       // docId -> analysis returned by an audit-only run
+
+// Normalize a CO line number to its numeric path: CO-2.1 ≡ CO-002.1 ≡ C.O. 2.1.
+function paCoKey(itemNo) {
+  return (String(itemNo || '').match(/\d+/g) || []).map(Number).join('.');
+}
+
+// A change order the sheet spreads over several lines (labor + material) must be
+// applied ONCE: matchDocLines resolves each of those lines to the whole CO group,
+// so applying them one after another overwrote the first with the second. Merge
+// them: map each sheet line to its own SOV sub-line when every one names a
+// distinct sub-line exactly, otherwise split the CO total pro-rata.
+function paMergeCoRows(rows) {
+  const out = [];
+  const firstByCo = {};
+  for (const r of rows) {
+    if (r.kind !== 'co') { out.push(r); continue; }
+    const f = firstByCo[r.coNum];
+    if (!f) {
+      const copy = { ...r, docLines: [r.ln] };
+      firstByCo[r.coNum] = copy;
+      out.push(copy);
+      continue;
+    }
+    f.docLines.push(r.ln);
+    out.push({ idx: r.idx, ln: r.ln, kind: 'co-merged', coNum: r.coNum, allocations: [] });
+  }
+  for (const f of Object.values(firstByCo)) {
+    if (f.docLines.length < 2) continue;
+    const sum = k => f.docLines.reduce((s, l) => s + (Number(l[k]) || 0), 0);
+    f.ln = { ...f.docLines[0],
+      item_no: f.docLines.map(l => l.item_no).join(' + '),
+      scheduled_value: sum('scheduled_value'), previous: sum('previous'),
+      this_period: sum('this_period'), stored: sum('stored'), total_completed: sum('total_completed') };
+    const byKey = {};
+    f.group.items.forEach(i => { byKey[paCoKey(i.item_no)] = i; });
+    const direct = f.docLines.map(l => byKey[paCoKey(l.item_no)]);
+    const distinct = new Set(direct.filter(Boolean).map(i => i.id));
+    if (direct.every(Boolean) && distinct.size === direct.length) {
+      f.allocations = f.group.items.map(item => {
+        const k = direct.findIndex(i => i.id === item.id);
+        const l = k >= 0 ? f.docLines[k] : null;
+        return { item, this_period: l ? Number(l.this_period) || 0 : 0, stored: l ? Number(l.stored) || 0 : 0 };
+      });
+      f.coSplit = 'direct';
+    } else {
+      f.allocations = allocateCoBilling(f.group, f.ln.this_period, f.ln.stored);
+      f.coSplit = 'pro-rata';
+    }
+  }
+  return out;
+}
+
+// The figures the pay app would carry after Apply (draft) or does carry (audit).
+function paAuditProjection(proj, pa, rows, auditOnly) {
+  const sovItems = DATA.sovItems
+    .filter(i => i.project_id === proj.id && (i.version || 1) === (pa.sov_version || 1) && !i.is_alternate)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const lineOf = id => DATA.payAppLines.find(l => l.pay_app_id === pa.id && l.sov_item_id === id) || {};
+  const target = {};
+  rows.forEach(r => r.allocations.forEach(a => { target[a.item.id] = { E: a.this_period, F: a.stored }; }));
+  const exempt = depositExemptBySov(proj.id, pa.id);
+  const perLine = {};
+  let G = 0, ret = 0;
+  sovItems.forEach(si => {
+    const l = lineOf(si.id);
+    const D = Number(l.work_completed_previous) || 0;
+    const t = (!auditOnly && target[si.id]) ||
+      { E: Number(l.work_completed_this_period) || 0, F: Number(l.materials_stored) || 0 };
+    const g = D + (Number(t.E) || 0) + (Number(t.F) || 0);
+    const j = auditOnly ? (Number(l.retainage) || 0)
+                        : lineRetainage(g, exempt[si.id] || 0, Number(proj.retainage_pct) || 0);
+    perLine[si.id] = { D, E: Number(t.E) || 0, F: Number(t.F) || 0, G: g, J: j };
+    G += g; ret += j;
+  });
+  return { sovItems, lineOf, perLine, G, ret };
+}
+
+function paAudit(proj, pa, analysis, { auditOnly = false } = {}) {
+  const findings = [];
+  const add = (severity, code, item, message) => findings.push({ severity, code, item: item || null, message });
+  const off = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) > PA_AUDIT_TOL;
+  const rows = paMergeCoRows(matchDocLines(proj, pa, analysis.lines));
+  const proj$ = paAuditProjection(proj, pa, rows, auditOnly);
+  const { sovItems, lineOf, perLine } = proj$;
+
+  // ---- The analysis itself must be current and fingerprinted ----------------
+  if (!analysis.file_sha256) {
+    add('block', 'no_fingerprint', null,
+      'This analysis predates file fingerprinting, so the record could not prove which file the figures came from. Click Re-analyze, then review again.');
+  }
+  if (analysis.sov_version != null && Number(analysis.sov_version) !== Number(pa.sov_version || 1)) {
+    add('block', 'sov_version_changed', null,
+      `The file was analyzed against SOV v${analysis.sov_version}, but this pay app now bills SOV v${pa.sov_version || 1}. Re-analyze.`);
+  }
+  if (analysis.reconciled === false) {
+    add('exception', 'sheet_does_not_reconcile', null,
+      'The sheet does not reconcile internally: ' + (analysis.reconciliation_discrepancies || []).join(' '));
+  } else if (analysis.verified === false) {
+    add('exception', 'sheet_unverified', null,
+      'The extracted figures could not be verified against any printed total, G702 line 4 or prior pay app.');
+  }
+
+  // ---- Change orders (existing guard, now part of the record) ---------------
+  const coCheck = validateCoBilling(proj.id, pa.sov_version, analysis.lines);
+  coCheck.blocked.forEach(b => add('block', 'co_unverified', b.item_no,
+    `“${b.item_no} ${b.description || ''}” (${fmt$2(b.this_period || 0)}): ${b.reason}`));
+  (coCheck.warnings || []).forEach(w => add('exception', 'co_owner_override', w.item_no,
+    `“${w.item_no} ${w.description || ''}”: ${w.reason}`));
+
+  // ---- Per line --------------------------------------------------------------
+  const hits = {};
+  rows.forEach(r => r.allocations.forEach(a => { (hits[a.item.id] = hits[a.item.id] || []).push(r); }));
+  Object.entries(hits).forEach(([id, rs]) => {
+    if (rs.length < 2) return;
+    const si = sovItems.find(i => i.id === id);
+    add('block', 'duplicate_target', si?.item_no,
+      `SOV line ${si?.item_no || id} is matched by ${rs.length} sheet lines (${rs.map(r => r.ln.item_no).join(', ')}). Applying would overwrite one with the other. Correct the sheet's item numbers.`);
+  });
+
+  rows.forEach(r => {
+    const ln = r.ln;
+    const money = (Number(ln.previous) || 0) + (Number(ln.this_period) || 0) + (Number(ln.stored) || 0);
+    if (r.kind === 'unmatched' && Math.abs(money) > 0.005) {
+      add('exception', 'unmatched_money', ln.item_no,
+        `“${ln.item_no} ${ln.description || ''}” carries ${fmt$2(money)} (previous + this period + stored) but matches no SOV line. It will NOT be applied.`);
+    }
+    if (r.kind !== 'sov' && r.kind !== 'co') return;
+    const items = r.kind === 'co' ? r.group.items : [r.match];
+    const label = r.kind === 'co' ? `CO #${r.coNum}` : r.match.item_no;
+    const C = items.reduce((s, i) => s + (Number(i.scheduled_value) || 0), 0);
+    const D = items.reduce((s, i) => s + perLine[i.id].D, 0);
+    const E = r.allocations.reduce((s, a) => s + (Number(a.this_period) || 0), 0);
+    const F = r.allocations.reduce((s, a) => s + (Number(a.stored) || 0), 0);
+    const G = D + E + F;
+    const over = r.kind === 'co' ? Math.abs(G) > Math.abs(C) + 0.01 : isOverBilled(G, C);
+    r.audit = { label, C, D, G, over,
+      svOff: off(ln.scheduled_value, C), prevOff: off(ln.previous, D),
+      E0: items.reduce((s, i) => s + (Number(lineOf(i.id).work_completed_this_period) || 0), 0),
+      F0: items.reduce((s, i) => s + (Number(lineOf(i.id).materials_stored) || 0), 0) };
+    if (r.audit.svOff) add('exception', 'sv_mismatch', label,
+      `${label}: sheet scheduled value ${fmt$2(ln.scheduled_value)} ≠ Plazacore SOV ${fmt$2(C)} (off ${fmt$2((Number(ln.scheduled_value) || 0) - C)}).`);
+    if (r.audit.prevOff) add('exception', 'prev_mismatch', label,
+      `${label}: sheet "previous" ${fmt$2(ln.previous)} ≠ Plazacore certified to date ${fmt$2(D)} (off ${fmt$2((Number(ln.previous) || 0) - D)}).`);
+    if (over) add('exception', 'overbilled', label,
+      `${label}: completed to date ${fmt$2(G)} exceeds the scheduled value ${fmt$2(C)}. Submit stays blocked until corrected.`);
+    if (auditOnly) {
+      if (off(ln.this_period, r.audit.E0)) add('exception', 'this_period_mismatch', label,
+        `${label}: sheet "this period" ${fmt$2(ln.this_period)} ≠ certified ${fmt$2(r.audit.E0)}.`);
+      if (off(ln.stored, r.audit.F0)) add('exception', 'stored_mismatch', label,
+        `${label}: sheet "stored" ${fmt$2(ln.stored)} ≠ certified ${fmt$2(r.audit.F0)}.`);
+    }
+  });
+
+  // ---- SOV lines the sheet does not carry -----------------------------------
+  const notOnSheet = [];
+  sovItems.forEach(si => {
+    if (hits[si.id]) return;
+    const l = lineOf(si.id);
+    const EF = (Number(l.work_completed_this_period) || 0) + (Number(l.materials_stored) || 0);
+    if (Math.abs(EF) > 0.005) {
+      add('exception', 'line_not_on_sheet', si.item_no, auditOnly
+        ? `${si.item_no} ${si.description}: certified ${fmt$2(EF)} this period, but the line is not on the sheet.`
+        : `${si.item_no} ${si.description}: not on the sheet, but this draft already carries ${fmt$2(EF)} this period. Apply leaves it in place.`);
+    } else if (Math.abs(Number(si.scheduled_value) || 0) > 0.005) {
+      notOnSheet.push(si.item_no);
+    }
+  });
+  if (notOnSheet.length) add('info', 'sov_lines_not_on_sheet', null,
+    `${notOnSheet.length} SOV line(s) with a scheduled value are not on the sheet and bill nothing: ${notOnSheet.join(', ')}.`);
+
+  // ---- G702 cover vs Plazacore ------------------------------------------------
+  const h = analysis.header || {};
+  const num = v => Number(v) || 0;
+  const coNet = auditOnly && pa.approved_co_total != null ? num(pa.approved_co_total) : approvedCoTotal(proj.id);
+  const orig = pa.contract_sum != null ? num(pa.contract_sum) : num(proj.contract_value);
+  const toDate = auditOnly && pa.revised_contract_sum != null ? num(pa.revised_contract_sum) : orig + coNet;
+  const G = auditOnly && pa.total_completed != null ? num(pa.total_completed) : proj$.G;
+  const ret = auditOnly && pa.retainage_held != null ? num(pa.retainage_held) : proj$.ret;
+  const earned = auditOnly && pa.total_earned_less_retainage != null ? num(pa.total_earned_less_retainage) : G - ret;
+  const prevCerts = auditOnly && pa.previous_certificates != null ? num(pa.previous_certificates) : previousCertificatesTotal(proj.id, pa.id);
+  const due = auditOnly && pa.current_payment_due != null ? num(pa.current_payment_due) : earned - prevCerts;
+  const ours = {
+    contract_sum_orig: orig, change_order_net: coNet, contract_sum_to_date: toDate,
+    total_completed_stored: G, retainage_amount: ret, earned_less_retainage: earned,
+    previous_certificates: prevCerts, current_payment_due: due, balance_to_finish: toDate - earned,
+  };
+  const G702_LABELS = {
+    contract_sum_orig: '1. Original contract sum', change_order_net: '2. Net change by change orders',
+    contract_sum_to_date: '3. Contract sum to date', total_completed_stored: '4. Total completed & stored',
+    retainage_amount: '5. Retainage', earned_less_retainage: '6. Total earned less retainage',
+    previous_certificates: '7. Less previous certificates', current_payment_due: '8. Current payment due',
+    balance_to_finish: '9. Balance to finish incl. retainage',
+  };
+  const g702 = Object.keys(G702_LABELS).map(key => {
+    const theirs = h[key] == null ? null : num(h[key]);
+    const ok = theirs == null ? null : !off(theirs, ours[key]);
+    if (ok === false) add('exception', 'g702_mismatch', G702_LABELS[key],
+      `G702 ${G702_LABELS[key]}: sheet ${fmt$2(theirs)} ≠ Plazacore ${fmt$2(ours[key])} (off ${fmt$2(theirs - ours[key])}).`);
+    return { key, label: G702_LABELS[key], theirs, ours: ours[key], ok };
+  });
+  if (!g702.some(r => r.theirs != null && r.key !== 'total_completed_stored') ) {
+    add('info', 'g702_not_read', null, 'No G702 cover figures were found in the file, so lines 1–3 and 5–9 were not cross-checked.');
+  }
+
+  const counts = { block: 0, exception: 0, info: 0 };
+  findings.forEach(f => { counts[f.severity]++; });
+  return { rows, findings, counts, g702, ours, projection: proj$, auditOnly, coCheck };
+}
+
+// Quantity check: billed units after this import vs inspector-verified (Complete)
+// quantities, per repair type. Quantities are owner-only (RLS), so other roles
+// get an explicit "not checked" record instead of a silent pass.
+async function paAuditQuantities(proj, pa, audit) {
+  if (!isOwner()) {
+    audit.findings.push({ severity: 'info', code: 'qty_not_checked', item: null,
+      message: 'Quantities are owner-only, so the verified-quantity check runs when the owner reviews this pay application.' });
+    audit.counts.info++;
+    audit.qty = null;
+    return audit;
+  }
+  const { data: items, error } = await sb.from('repair_quantity_items').select('*')
+    .eq('project_id', proj.id).eq('status', 'complete');
+  if (error) {
+    audit.findings.push({ severity: 'exception', code: 'qty_load_failed', item: null,
+      message: 'Verified quantities could not be loaded, so the quantity check did not run: ' + (error.message || error) });
+    audit.counts.exception++;
+    audit.qty = null;
+    return audit;
+  }
+  const verified = {};
+  (items || []).forEach(i => {
+    const q = rqItemQty(i);
+    (verified[i.repair_type] = verified[i.repair_type] || { val: 0, unit: q.unit }).val += Number(q.val) || 0;
+  });
+  const sovByNo = {};
+  audit.projection.sovItems.forEach(s => { sovByNo[s.item_no] = s; });
+  const billed = {};
+  const perSov = {};
+  (DATA.qtyReconMap || []).filter(m => m.project_id === proj.id).forEach(m => {
+    const sov = sovByNo[m.sov_item_no];
+    if (!sov) return;
+    const up = Number(sov.unit_price) || 0;
+    if (!(up > 0)) return;
+    const units = (audit.projection.perLine[sov.id]?.G || 0) / up;
+    const b = (billed[m.repair_type] = billed[m.repair_type] || { val: 0, unit: rqUnitFamily(m.repair_type), lines: [] });
+    b.val += units;
+    b.lines.push(sov.item_no);
+    perSov[sov.id] = { units, unit: b.unit, type: m.repair_type };
+  });
+  const rows = [...new Set([...Object.keys(verified), ...Object.keys(billed)])].map(tp => {
+    const v = verified[tp]?.val || 0;
+    const b = billed[tp]?.val || 0;
+    const unit = verified[tp]?.unit || billed[tp]?.unit || rqUnitFamily(tp);
+    const diff = b - v;
+    const flagged = diff > 0 && (v === 0 ? b > 0 : diff / v > RQ_RECON_TOLERANCE);
+    const label = RQ_TYPE_MAP[tp]?.label || tp;
+    if (flagged) {
+      audit.findings.push({ severity: 'exception', code: 'qty_over_verified', item: label,
+        message: `${label}: ${b.toFixed(2)} ${unit} billed to date vs ${v.toFixed(2)} ${unit} verified complete (${v > 0 ? '+' + ((diff / v) * 100).toFixed(0) + '%' : 'nothing verified'}, tolerance ±${Math.round(RQ_RECON_TOLERANCE * 100)}%).` });
+      audit.counts.exception++;
+    }
+    return { type: tp, label, verified: v, billed: b, unit, flagged, lines: billed[tp]?.lines || [] };
+  }).sort((a, b) => a.label.localeCompare(b.label));
+  if (!rows.length) {
+    audit.findings.push({ severity: 'info', code: 'qty_nothing_mapped', item: null,
+      message: 'No unit-priced SOV lines are mapped to repair types, so there were no quantities to check.' });
+    audit.counts.info++;
+  }
+  audit.qty = { rows, perSov };
+  return audit;
+}
+
+function paAuditStats(audit, analysis) {
+  return {
+    blocks: audit.counts.block, exceptions: audit.counts.exception, infos: audit.counts.info,
+    lines: (analysis.lines || []).length,
+    matched: audit.rows.filter(r => r.allocations.length).length,
+    source: analysis.source || null, verified: analysis.verified ?? null,
+    projected_total_completed: audit.projection.G, projected_retainage: audit.projection.ret,
+    current_payment_due: audit.ours.current_payment_due,
+  };
+}
+
+const PA_SEV_BADGE = {
+  block: '<span class="badge badge-red">Blocks Apply</span>',
+  exception: '<span class="badge badge-yellow">Needs reason</span>',
+  info: '<span class="badge badge-gray">Recorded</span>',
+};
+function paFindingsHtml(findings) {
+  const by = s => findings.filter(f => f.severity === s);
+  const list = fs => `<ul style="margin:6px 0 0 18px;">${fs.map(f => `<li>${escapeHtml(f.message)}</li>`).join('')}</ul>`;
+  const blocks = by('block'), exc = by('exception'), info = by('info');
+  return `
+    ${blocks.length ? `<div class="warn-banner" style="background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.4);align-items:flex-start;"><span>🛑</span><div><strong>${blocks.length} blocking issue(s). Apply is disabled until they're fixed:</strong>${list(blocks)}</div></div>` : ''}
+    ${exc.length ? `<div class="warn-banner" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.45);align-items:flex-start;"><span>⚠️</span><div><strong>${exc.length} exception(s). Each one is recorded, and Apply needs a written reason:</strong>${list(exc)}</div></div>` : ''}
+    ${!blocks.length && !exc.length ? `<div class="hint-banner" style="background:#f0fdf4;border-color:#bbf7d0;color:#15803d;"><div>✓ <strong>Every cross-check passed</strong>: scheduled values, prior billing, G702 cover${findings.some(f => f.code === 'qty_not_checked') ? '' : ' and quantities'} agree with Plazacore.</div></div>` : ''}
+    ${info.length ? `<details style="margin:6px 0 10px;"><summary class="text-sm text-muted" style="cursor:pointer;">${info.length} note(s) recorded</summary>${list(info)}</details>` : ''}`;
+}
+
+// Review screen: every sheet line next to Plazacore's figure for the same line.
+async function paReview(docId, payAppId, analysisOverride) {
   const doc = (DATA.payAppDocs || []).find(d => d.id === docId);
   const pa = DATA.payApps.find(x => x.id === payAppId);
-  if (!doc?.analysis || !Array.isArray(doc.analysis.lines)) { toast('No analysis to review — Analyze first', 'info'); return; }
+  const analysis = analysisOverride || PA_AUDIT_ANALYSIS[docId] || doc?.analysis;
+  if (!analysis || !Array.isArray(analysis.lines)) { toast('No analysis to review — Analyze first', 'info'); return; }
   if (!pa) return;
   const proj = getProject(pa.project_id);
+  const auditOnly = pa.status !== 'draft';
+  if (auditOnly) PA_AUDIT_ANALYSIS[docId] = analysis;
 
-  // Shared matcher — CO lines resolve by CO number and fan out across the CO's
-  // labor/material sub-lines. Review and Apply consume the SAME result.
-  const rows = matchDocLines(proj, pa, doc.analysis.lines);
-  const priorOf = sovItemId => Number((DATA.payAppLines.find(l =>
-    l.pay_app_id === pa.id && l.sov_item_id === sovItemId) || {}).work_completed_previous) || 0;
+  const audit = await paAuditQuantities(proj, pa, paAudit(proj, pa, analysis, { auditOnly }));
+  const { rows } = audit;
   const matched = rows.filter(r => r.allocations.length).length;
   const headers = rows.filter(r => r.kind === 'header').length;
-  const unmatched = rows.length - matched - headers;
+  const merged = rows.filter(r => r.kind === 'co-merged').length;
+  const unmatched = rows.length - matched - headers - merged;
+  const vs = (theirs, ours, bad) => `<div${bad ? ' style="color:var(--red);font-weight:700;"' : ''}>${fmt$2(theirs)}</div><div class="text-muted" style="font-size:11px;">PC ${fmt$2(ours)}</div>`;
 
   const bodyRows = rows.map(r => {
     const { ln } = r;
+    if (r.kind === 'header') {
+      return `<tr style="opacity:.55;">
+        <td class="text-sm"><strong>${escapeHtml(ln.item_no || '—')}</strong><div class="text-muted">${escapeHtml(ln.description || '')}</div></td>
+        <td class="text-sm" colspan="6"><span class="badge badge-gray">Section header</span> no billable value, nothing to apply</td></tr>`;
+    }
+    if (r.kind === 'co-merged') {
+      return `<tr style="opacity:.7;">
+        <td class="text-sm"><strong>${escapeHtml(ln.item_no || '—')}</strong><div class="text-muted">${escapeHtml(ln.description || '')}</div></td>
+        <td class="text-sm" colspan="6"><span class="badge badge-blue">CO #${r.coNum}</span> combined with the CO's other line(s) above, applied once</td></tr>`;
+    }
     if (!r.allocations.length) {
-      // Section captions are expected and carry no money — show them greyed out and
-      // out of the way rather than as warnings competing with real problems.
-      if (r.kind === 'header') {
-        return `<tr style="opacity:.55;">
-          <td class="text-sm"><strong>${escapeHtml(ln.item_no || '—')}</strong><div class="text-muted">${escapeHtml(ln.description || '')}</div></td>
-          <td class="num text-sm">—</td>
-          <td class="num text-sm">—</td>
-          <td class="text-sm" colspan="2"><span class="badge badge-gray">Section header</span> — no billable value, nothing to apply</td>
-        </tr>`;
-      }
       const why = r.kind === 'co-missing'
-        ? `<span class="badge badge-red">CO #${r.coNum ?? '?'} not in SOV v${pa.sov_version}</span> — skipped`
-        : '<span class="badge badge-yellow">No SOV match</span> — skipped';
+        ? `<span class="badge badge-red">CO #${r.coNum ?? '?'} not in SOV v${pa.sov_version}</span> skipped`
+        : '<span class="badge badge-yellow">No SOV match</span> skipped';
       return `<tr style="background:rgba(245,158,11,0.10);">
         <td class="text-sm"><strong>${escapeHtml(ln.item_no || '—')}</strong><div class="text-muted">${escapeHtml(ln.description || '')}</div></td>
-        <td class="num text-sm">${fmt$2(ln.this_period)}</td>
-        <td class="num text-sm">${fmt$2(ln.stored)}</td>
-        <td class="text-sm" colspan="2">${why}</td>
-      </tr>`;
+        <td class="num text-sm">${fmt$2(ln.scheduled_value)}</td><td class="num text-sm">${fmt$2(ln.previous)}</td>
+        <td class="num text-sm">${fmt$2(ln.this_period)}</td><td class="num text-sm">${fmt$2(ln.stored)}</td>
+        <td class="text-sm" colspan="2">${why}</td></tr>`;
     }
-    // One CO doc line → N SOV sub-lines. Judge over-billing on the CO TOTAL,
-    // then show the split underneath so the allocation is auditable.
-    if (r.kind === 'co') {
-      const C = r.group.scheduled;
-      const D = r.group.items.reduce((s, i) => s + priorOf(i.id), 0);
-      const G = D + (Number(ln.this_period) || 0) + (Number(ln.stored) || 0);
-      const over = Math.abs(G) > Math.abs(C) + 0.01;
-      const split = r.group.items.length > 1
-        ? `<div class="text-muted" style="margin-top:3px;">${r.allocations.map(a =>
-            `${escapeHtml(a.item.item_no)}: ${fmt$2(a.this_period + a.stored)}`).join(' · ')}</div>`
-        : '';
-      return `<tr${over ? ' style="background:rgba(239,68,68,0.10);"' : ''}>
-        <td class="text-sm"><strong>${escapeHtml(ln.item_no)}</strong> <span class="badge badge-blue">CO #${r.coNum}</span>
-          <div class="text-muted">${escapeHtml(ln.description || '')}${r.group.items.length > 1 ? ` — split across ${r.group.items.length} SOV lines (labor/material)` : ''}</div>${split}</td>
-        <td class="num text-sm">${fmt$2(ln.this_period)}</td>
-        <td class="num text-sm">${fmt$2(ln.stored)}</td>
-        <td class="num text-sm">${fmt$2(G)} / ${fmt$2(C)}</td>
-        <td class="text-sm">${over ? '<span class="badge badge-red">Over CO total</span>' : '<span class="badge badge-green">OK</span>'}</td>
-      </tr>`;
-    }
-    const match = r.match;
-    const C = Number(match.scheduled_value) || 0;
-    const D = priorOf(match.id);
-    const G = D + Number(ln.this_period) + Number(ln.stored);
-    const over = isOverBilled(G, C);
-    return `<tr${over ? ' style="background:rgba(239,68,68,0.10);"' : ''}>
-      <td class="text-sm"><strong>${escapeHtml(match.item_no)}</strong><div class="text-muted">${escapeHtml(match.description)}</div></td>
-      <td class="num text-sm">${fmt$2(ln.this_period)}</td>
-      <td class="num text-sm">${fmt$2(ln.stored)}</td>
-      <td class="num text-sm">${fmt$2(G)} / ${fmt$2(C)}</td>
-      <td class="text-sm">${over ? '<span class="badge badge-red">Over scheduled value</span>' : '<span class="badge badge-green">OK</span>'}</td>
+    const a = r.audit;
+    const qtyCells = r.allocations.map(al => audit.qty?.perSov?.[al.item.id]).filter(Boolean);
+    const qtyTxt = qtyCells.length
+      ? qtyCells.map(q => `${q.units.toFixed(2)} ${q.unit}`).join('<br>')
+      : '<span class="text-muted">—</span>';
+    const badges = [];
+    if (a.svOff) badges.push('<span class="badge badge-yellow">Sched ≠ SOV</span>');
+    if (a.prevOff) badges.push('<span class="badge badge-yellow">Prev ≠ certified</span>');
+    if (a.over) badges.push('<span class="badge badge-red">Over-billed</span>');
+    if (auditOnly && Math.abs((Number(ln.this_period) || 0) - a.E0) > PA_AUDIT_TOL) badges.push('<span class="badge badge-yellow">E ≠ certified</span>');
+    if (auditOnly && Math.abs((Number(ln.stored) || 0) - a.F0) > PA_AUDIT_TOL) badges.push('<span class="badge badge-yellow">F ≠ certified</span>');
+    if (qtyCells.some(q => audit.qty.rows.find(x => x.type === q.type)?.flagged)) badges.push('<span class="badge badge-yellow">Qty > verified</span>');
+    const bad = badges.length > 0;
+    const title = r.kind === 'co'
+      ? `<strong>${escapeHtml(ln.item_no)}</strong> <span class="badge badge-blue">CO #${r.coNum}</span><div class="text-muted">${escapeHtml(ln.description || '')}${r.group.items.length > 1 ? ` · split ${r.coSplit === 'direct' ? 'line by line' : 'pro-rata'} across ${r.allocations.map(x => `${escapeHtml(x.item.item_no)} ${fmt$2(x.this_period + x.stored)}`).join(' · ')}` : ''}</div>`
+      : `<strong>${escapeHtml(r.match.item_no)}</strong><div class="text-muted">${escapeHtml(r.match.description)}</div>`;
+    return `<tr${a.over ? ' style="background:rgba(239,68,68,0.10);"' : bad ? ' style="background:rgba(245,158,11,0.08);"' : ''}>
+      <td class="text-sm">${title}</td>
+      <td class="num text-sm">${vs(ln.scheduled_value, a.C, a.svOff)}</td>
+      <td class="num text-sm">${vs(ln.previous, a.D, a.prevOff)}</td>
+      <td class="num text-sm">${auditOnly ? vs(ln.this_period, a.E0, Math.abs((Number(ln.this_period) || 0) - a.E0) > PA_AUDIT_TOL) : fmt$2(ln.this_period)}</td>
+      <td class="num text-sm">${auditOnly ? vs(ln.stored, a.F0, Math.abs((Number(ln.stored) || 0) - a.F0) > PA_AUDIT_TOL) : fmt$2(ln.stored)}</td>
+      <td class="num text-sm">${fmt$2(a.G)} / ${fmt$2(a.C)}<div class="text-muted" style="font-size:11px;">${qtyTxt}</div></td>
+      <td class="text-sm">${bad ? badges.join(' ') : '<span class="badge badge-green">OK</span>'}</td>
     </tr>`;
   }).join('');
 
-  const h = doc.analysis.header || {};
-  const hdrBits = [];
-  if (h.current_payment_due != null) hdrBits.push(`Current Due: <strong>${fmt$2(h.current_payment_due)}</strong>`);
-  if (h.total_completed_stored != null) hdrBits.push(`Total Completed &amp; Stored: <strong>${fmt$2(h.total_completed_stored)}</strong>`);
-  if (h.period_to) hdrBits.push(`Period To: <strong>${escapeHtml(h.period_to)}</strong>`);
+  const g702Rows = audit.g702.map(g => `<tr${g.ok === false ? ' style="background:rgba(245,158,11,0.10);"' : ''}>
+      <td class="text-sm">${escapeHtml(g.label)}</td>
+      <td class="num text-sm">${g.theirs == null ? '<span class="text-muted">not on sheet</span>' : fmt$2(g.theirs)}</td>
+      <td class="num text-sm">${fmt$2(g.ours)}</td>
+      <td class="text-sm">${g.ok == null ? '<span class="text-muted">—</span>' : g.ok ? '<span class="badge badge-green">OK</span>' : `<span class="badge badge-yellow">Off ${fmt$2(g.theirs - g.ours)}</span>`}</td>
+    </tr>`).join('');
 
-  // CO cross-reference: surface unverified change-order billing before Apply.
-  const coCheck = validateCoBilling(proj.id, pa.sov_version, doc.analysis.lines);
-  const coBlockedBanner = coCheck.blocked.length
-    ? `<div class="warn-banner" style="background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.4);">🛑 <strong>Change-order billing not verified — Apply is blocked:</strong><ul style="margin:6px 0 0 18px;">${coCheck.blocked.map(b => `<li>“${escapeHtml(b.item_no)} ${escapeHtml(b.description||'')}” ($${(b.this_period||0).toLocaleString()}) — ${escapeHtml(b.reason)}</li>`).join('')}</ul><div style="margin-top:6px;">Upload &amp; approve the signed CO in the Change Orders tab (or fix the line mapping), then re-analyze.</div></div>`
+  const qtySection = audit.qty
+    ? (audit.qty.rows.length ? `
+      <div class="sov-section-head" style="margin-top:16px;"><div class="sov-section-title">Quantities: billed after this import vs verified complete</div>
+        <div class="sov-meta">Billed = completed $ ÷ SOV unit price · tolerance ±${Math.round(RQ_RECON_TOLERANCE * 100)}%</div></div>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Repair type</th><th class="num">Verified</th><th class="num">Billed to date</th><th class="num">Difference</th><th>Check</th></tr></thead>
+        <tbody>${audit.qty.rows.map(q => `<tr${q.flagged ? ' style="background:rgba(245,158,11,0.10);"' : ''}>
+          <td class="text-sm">${escapeHtml(q.label)}<div class="text-muted" style="font-size:11px;">${escapeHtml(q.lines.join(', '))}</div></td>
+          <td class="num text-sm">${q.verified.toFixed(2)} ${q.unit}</td><td class="num text-sm">${q.billed.toFixed(2)} ${q.unit}</td>
+          <td class="num text-sm">${q.billed - q.verified > 0 ? '+' : ''}${(q.billed - q.verified).toFixed(2)} ${q.unit}</td>
+          <td class="text-sm">${q.flagged ? '<span class="badge badge-yellow">Over verified</span>' : '<span class="badge badge-green">OK</span>'}</td></tr>`).join('')}</tbody>
+      </table></div>` : '')
     : '';
-  // Owner-override notices: billing is permitted, but never silently.
-  const coWarnBanner = (coCheck.warnings || []).length
-    ? `<div class="warn-banner" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.45);">🔓 <strong>Change order(s) approved by owner override — billing allowed, disclose on the application:</strong><ul style="margin:6px 0 0 18px;">${coCheck.warnings.map(w => `<li>“${escapeHtml(w.item_no)} ${escapeHtml(w.description||'')}” — ${escapeHtml(w.reason)}</li>`).join('')}</ul></div>`
-    : '';
+
+  const ackBox = audit.counts.exception
+    ? `<div style="margin-top:14px;"><label class="form-label">Reason for accepting ${audit.counts.exception} exception(s)${auditOnly ? ' (optional)' : ' (required, min. ' + PA_ACK_MIN_CHARS + ' characters)'}</label>
+        <textarea id="paAckNote" rows="2" style="width:100%;" placeholder="e.g. Contractor's SOV not yet updated for CO-3; Plazacore figures govern. Confirmed with PM by phone 11/10."></textarea>
+        <div class="text-muted text-sm">Saved permanently with your name, the time and the file fingerprint. It cannot be edited or deleted.</div></div>`
+    : `<div style="margin-top:14px;"><label class="form-label">Note (optional)</label><textarea id="paAckNote" rows="2" style="width:100%;"></textarea></div>`;
+
+  const sha = analysis.file_sha256 ? `<span title="SHA-256 ${escapeHtml(analysis.file_sha256)}">file ${escapeHtml(analysis.file_sha256.slice(0, 12))}…</span>` : '<span>no file fingerprint</span>';
+  const intro = auditOnly
+    ? `<strong>Audit only.</strong> This pay app is ${escapeHtml(lbl(pa.status) || pa.status)}, so nothing will be applied. The file is compared line by line with the figures Plazacore certified.`
+    : `Applying sets each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>. Previous, totals and retainage are always Plazacore's own. "PC" under a figure is Plazacore's value for the same line.`;
 
   showModal({
-    title: `Review Extracted Pay Application — #${pa.pay_app_number}`,
-    wide: true,
+    title: `${auditOnly ? 'Audit' : 'Review Extracted'} Pay Application — #${pa.pay_app_number}`,
+    size: 'xl',
     body: `
-      ${doc.analysis.warnings && doc.analysis.warnings.length ? `<div class="warn-banner">⚠️ ${doc.analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
-      ${coBlockedBanner}
-      ${coWarnBanner}
-      <div class="hint-banner">Extracted <strong>${rows.length}</strong> line(s): <strong>${matched}</strong> matched to the SOV${headers ? `, <strong>${headers}</strong> section header(s) ignored` : ''}${unmatched ? `, <strong>${unmatched}</strong> unmatched (will be skipped)` : ''}. ${hdrBits.length ? '<br>' + hdrBits.join(' · ') : ''}<br>Applying will set each matched line's <strong>This Period (E)</strong> and <strong>Stored (F)</strong>; totals recompute automatically. Review against the PDF before applying.</div>
+      ${analysis.warnings && analysis.warnings.length ? `<div class="warn-banner">⚠️ ${analysis.warnings.map(escapeHtml).join(' ')}</div>` : ''}
+      ${paFindingsHtml(audit.findings)}
+      <div class="hint-banner"><div>${intro}<br>
+        <span class="text-sm">Sheet lines: <strong>${rows.length}</strong> · matched <strong>${matched}</strong>${headers ? ` · ${headers} section header(s)` : ''}${merged ? ` · ${merged} CO line(s) combined` : ''}${unmatched ? ` · <strong>${unmatched}</strong> unmatched` : ''} · ${escapeHtml(analysis.source === 'spreadsheet' ? 'native Excel' : 'AI read of scan')} · ${sha}</span></div></div>
       <div class="table-wrap" style="max-height:420px;overflow:auto;">
         <table class="data">
-          <thead><tr><th>SOV Item</th><th class="num">E: This Period</th><th class="num">F: Stored</th><th class="num">Completed / Sched</th><th>Check</th></tr></thead>
+          <thead><tr><th>SOV Item</th><th class="num">C: Sched</th><th class="num">D: Previous</th><th class="num">E: This Period</th><th class="num">F: Stored</th><th class="num">Completed / Sched<div style="font-weight:400;font-size:11px;">qty billed</div></th><th>Check</th></tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
-      </div>`,
-    footer: `
+      </div>
+      <div class="sov-section-head" style="margin-top:16px;"><div class="sov-section-title">G702 cover: sheet vs Plazacore</div>
+        <div class="sov-meta">${auditOnly ? 'Plazacore = the certified figures' : 'Plazacore = what this pay app will certify after Apply'}</div></div>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Line</th><th class="num">Sheet</th><th class="num">Plazacore</th><th>Check</th></tr></thead>
+        <tbody>${g702Rows}</tbody></table></div>
+      ${qtySection}
+      ${ackBox}`,
+    footer: auditOnly ? `
+      <button class="btn btn-secondary" onclick="openPayAppModal('${pa.id}', false)">Close</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" id="paSaveAuditBtn" onclick="paSaveAuditRecord('${docId}','${pa.id}')">🔒 Save Audit Record</button>` : `
       <button class="btn btn-secondary" onclick="openPayAppModal('${pa.id}', true)">Cancel</button>
       <div style="flex:1"></div>
-      <button class="btn btn-primary"${coCheck.blocked.length ? ' disabled title="Resolve change-order verification first"' : ''} onclick="paApply('${docId}','${pa.id}')">Apply ${matched} Matched Line(s)</button>`,
+      <button class="btn btn-primary" id="paApplyBtn"${audit.counts.block ? ' disabled title="Resolve the blocking issues first"' : ''} onclick="paApply('${docId}','${pa.id}')">Apply ${matched} Matched Line(s)</button>`,
   });
 }
 window.paReview = paReview;
+
+function paAckNoteOrNull(audit, required) {
+  const note = (document.getElementById('paAckNote')?.value || '').trim();
+  if (required && audit.counts.exception && note.length < PA_ACK_MIN_CHARS) {
+    toast(`Write a reason for accepting the ${audit.counts.exception} exception(s) (at least ${PA_ACK_MIN_CHARS} characters)`, 'error');
+    document.getElementById('paAckNote')?.focus();
+    return null;
+  }
+  return note;
+}
+
+function paAuditRecordBase(pa, doc, analysis, event) {
+  return {
+    project_id: pa.project_id, pay_app_id: pa.id, pay_app_number: pa.pay_app_number,
+    doc_id: doc?.id || null, event, actor_name: AUTH?.name || null, actor_role: AUTH?.role || null,
+    file_name: doc?.file_name || null, file_path: doc?.file_path || null,
+    file_sha256: analysis?.file_sha256 || null,
+  };
+}
+
+async function paInsertAudit(row) {
+  const { error } = await sb.from('pay_app_import_audits').insert(row);
+  if (error) { handleSbError(error, 'Write audit record'); return false; }
+  return true;
+}
+
+async function paSaveAuditRecord(docId, payAppId) {
+  const doc = (DATA.payAppDocs || []).find(d => d.id === docId);
+  const pa = DATA.payApps.find(x => x.id === payAppId);
+  const analysis = PA_AUDIT_ANALYSIS[docId] || doc?.analysis;
+  if (!pa || !analysis) { toast('Nothing to record', 'error'); return; }
+  const proj = getProject(pa.project_id);
+  const note = paAckNoteOrNull(null, false);
+  const btn = document.getElementById('paSaveAuditBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…'; }
+  const audit = await paAuditQuantities(proj, pa, paAudit(proj, pa, analysis, { auditOnly: true }));
+  const ok = await paInsertAudit({
+    ...paAuditRecordBase(pa, doc, analysis, 'audit_reviewed'),
+    summary: { stats: paAuditStats(audit, analysis), g702: audit.g702, qty: audit.qty?.rows || null,
+               pay_app_status: pa.status, analysis_source: analysis.source || null },
+    findings: audit.findings,
+    note: note || null,
+  });
+  if (!ok) { if (btn) { btn.disabled = false; btn.textContent = '🔒 Save Audit Record'; } return; }
+  await loadAllData();
+  toast(`Audit record saved: ${audit.counts.exception} exception(s), ${audit.counts.block} blocking`, 'success');
+  openPayAppModal(pa.id, false);
+}
+window.paSaveAuditRecord = paSaveAuditRecord;
 
 async function paApply(docId, payAppId) {
   const doc = (DATA.payAppDocs || []).find(d => d.id === docId);
@@ -4827,47 +5233,27 @@ async function paApply(docId, payAppId) {
   if (!doc?.analysis || !pa) { toast('Nothing to apply', 'error'); return; }
   if (pa.status !== 'draft') { toast('Only draft pay apps can be updated', 'error'); return; }
   const proj = getProject(pa.project_id);
-  // Deposit-exempt base (PA#1 held 0% retainage; 15% applies cumulatively above it).
-  const exemptBySov = depositExemptBySov(proj.id, pa.id);
+  const analysis = doc.analysis;
 
-  // ---- CO CROSS-REFERENCE GUARD (William, 2026-07-09; CO-total rule 2026-08-10) ----
-  // A pay app may bill change-order work ONLY if the CO exists and is APPROVED in
-  // Plazacore. Where a signed CO was broken out into labor + materials, the SOV
-  // carries sub-lines (CO-002.1 / CO-002.2) and the CO's TOTAL governs — billing is
-  // rolled up per CO number before comparison, never judged sub-line by sub-line.
-  const coCheck = validateCoBilling(proj.id, pa.sov_version, doc.analysis.lines);
-  if (coCheck.blocked.length) {
-    const msg = coCheck.blocked.map(b =>
-      `• “${b.item_no} ${b.description}” ($${(b.this_period||0).toLocaleString()}) — ${b.reason}`).join('\n');
-    alert('⚠️ Cannot apply: change-order billing could not be cross-referenced against approved COs in Plazacore.\n\n' +
-          msg + '\n\nUpload/approve the change order first, or correct the line mapping. No lines were applied.');
-    toast('Blocked: unverified change-order billing — see details', 'error');
+  // Re-run the same audit the review screen showed; never trust a stale screen.
+  const audit = await paAuditQuantities(proj, pa, paAudit(proj, pa, analysis, { auditOnly: false }));
+  if (audit.counts.block) {
+    alert('⚠️ Cannot apply. Resolve these first:\n\n' +
+      audit.findings.filter(f => f.severity === 'block').map(f => '• ' + f.message).join('\n') +
+      '\n\nNo lines were applied.');
+    toast('Blocked — see details', 'error');
     return;
   }
-  // Owner-override notices: allowed, but require an explicit acknowledgement so an
-  // unsigned CO can never reach a certified pay application unnoticed.
-  if ((coCheck.warnings || []).length) {
-    const wmsg = coCheck.warnings.map(w => `• “${w.item_no} ${w.description}” — ${w.reason}`).join('\n');
-    if (!confirm('🔓 This pay application bills change order(s) approved by OWNER OVERRIDE '
-      + 'without all signatures:\n\n' + wmsg
-      + '\n\nThis is permitted, but the pay application should disclose it. Apply anyway?')) {
-      toast('Apply cancelled', 'info');
-      return;
-    }
-  }
+  const note = paAckNoteOrNull(audit, true);
+  if (note === null) return;
 
-  // Same matcher the review screen used, so what was reviewed is what gets applied.
-  const rows = matchDocLines(proj, pa, doc.analysis.lines);
-  const skippedCo = rows.filter(r => r.kind === 'co-missing');
-  if (skippedCo.length) {
-    if (!confirm(`⚠️ ${skippedCo.length} change-order line(s) have no matching CO line in SOV v${pa.sov_version} and will be SKIPPED:\n\n` +
-      skippedCo.map(r => `• ${r.ln.item_no} ${r.ln.description || ''}`).join('\n') +
-      `\n\nApply the remaining lines anyway?`)) { toast('Apply cancelled', 'info'); return; }
-  }
+  const btn = document.getElementById('paApplyBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Applying…'; }
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = 'Apply'; } };
 
-  let applied = 0, coApplied = 0;
-  for (const r of rows) {
-    if (!r.allocations.length) continue;
+  const exemptBySov = depositExemptBySov(proj.id, pa.id);
+  const plan = [];
+  for (const r of audit.rows) {
     for (const alloc of r.allocations) {
       const match = alloc.item;
       const line = DATA.payAppLines.find(l => l.pay_app_id === pa.id && l.sov_item_id === match.id);
@@ -4877,27 +5263,155 @@ async function paApply(docId, payAppId) {
       const E = Number(alloc.this_period) || 0;
       const F = Number(alloc.stored) || 0;
       const G = D + E + F;
-      const H = C !== 0 ? (G / C) * 100 : 0;
-      const I = C - G;
-      const J = lineRetainage(G, exemptBySov[match.id] || 0, Number(proj.retainage_pct) || 0);
-      const { error } = await sb.from('pay_app_lines').update({
-        work_completed_this_period: E,
-        materials_stored: F,
-        total_completed_stored: G,
-        pct_complete: H,
-        balance_to_finish: I,
-        retainage: J,
-      }).eq('id', line.id);
-      if (error) { handleSbError(error, 'Apply pay app line'); return; }
-      applied++;
+      plan.push({ line_id: line.id, sov_item_id: match.id, item_no: match.item_no, sheet_item_no: r.ln.item_no,
+        E, F, G, C,
+        H: C !== 0 ? (G / C) * 100 : 0,
+        J: lineRetainage(G, exemptBySov[match.id] || 0, Number(proj.retainage_pct) || 0),
+        prior_E: Number(line.work_completed_this_period) || 0, prior_F: Number(line.materials_stored) || 0 });
     }
-    if (r.kind === 'co') coApplied++;
+  }
+
+  // The record is written BEFORE any figure moves. If it can't be written,
+  // nothing is applied: an import without its audit record must not exist.
+  const ok = await paInsertAudit({
+    ...paAuditRecordBase(pa, doc, analysis, 'applied'),
+    summary: {
+      stats: paAuditStats(audit, analysis), g702: audit.g702, qty: audit.qty?.rows || null,
+      analyzed_at: doc.analyzed_at || null, analyzed_by: doc.analyzed_by || null,
+      applied_lines: plan.map(p => ({ sov_item_id: p.sov_item_id, item_no: p.item_no, sheet_item_no: p.sheet_item_no,
+        E: p.E, F: p.F, G: p.G, J: p.J, prior_E: p.prior_E, prior_F: p.prior_F })),
+    },
+    findings: audit.findings,
+    acknowledgments: audit.findings.filter(f => f.severity === 'exception'),
+    note: note || null,
+  });
+  if (!ok) { restore(); toast('Audit record could not be written. Nothing was applied.', 'error'); return; }
+
+  let applied = 0;
+  for (const p of plan) {
+    const { error } = await sb.from('pay_app_lines').update({
+      work_completed_this_period: p.E,
+      materials_stored: p.F,
+      total_completed_stored: p.G,
+      pct_complete: p.H,
+      balance_to_finish: p.C - p.G,
+      retainage: p.J,
+    }).eq('id', p.line_id);
+    if (error) {
+      await paInsertAudit({
+        ...paAuditRecordBase(pa, doc, analysis, 'applied'),
+        summary: { partial_failure: true, applied_count: applied, planned_count: plan.length, failed_item_no: p.item_no },
+        findings: [{ severity: 'exception', code: 'apply_partial_failure', item: p.item_no,
+          message: `Apply stopped after ${applied} of ${plan.length} line(s): ${error.message || error}` }],
+        note: 'Automatic record of a failed apply.',
+      });
+      handleSbError(error, 'Apply pay app line');
+      await loadAllData();
+      openPayAppModal(pa.id, true);
+      return;
+    }
+    applied++;
   }
   await loadAllData();
-  toast(`Applied ${applied} SOV line(s)${coApplied ? ` — including ${coApplied} change order(s) split across labor/material sub-lines` : ''}`, 'success');
+  const coApplied = audit.rows.filter(r => r.kind === 'co' && r.allocations.length).length;
+  toast(`Applied ${applied} SOV line(s)${coApplied ? `, including ${coApplied} change order(s)` : ''}. Audit record saved.`, 'success');
   openPayAppModal(pa.id, true);
 }
 window.paApply = paApply;
+
+// Submission snapshot: the figures as submitted, and every line that was changed
+// by hand after the last import (or that no file backs at all).
+async function paAuditSubmission(pa, update) {
+  const lines = DATA.payAppLines.filter(l => l.pay_app_id === pa.id);
+  const sovById = {};
+  DATA.sovItems.forEach(s => { sovById[s.id] = s; });
+  const { data: last, error } = await sb.from('pay_app_import_audits')
+    .select('created_at, file_name, file_sha256, summary')
+    .eq('pay_app_id', pa.id).eq('event', 'applied')
+    .order('created_at', { ascending: false }).limit(1);
+  if (error) { handleSbError(error, 'Read audit trail'); return false; }
+  const imp = last && last[0];
+  const appliedById = {};
+  (imp?.summary?.applied_lines || []).forEach(a => { appliedById[a.sov_item_id] = a; });
+  const findings = [];
+  if (!imp) {
+    findings.push({ severity: 'info', code: 'no_import', item: null,
+      message: 'No contractor file was imported; the figures were entered by hand.' });
+  } else {
+    lines.forEach(l => {
+      const a = appliedById[l.sov_item_id];
+      const E = Number(l.work_completed_this_period) || 0, F = Number(l.materials_stored) || 0;
+      const aE = a ? Number(a.E) || 0 : null, aF = a ? Number(a.F) || 0 : null;
+      const changed = a ? (Math.abs(E - aE) > 0.005 || Math.abs(F - aF) > 0.005) : (Math.abs(E) + Math.abs(F) > 0.005);
+      if (!changed) return;
+      const no = sovById[l.sov_item_id]?.item_no || l.sov_item_id;
+      findings.push({ severity: 'exception', code: 'edited_after_import', item: no,
+        message: a
+          ? `${no}: imported E ${fmt$2(aE)} / F ${fmt$2(aF)}, submitted E ${fmt$2(E)} / F ${fmt$2(F)} (changed by hand after the import).`
+          : `${no}: submitted E ${fmt$2(E)} / F ${fmt$2(F)}, not from the imported file.` });
+    });
+  }
+  return paInsertAudit({
+    project_id: pa.project_id, pay_app_id: pa.id, pay_app_number: pa.pay_app_number,
+    doc_id: null, event: 'submitted', actor_name: AUTH?.name || null, actor_role: AUTH?.role || null,
+    file_name: imp?.file_name || null, file_sha256: imp?.file_sha256 || null,
+    summary: {
+      stats: { exceptions: findings.filter(f => f.severity === 'exception').length, last_import_at: imp?.created_at || null },
+      totals: update,
+      lines: lines.map(l => ({ sov_item_id: l.sov_item_id, item_no: sovById[l.sov_item_id]?.item_no || null,
+        D: Number(l.work_completed_previous) || 0, E: Number(l.work_completed_this_period) || 0,
+        F: Number(l.materials_stored) || 0, G: Number(l.total_completed_stored) || 0, J: Number(l.retainage) || 0 })),
+    },
+    findings,
+  });
+}
+
+// Pay-app level events (reopen, delete): who, when, and the figures at that moment.
+async function paAuditEvent(pa, event, note) {
+  const lines = DATA.payAppLines.filter(l => l.pay_app_id === pa.id);
+  return paInsertAudit({
+    project_id: pa.project_id, pay_app_id: pa.id, pay_app_number: pa.pay_app_number,
+    doc_id: null, event, actor_name: AUTH?.name || null, actor_role: AUTH?.role || null,
+    summary: { pay_app: pa, lines },
+    note: note || null,
+  });
+}
+
+const PA_EVENT_LABEL = {
+  analyzed: ['File read', 'badge-gray'], applied: ['Imported', 'badge-blue'],
+  audit_reviewed: ['Audit', 'badge-blue'], submitted: ['Submitted', 'badge-green'],
+  reopened: ['Reopened', 'badge-yellow'], deleted: ['Deleted', 'badge-red'],
+};
+function payAppAuditTrailHtml(pa) {
+  const rows = (DATA.payAppAudits || []).filter(a => a.pay_app_id === pa.id);
+  const body = rows.length ? rows.map(a => {
+    const [label, cls] = PA_EVENT_LABEL[a.event] || [a.event, 'badge-gray'];
+    const f = Array.isArray(a.findings) ? a.findings : [];
+    const ex = f.filter(x => x.severity === 'exception').length;
+    const bl = f.filter(x => x.severity === 'block').length;
+    const acks = Array.isArray(a.acknowledgments) ? a.acknowledgments : [];
+    return `<div style="border-bottom:1px solid var(--border);padding:8px 0;text-align:left;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span class="badge ${cls}">${escapeHtml(label)}</span>
+        <span class="text-sm">${new Date(a.created_at).toLocaleString()}</span>
+        <span class="text-sm text-muted">${escapeHtml(a.actor_name || a.actor_email || 'unknown')}${a.actor_role ? ' · ' + escapeHtml(a.actor_role) : ''}</span>
+        ${a.file_name ? `<span class="text-sm text-muted">· ${escapeHtml(a.file_name)}</span>` : ''}
+        ${a.file_sha256 ? `<span class="text-sm text-muted" title="SHA-256 ${escapeHtml(a.file_sha256)}">· ${escapeHtml(a.file_sha256.slice(0, 12))}…</span>` : ''}
+        ${bl ? `<span class="badge badge-red">${bl} blocking</span>` : ''}
+        ${ex ? `<span class="badge badge-yellow">${ex} exception(s)</span>` : ''}
+      </div>
+      ${a.note ? `<div class="text-sm" style="margin-top:4px;">📝 ${escapeHtml(a.note)}</div>` : ''}
+      ${f.length ? `<details style="margin-top:4px;"><summary class="text-sm text-muted" style="cursor:pointer;">${f.length} finding(s)${acks.length ? ` · ${acks.length} accepted with the reason above` : ''}</summary>
+        <ul style="margin:4px 0 0 18px;" class="text-sm">${f.map(x => `<li>${escapeHtml(x.message)}</li>`).join('')}</ul></details>` : ''}
+    </div>`;
+  }).join('') : '<div class="text-muted" style="text-align:left;">No import or audit events recorded yet.</div>';
+  return `
+    <div class="sov-section-head" style="margin-top:22px;">
+      <div class="sov-section-title">🔒 Import Audit Trail</div>
+      <div class="sov-meta">Permanent record; entries cannot be edited or deleted</div>
+    </div>
+    <div class="waiver-zone" style="max-height:260px;overflow:auto;">${body}</div>`;
+}
 
 async function viewPayAppDoc(docId) {
   const d = (DATA.payAppDocs || []).find(x => x.id === docId);
@@ -4961,6 +5475,11 @@ async function submitPayApp(payAppId) {
     approved_co_total: coTotal,
     revised_contract_sum: revisedContract,
   };
+  // Audit record first: a submission without its record must not happen.
+  if (!(await paAuditSubmission(pa, update))) {
+    toast('The audit record could not be written, so the pay app was not submitted.', 'error');
+    return;
+  }
   const { error } = await sb.from('pay_apps').update(update).eq('id', pa.id);
   if (error) { handleSbError(error, 'Submit pay app'); return; }
   await loadAllData();
@@ -4993,6 +5512,9 @@ async function deletePayApp(payAppId) {
     if (typed === null) return;
     if (String(typed).trim() !== String(pa.pay_app_number)) { toast('Pay app number did not match — nothing deleted', 'error'); return; }
   }
+  // The audit trail keeps a snapshot of the pay app and its lines; it is not
+  // linked to pay_apps, so it survives the delete below.
+  if (!(await paAuditEvent(pa, 'deleted'))) { toast('The audit record could not be written, so nothing was deleted.', 'error'); return; }
   // remove lien waiver files
   const ws = DATA.lienWaivers.filter(w => w.pay_app_id === payAppId);
   for (const w of ws) await sb.storage.from('lien-waivers').remove([w.file_path]).catch(()=>{});
@@ -5096,6 +5618,7 @@ async function reopenPayApp(payAppId) {
   if (!confirm(`Reopen Pay Application #${pa.pay_app_number} for revision?\n\n` +
       'It returns to Draft so the file and figures can be replaced. Signature and notary ' +
       'verification are cleared, and it must be submitted again before it can be approved.')) return;
+  if (!(await paAuditEvent(pa, 'reopened'))) { toast('The audit record could not be written, so the pay app was not reopened.', 'error'); return; }
   const { error } = await sb.from('pay_apps').update({ status: 'draft', submitted_at: null }).eq('id', payAppId);
   if (error) { handleSbError(error, 'Reopen pay app'); return; }
   await loadAllData();
@@ -7836,7 +8359,7 @@ window.submitInvite = submitInvite;
 function showModal({ title, body, footer, size }) {
   const root = document.getElementById('modalRoot');
   if (!root) return;
-  const widthClass = size === 'wide' ? ' wide' : '';
+  const widthClass = size === 'wide' ? ' wide' : size === 'xl' ? ' xl' : '';
   root.innerHTML = `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal${widthClass}" role="dialog" aria-modal="true">
