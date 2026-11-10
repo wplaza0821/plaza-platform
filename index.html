@@ -487,7 +487,7 @@
   }
   .modal-close:hover { background: var(--gray-100); color: var(--black); }
   .modal-body { padding: 20px; }
-  .modal-foot { padding: 14px 20px; border-top: 1px solid var(--gray-200); display: flex; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; background: #fff; }
+  .modal-foot { padding: 14px 20px; border-top: 1px solid var(--gray-200); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; background: #fff; }
 
   .form-row { margin-bottom: 14px; }
   .form-row.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -3906,6 +3906,14 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   // so keep it out of the generic Supporting Documents list.
   const executedDocs = allPayAppDocs.filter(d => d.doc_type === 'executed_payapp');
   const payAppDocs   = allPayAppDocs.filter(d => d.doc_type !== 'executed_payapp');
+  // Once out of draft the pay application file(s) get their own section (the
+  // draft shows them in the import zone), so keep them out of Supporting Documents.
+  const paFileDocs   = payAppDocs.filter(d => d.doc_type === 'pay_application');
+  const supportDocs  = isDraft ? payAppDocs : payAppDocs.filter(d => d.doc_type !== 'pay_application');
+  // Documents are attachments, not financial figures: the owner can add, swap or
+  // remove them in any status (revised file from the contractor, signed copy,
+  // backup). The figures themselves still only change in draft — see reopenPayApp.
+  const canManageDocs = editable || isOwner();
   // Certification review state: both confirmations are required before approval.
   const paUnderReview  = ['submitted','under_review'].includes(pa.status);
   const signoffComplete = !!pa.signature_verified_at && !!pa.notary_verified_at;
@@ -3973,7 +3981,7 @@ async function openPayAppModal(payAppId, forceEdit = false) {
 
   showModal({
     title: `Pay Application #${pa.pay_app_number} — ${proj.code} ${proj.name}`,
-    wide: true,
+    size: 'wide',
     body: `
       <div class="form-row two-col">
         <div>
@@ -4018,6 +4026,33 @@ async function openPayAppModal(payAppId, forceEdit = false) {
           <button class="btn btn-primary btn-sm" id="paImportUploadBtn" style="margin-top:10px;">📄 Upload Pay Application (Excel or PDF)</button>
         `}
       </div>` ; })() : ''}
+
+      <!-- Pay application file after submission: owner can add / swap the file
+           on record. Document only — the certified figures below do not move. -->
+      ${!isDraft && (isOwner() || paFileDocs.length) ? `
+      <div class="sov-section-head" style="margin-top:18px;">
+        <div class="sov-section-title">📄 Pay Application File</div>
+        <div class="sov-meta">The G702/G703 on record for this application</div>
+      </div>
+      <div id="paFileZone" class="waiver-zone ${paFileDocs.length ? 'uploaded' : ''}">
+        ${paFileDocs.length ? paFileDocs.map(d => `
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;text-align:left;">
+            <span>📄 <strong>${escapeHtml(d.file_name || 'Pay application')}</strong>
+              <span class="text-muted text-sm">(uploaded ${d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : ''}${d.uploaded_by ? ' by ' + escapeHtml(d.uploaded_by) : ''})</span>
+            </span>
+            <button class="btn btn-secondary btn-sm" onclick="viewPayAppDoc('${d.id}')">View</button>
+            ${isOwner() ? `<button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${d.id}','${pa.id}')">Remove</button>` : ''}
+          </div>
+        `).join('') : '<div class="text-muted" style="margin-bottom:10px;">No pay application file on record.</div>'}
+        ${isOwner() ? `
+          <div style="text-align:left;margin-top:8px;">
+            <div class="text-muted text-sm" style="margin-bottom:8px;">Upload a revised or signed pay application (Excel, PDF or scan). This replaces the file on record only — the figures below stay as submitted.${paUnderReview ? ' To change the numbers, use <strong>Reopen for Revision</strong> below, then re-import.' : ''}</div>
+            <input type="file" id="paFileInput" accept=".pdf,.xlsx,.xls,.csv,image/jpeg,image/png" />
+            <button class="btn btn-primary btn-sm" id="paFileUploadBtn" style="margin-top:10px;">📄 Upload Pay Application</button>
+          </div>
+        ` : ''}
+      </div>
+      ` : ''}
 
       <div class="sov-section-head" style="margin-top:18px;">
         <div class="sov-section-title">G703 — Continuation Sheet</div>
@@ -4157,17 +4192,17 @@ async function openPayAppModal(payAppId, forceEdit = false) {
         <div class="sov-section-title">Supporting Documents</div>
         <div class="sov-meta">Attach the formal change order document or other backup</div>
       </div>
-      <div id="paDocsZone" class="waiver-zone ${payAppDocs.length ? 'uploaded' : ''}">
-        ${payAppDocs.length ? payAppDocs.map(d => `
+      <div id="paDocsZone" class="waiver-zone ${supportDocs.length ? 'uploaded' : ''}">
+        ${supportDocs.length ? supportDocs.map(d => `
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;text-align:left;">
             <span>📎 <strong>${escapeHtml(d.file_name || 'Document')}</strong>
               <span class="text-muted text-sm">(${escapeHtml(lbl(d.doc_type) || 'Document')}${d.co_number ? ` · CO-${String(d.co_number).padStart(3,'0')}` : ''})</span>
             </span>
             <button class="btn btn-secondary btn-sm" onclick="viewPayAppDoc('${d.id}')">View</button>
-            ${editable ? `<button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${d.id}','${pa.id}')">Remove</button>` : ''}
+            ${canManageDocs ? `<button class="btn btn-danger btn-sm" onclick="removePayAppDoc('${d.id}','${pa.id}')">Remove</button>` : ''}
           </div>
         `).join('') : '<div class="text-muted" style="margin-bottom:10px;">No supporting documents attached yet.</div>'}
-        ${editable ? `
+        ${canManageDocs ? `
           <div class="form-row two-col" style="text-align:left;margin-top:8px;">
             <div>
               <label class="form-label">Document Type</label>
@@ -4254,6 +4289,12 @@ async function openPayAppModal(payAppId, forceEdit = false) {
   const paImportUploadBtn = document.getElementById('paImportUploadBtn');
   if (paImportUploadBtn) {
     paImportUploadBtn.addEventListener('click', () => uploadPayAppImport(pa));
+  }
+
+  // Wire owner swap of the pay application file after submission (document only)
+  const paFileUploadBtn = document.getElementById('paFileUploadBtn');
+  if (paFileUploadBtn) {
+    paFileUploadBtn.addEventListener('click', () => uploadPayAppImport(pa, { fileOnly: true }));
   }
 
   function recalcPaRow(inp) {
@@ -4365,6 +4406,7 @@ function payAppFooter(pa, editable, hasWaiver) {
     const approveGate = approveOk ? '' : `disabled title="${escapeHtml(blockLabel)}"`;
     buttons.push(`<button class="btn btn-danger" onclick="rejectPayApp('${pa.id}')">Reject</button>`);
     buttons.push(`<button class="btn btn-danger" onclick="deletePayApp('${pa.id}')" title="Permanently remove this pay application">Delete</button>`);
+    buttons.push(`<button class="btn btn-secondary" onclick="reopenPayApp('${pa.id}')" title="Return to draft to replace the file and re-import the figures">↩ Reopen for Revision</button>`);
     buttons.push(`<div style="flex:1"></div>`);
     buttons.push(`<button class="btn btn-secondary" ${approveGate} onclick="approveAsNoted('${pa.id}')">Approve as Noted</button>`);
     buttons.push(`<button class="btn btn-secondary" onclick="generateG702('${pa.id}')">📄 G702 Print</button>`);
@@ -4553,8 +4595,10 @@ window.uploadPayAppDoc = uploadPayAppDoc;
 // row in the 'change-orders' bucket, then the owner/staff/contractor can
 // Analyze it (analyze-payapp edge fn) and Review & Apply the extracted values
 // onto the G703 line items. Nothing writes to pay_app_lines until Apply.
-async function uploadPayAppImport(pa) {
-  const fileEl = document.getElementById('paImportFile');
+// fileOnly: owner swapping the file on a submitted/approved pay app — the row is
+// recorded the same way but nothing is analyzed (analyze-payapp is draft-only).
+async function uploadPayAppImport(pa, { fileOnly = false } = {}) {
+  const fileEl = document.getElementById(fileOnly ? 'paFileInput' : 'paImportFile');
   const file = fileEl?.files?.[0];
   if (!file) { toast('Choose a file first', 'error'); return; }
   if (file.size > 25 * 1024 * 1024) { toast('File must be < 25 MB', 'error'); return; }
@@ -4569,7 +4613,7 @@ async function uploadPayAppImport(pa) {
     toast('Allowed: Excel (.xlsx/.xls/.csv) — preferred — or PDF/JPG/PNG scan', 'error'); return;
   }
 
-  const btn = document.getElementById('paImportUploadBtn');
+  const btn = document.getElementById(fileOnly ? 'paFileUploadBtn' : 'paImportUploadBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…'; }
 
   const proj = getProject(pa.project_id);
@@ -4590,6 +4634,11 @@ async function uploadPayAppImport(pa) {
   if (insErr) { handleSbError(insErr, 'Record pay application'); if (btn) { btn.disabled = false; btn.textContent = '📄 Upload Pay Application PDF'; } return; }
 
   await loadAllData();
+  if (fileOnly) {
+    toast('Pay application file uploaded');
+    openPayAppModal(pa.id, false);
+    return;
+  }
   toast('Pay application uploaded — analyzing…');
   openPayAppModal(pa.id, true);
   // Kick off analysis immediately for a smooth one-click experience.
@@ -5035,6 +5084,26 @@ async function rejectPayApp(payAppId) {
   render();
 }
 window.rejectPayApp = rejectPayApp;
+
+// ---- Reopen a submitted pay app for revision (owner) ----
+// Figures only ever change in draft. When the contractor sends a revised
+// application, the owner returns it to draft to swap the file and re-import,
+// then submits it again. trg_enforce_signoff_before_approve clears both
+// verifications on the way back, so a revised app can't inherit sign-off.
+async function reopenPayApp(payAppId) {
+  const pa = DATA.payApps.find(x => x.id === payAppId);
+  if (!pa) return;
+  if (!confirm(`Reopen Pay Application #${pa.pay_app_number} for revision?\n\n` +
+      'It returns to Draft so the file and figures can be replaced. Signature and notary ' +
+      'verification are cleared, and it must be submitted again before it can be approved.')) return;
+  const { error } = await sb.from('pay_apps').update({ status: 'draft', submitted_at: null }).eq('id', payAppId);
+  if (error) { handleSbError(error, 'Reopen pay app'); return; }
+  await loadAllData();
+  toast(`Pay Application #${pa.pay_app_number} reopened as a draft`);
+  render();
+  openPayAppModal(payAppId, true);
+}
+window.reopenPayApp = reopenPayApp;
 
 async function markPaid(payAppId) {
   const { error } = await sb.from('pay_apps').update({ status: 'paid' }).eq('id', payAppId);
