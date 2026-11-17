@@ -201,6 +201,29 @@
     background-repeat: no-repeat; background-position: right 10px center;
     max-width: 280px; text-overflow: ellipsis;
   }
+  /* Phone-only chrome (shown inside the max-width:768px block). */
+  .mobile-nav-btn {
+    display: none; align-items: center; justify-content: center; flex: 0 0 auto;
+    width: 42px; height: 42px; margin-left: -4px; border: none; background: transparent;
+    color: var(--black); border-radius: 6px; cursor: pointer;
+  }
+  .mobile-nav-btn:active { background: var(--gray-100); }
+  .mobile-nav-btn svg { width: 24px; height: 24px; }
+  .mobile-nav-title {
+    display: none; flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600;
+    letter-spacing: 1.2px; text-transform: uppercase; color: var(--black);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .nav-scrim { display: none; }
+  .nav-mobile-head, .nav-mobile-foot { display: none; flex-direction: column; gap: 10px; padding: 4px 2px 10px; }
+  .nav-mobile-head .nav-mobile-top { display: flex; align-items: center; justify-content: space-between; }
+  .nav-mobile-head .nav-mobile-close { width: 40px; height: 40px; border: none; background: transparent; font-size: 26px; line-height: 1; color: var(--gray-500); cursor: pointer; }
+  .nav-mobile-head .gsearch-wrap { display: block; }
+  .nav-mobile-head .gsearch-input, .nav-mobile-head .gsearch-input:focus { width: 100%; max-width: none; }
+  .nav-mobile-head .gsearch-panel { position: static; width: auto; max-width: none; max-height: 45vh; margin-top: 6px; box-shadow: none; }
+  .nav-mobile-foot { margin-top: auto; border-top: 1px solid var(--gray-200); padding-top: 12px; }
+  .nav-mobile-foot .role-pill { max-width: none; white-space: normal; background-image: none; justify-content: center; }
+  .nav-mobile-foot .btn-logout { width: 100%; min-height: 44px; font-size: 12px; }
   /* Left vertical navigation rail (Fieldwire-style). */
   .tabs {
     grid-area: sidebar;
@@ -630,31 +653,38 @@
   }
 
   @media (max-width: 768px) {
-    /* Collapse the rail back to a horizontal scroll strip on phones. */
-    .app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr auto; grid-template-areas: "topbar" "sidebar" "main" "footer"; }
+    /* Phones (William, 2026-11-17: "very difficult to navigate"): the 20-tool
+       horizontal strip and a 3-row top bar ate ~45% of the screen. Now: one
+       compact sticky bar (menu, logo, current tool, project, bell) and the
+       full grouped rail as a slide-in drawer. Search, role and logout move
+       into the drawer (placeMobileChrome). */
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; grid-template-areas: "topbar" "main" "footer"; }
+    .topbar { padding: 8px 10px; padding-top: max(8px, env(safe-area-inset-top)); flex-wrap: nowrap; gap: 8px; }
+    .brand { gap: 8px; flex: 0 0 auto; }
+    .brand-logo { width: 64px; }
+    .brand-sub, .brand-tag, .brand-divider, .brand-meta { display: none; }
+    .mobile-nav-btn { display: inline-flex; }
+    .mobile-nav-title { display: block; }
+    .top-actions { gap: 6px; flex: 0 1 auto; min-width: 0; }
+    .project-select { max-width: 128px; font-size: 12px; }
+    #contractorProjectLabel { max-width: 120px; overflow: hidden; white-space: nowrap; font-size: 9px; padding: 5px 8px; }
     .tabs {
-      flex-direction: row; gap: 2px; height: auto; overflow-x: auto; overflow-y: hidden;
-      border-right: none; border-bottom: 1px solid var(--gray-200);
-      position: sticky; top: 62px; padding: 6px 10px;
+      position: fixed; top: 0; left: 0; bottom: 0; z-index: 1000;
+      width: min(84vw, 320px); height: 100vh; height: 100dvh;
+      padding: max(12px, env(safe-area-inset-top)) 10px calc(16px + env(safe-area-inset-bottom));
+      transform: translateX(-105%); transition: transform 0.22s ease, visibility 0.22s;
+      visibility: hidden; box-shadow: 0 0 40px rgba(0,0,0,0.18); overscroll-behavior: contain;
     }
-    .tab { width: auto; flex: 0 0 auto; border-left: none; border-bottom: 3px solid transparent; border-radius: 4px 4px 0 0; padding: 12px 12px; font-size: 12px; }
-    .tab.active { border-left-color: transparent; border-bottom-color: var(--black); border-radius: 4px 4px 0 0; }
-    .tab .count { margin-left: 6px; }
-    /* Flatten tool groups into the horizontal strip; labels + collapse are desktop-only.
-       (.nav-group.empty keeps display:none — higher specificity than display:contents.) */
-    .nav-group { display: contents; }
-    .nav-group-label { display: none; }
-    .tab .tab-label { flex: 0 0 auto; }
+    body.nav-open .tabs { transform: none; visibility: visible; }
+    body.nav-open { overflow: hidden; }
+    .nav-scrim { display: block; position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,0.35);
+                 opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+    body.nav-open .nav-scrim { opacity: 1; pointer-events: auto; }
+    .tab { font-size: 15px; padding: 11px 12px; min-height: 46px; }
+    .nav-mobile-head, .nav-mobile-foot { display: flex; }
     .rail-toggle { display: none; }
     main { padding: 14px; }
-    .topbar { padding: 12px 14px; flex-wrap: wrap; }
-    .brand-logo { width: 90px; }
-    .brand-sub { display: none; }
-    .brand-tag { display: none; }
-    .brand-divider { display: none; }
-    .project-select { max-width: 160px; font-size: 11px; }
     .role-pill { font-size: 9px; padding: 5px 9px; letter-spacing: 1px; }
-    .btn-logout { padding: 5px 9px; font-size: 10px; }
     .page-title { font-size: 19px; }
     .project-grid { grid-template-columns: 1fr; }
     .form-row.two-col, .form-row.three-col { grid-template-columns: 1fr; }
@@ -672,7 +702,7 @@
     /* Bigger tap area on table rows' primary action */
     input, select, textarea { font-size: 16px !important; } /* stops iOS zoom-on-focus */
     /* Sticky page header so context/actions stay visible while scrolling */
-    .page-header { position: sticky; top: 0; background: var(--gray-50); z-index: 5;
+    .page-header { position: sticky; top: var(--topbar-h, 56px); background: var(--gray-50); z-index: 5;
                    padding-top: 6px; padding-bottom: 6px; }
   }
 
@@ -1047,6 +1077,7 @@
 
 <div class="app" id="appShell" style="display:none;">
   <header class="topbar">
+    <button type="button" class="mobile-nav-btn" id="mobileNavBtn" aria-label="Open menu" aria-controls="tabs" aria-expanded="false" onclick="toggleMobileNav()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     <div class="brand">
       <a href="#" id="brandLogo" class="brand-logo" aria-label="Plaza & Associates" onclick="event.preventDefault(); switchTab('projects');"></a>
       <div class="brand-divider"></div>
@@ -1055,6 +1086,7 @@
         <div class="brand-tag">Engineering Florida&rsquo;s Future</div>
       </div>
     </div>
+    <div class="mobile-nav-title" id="mobileNavTitle">Projects</div>
     <div class="top-actions">
       <div class="gsearch-wrap" id="gsearchWrap">
         <input type="search" id="gsearchInput" class="gsearch-input" placeholder="Search reports &amp; documents…" autocomplete="off" aria-label="Global search" />
@@ -1077,7 +1109,12 @@
     </div>
   </header>
 
+  <div class="nav-scrim" id="navScrim" onclick="toggleMobileNav(false)"></div>
   <nav class="tabs" id="tabs">
+    <div class="nav-mobile-head" id="navMobileHead">
+      <div class="nav-mobile-top"><span class="nav-group-label" style="padding:0 10px;">Menu</span>
+        <button type="button" class="nav-mobile-close" aria-label="Close menu" onclick="toggleMobileNav(false)">&times;</button></div>
+    </div>
     <!-- Procore-style tool groups on a Fieldwire-style rail. Buttons keep the
          same .tab class, data-tab values and cnt-* ids the JS + role CSS use. -->
     <div class="nav-group" data-group="home">
@@ -1110,6 +1147,7 @@
       <button class="tab" data-tab="profile" title="Profile"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><span class="tab-label">Profile</span></button>
     </div>
     <button class="rail-toggle" id="railToggle" title="Collapse sidebar" aria-label="Collapse sidebar"><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></svg></span><span class="tab-label">Collapse</span></button>
+    <div class="nav-mobile-foot" id="navMobileFoot"></div>
   </nav>
 
   <main id="main">
@@ -2705,11 +2743,62 @@ function switchTab(tab) {
   }
   STATE.activeTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  updateMobileNavTitle();
+  if (document.body.classList.contains('nav-open')) toggleMobileNav(false);
   document.querySelectorAll('.tab-page').forEach(p => p.classList.toggle('active', p.id === 'page-' + tab));
   document.querySelectorAll('.tab-page').forEach(p => p.classList.toggle('print-target', p.id === 'page-' + tab));
   render();
 }
 window.switchTab = switchTab;
+
+// ── Phone navigation drawer (William, 2026-11-17) ─────────────────────────────
+// Below 769px the rail is a slide-in drawer; the top bar shows the current tool.
+const MOBILE_MQ = window.matchMedia('(max-width: 768px)');
+function toggleMobileNav(force) {
+  const open = typeof force === 'boolean' ? force : !document.body.classList.contains('nav-open');
+  if (open && !MOBILE_MQ.matches) return;
+  document.body.classList.toggle('nav-open', open);
+  document.getElementById('mobileNavBtn')?.setAttribute('aria-expanded', String(open));
+  if (open) document.querySelector('#tabs .tab.active')?.scrollIntoView({ block: 'nearest' });
+}
+window.toggleMobileNav = toggleMobileNav;
+function updateMobileNavTitle() {
+  const el = document.getElementById('mobileNavTitle');
+  const lbl = document.querySelector('#tabs .tab.active .tab-label');
+  if (el) el.textContent = lbl ? lbl.textContent.trim() : '';
+}
+// Search, role and logout live in the top bar on desktop and in the drawer on
+// phones. The nodes are moved, not copied, so their handlers and ids still work.
+function placeMobileChrome() {
+  const mobile = MOBILE_MQ.matches;
+  const actions = document.querySelector('.topbar .top-actions');
+  const head = document.getElementById('navMobileHead');
+  const foot = document.getElementById('navMobileFoot');
+  const search = document.getElementById('gsearchWrap');
+  const role = document.getElementById('roleIndicator');
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (!actions || !head || !foot) return;
+  if (mobile) {
+    if (search && search.parentElement !== head) head.appendChild(search);
+    if (role && role.parentElement !== foot) foot.appendChild(role);
+    if (logoutBtn && logoutBtn.parentElement !== foot) foot.appendChild(logoutBtn);
+  } else {
+    if (search && search.parentElement !== actions) actions.insertBefore(search, actions.firstChild);
+    if (role && role.parentElement !== actions) actions.appendChild(role);
+    if (logoutBtn && logoutBtn.parentElement !== actions) actions.appendChild(logoutBtn);
+    toggleMobileNav(false);
+  }
+  syncTopbarHeight();
+}
+function syncTopbarHeight() {
+  const tb = document.querySelector('.topbar');
+  if (tb) document.documentElement.style.setProperty('--topbar-h', tb.getBoundingClientRect().height + 'px');
+}
+MOBILE_MQ.addEventListener('change', placeMobileChrome);
+window.addEventListener('resize', syncTopbarHeight);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleMobileNav(false); });
+placeMobileChrome();
+updateMobileNavTitle();
 
 /* ⬇ One-click CSV export for any rendered data table (2026-07-10 pass 2).
    Exports what the user currently sees (respects active filters/search) —
