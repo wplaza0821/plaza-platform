@@ -921,7 +921,7 @@
   /* ── Plan Viewer + Markup ────────────────────────────── */
   .pv-overlay {
     position: fixed; inset: 0; z-index: 1000;
-    background: rgba(20,20,20,0.92); display: flex; flex-direction: column;
+    background: #141414; display: flex; flex-direction: column;
     animation: fadeIn 0.15s ease;
   }
   .pv-bar {
@@ -949,18 +949,24 @@
   .pv-pagelabel { font-size: 12px; color: #bbb; min-width: 78px; text-align: center; }
   .pv-stage {
     flex: 1; overflow: auto; display: flex; align-items: flex-start;
-    justify-content: center; padding: 24px;
+    justify-content: flex-start; padding: 24px; -webkit-overflow-scrolling: touch;
   }
-  .pv-canvas-wrap { position: relative; box-shadow: 0 4px 30px rgba(0,0,0,0.5); background:#fff; }
+  /* margin:auto centres the sheet when it is narrower than the stage and, unlike
+     justify-content:center, never pushes a wider sheet's left edge out of reach. */
+  .pv-canvas-wrap { position: relative; margin: auto; flex: 0 0 auto; box-shadow: 0 4px 30px rgba(0,0,0,0.5); background:#fff; transform-origin: 0 0; }
   .pv-canvas-wrap canvas { display: block; }
   #pvAnno { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
-  #pvAnno.pan { cursor: grab; }
+  /* Pan mode: let the finger scroll the sheet (pinch is handled in pvWirePinch). */
+  #pvAnno.pan { cursor: grab; touch-action: pan-x pan-y; }
   .pv-status { font-size: 11px; color: #999; }
   .pv-status.saved { color: #4ade80; }
   .pv-status.dirty { color: #fbbf24; }
   @media (max-width: 640px) {
     .pv-title { max-width: 120px; }
     .pv-tool, .pv-btn { padding: 5px 7px; font-size: 11px; }
+    .pv-bar { gap: 6px; padding: 8px 10px; padding-top: max(8px, env(safe-area-inset-top)); }
+    .pv-stage { padding: 8px; }
+    .pv-pagelabel { min-width: 54px; }
   }
 </style>
 </head>
@@ -7135,7 +7141,7 @@ const PIN_KIND_ICON = { deficiency:'⚠', rfi:'?', task:'✓', photo:'📷', not
 const PV_COLORS = ['#e11d48','#2563eb','#16a34a','#f59e0b','#000000','#ffffff'];
 
 async function openPlanViewer(doc, startPage) {
-  PV.doc = doc; PV.page = Math.max(1, parseInt(startPage, 10) || 1); PV.scale = 1.4;
+  PV.doc = doc; PV.page = Math.max(1, parseInt(startPage, 10) || 1); PV.scale = null; // null = fit to width on first render
   PV.shapes = {}; PV.dirty = {}; PV.markupRowId = {};
   PV.tool = 'pan'; PV.color = '#e11d48'; PV.width = 3;
   const root = document.getElementById('modalRoot');
@@ -7162,6 +7168,7 @@ async function openPlanViewer(doc, startPage) {
         '<div class="pv-sep"></div>'+
         '<button class="pv-btn" onclick="pvZoom(-1)" title="Zoom out">\u2212</button>'+
         '<button class="pv-btn" onclick="pvZoom(1)" title="Zoom in">+</button>'+
+        '<button class="pv-btn" onclick="pvFit()" title="Fit to screen">Fit</button>'+
         '<button class="pv-btn" onclick="pvPage(-1)" title="Prev">\u25C0</button>'+
         '<span class="pv-pagelabel" id="pvPageLabel">\u2013 / \u2013</span>'+
         '<button class="pv-btn" onclick="pvPage(1)" title="Next">\u25B6</button>'+
@@ -7173,7 +7180,7 @@ async function openPlanViewer(doc, startPage) {
       '</div>'+
       '<div class="pv-stage" id="pvStage">'+
         '<div class="pv-canvas-wrap" id="pvWrap">'+
-          '<canvas id="pvPdf"></canvas><canvas id="pvAnno"></canvas>'+
+          '<canvas id="pvPdf"></canvas><canvas id="pvAnno" class="pan"></canvas>'+
           '<div id="pvPins" class="pv-pins-layer" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>'+
         '</div>'+
       '</div>'+
@@ -7190,6 +7197,7 @@ async function openPlanViewer(doc, startPage) {
     await pvLoadPins();
     await pvRenderPage();
     pvWireCanvas();
+    pvWirePinch();
   } catch(e) { toast('Could not open plan: ' + e.message, 'error'); pvClose(); }
 }
 window.openPlanViewer = openPlanViewer;
@@ -7376,15 +7384,40 @@ async function pvDeletePin(id) {
 }
 window.pvDeletePin = pvDeletePin;
 
+// Scale at which the sheet's full width fits the viewer (and its height, when
+// that is the tighter fit, so a whole sheet is visible on open). Never above
+// 1.4, the old fixed desktop scale, so small sheets don't blow up on desktop.
+function pvFitScale(page) {
+  const stage = document.getElementById('pvStage');
+  const v1 = page.getViewport({ scale: 1 });
+  const cs = stage ? getComputedStyle(stage) : null;
+  const padX = cs ? parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) : 48;
+  const padY = cs ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) : 48;
+  const w = Math.max(100, (stage?.clientWidth || window.innerWidth) - padX);
+  const h = Math.max(100, (stage?.clientHeight || window.innerHeight) - padY);
+  return Math.min(1.4, w / v1.width, h / v1.height);
+}
+let _pvRenderTask = null;
 async function pvRenderPage() {
   const page = await PV.pdf.getPage(PV.page);
+  PV.fitScale = pvFitScale(page);
+  if (!PV.scale) PV.scale = PV.fitScale;
   PV.baseViewport = page.getViewport({ scale: PV.scale });
   const vp = PV.baseViewport;
   const pdfC = document.getElementById('pvPdf');
   const annoC = document.getElementById('pvAnno');
-  [pdfC, annoC].forEach(c => { c.width = vp.width; c.height = vp.height;
-    c.style.width = vp.width+'px'; c.style.height = vp.height+'px'; });
-  await page.render({ canvasContext: pdfC.getContext('2d'), viewport: vp }).promise;
+  const wrap = document.getElementById('pvWrap');
+  if (wrap) wrap.style.transform = '';
+  // Sharp on retina, but stay under iOS Safari's ~16.7M-pixel canvas cap.
+  const ratio = Math.max(1, Math.min(window.devicePixelRatio || 1, Math.sqrt(16e6 / (vp.width * vp.height))));
+  pdfC.width = Math.floor(vp.width * ratio); pdfC.height = Math.floor(vp.height * ratio);
+  annoC.width = vp.width; annoC.height = vp.height;
+  [pdfC, annoC].forEach(c => { c.style.width = vp.width+'px'; c.style.height = vp.height+'px'; });
+  if (_pvRenderTask) { try { _pvRenderTask.cancel(); } catch (e) {} }
+  _pvRenderTask = page.render({ canvasContext: pdfC.getContext('2d'), viewport: vp,
+    transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null });
+  try { await _pvRenderTask.promise; } catch (e) { if (e?.name === 'RenderingCancelledException') return; throw e; }
+  _pvRenderTask = null;
   PV.ctx2d = annoC.getContext('2d');
   pvRedraw();
   pvRenderPins();
@@ -7504,7 +7537,62 @@ window.pvSetTool = pvSetTool;
 function pvSetColor(c){ PV.color=c;
   document.querySelectorAll('.pv-color').forEach(b=>b.classList.toggle('active', b.dataset.c===c)); }
 window.pvSetColor = pvSetColor;
-async function pvZoom(dir){ PV.scale = Math.max(0.5, Math.min(4, PV.scale + dir*0.25)); await pvRenderPage(); }
+function pvClampScale(s) {
+  const fit = PV.fitScale || 1;
+  return Math.max(fit * 0.5, Math.min(Math.max(fit * 8, 4), s));
+}
+// Zoom keeping the centre of the visible area in place.
+async function pvZoomTo(newScale, cx, cy) {
+  const stage = document.getElementById('pvStage'); const wrap = document.getElementById('pvWrap');
+  if (!stage || !wrap) { PV.scale = newScale; return pvRenderPage(); }
+  const old = PV.scale;
+  newScale = pvClampScale(newScale);
+  const r = stage.getBoundingClientRect();
+  const fx = cx == null ? r.width / 2 : cx - r.left, fy = cy == null ? r.height / 2 : cy - r.top;
+  const px = (stage.scrollLeft + fx - wrap.offsetLeft) / old;
+  const py = (stage.scrollTop + fy - wrap.offsetTop) / old;
+  PV.scale = newScale;
+  await pvRenderPage();
+  stage.scrollLeft = px * newScale + wrap.offsetLeft - fx;
+  stage.scrollTop = py * newScale + wrap.offsetTop - fy;
+}
+async function pvZoom(dir){ await pvZoomTo(PV.scale * (dir > 0 ? 1.5 : 1 / 1.5)); }
+async function pvFit(){ PV.scale = null; await pvRenderPage();
+  const st = document.getElementById('pvStage'); if (st) { st.scrollLeft = 0; st.scrollTop = 0; } }
+window.pvFit = pvFit;
+// Rotating the phone re-fits the sheet, unless the user has zoomed in.
+window.addEventListener('resize', () => {
+  if (!PV.pdf || !document.getElementById('pvStage')) return;
+  if (PV.fitScale && Math.abs(PV.scale - PV.fitScale) < 1e-6) { PV.scale = null; pvRenderPage(); }
+});
+// Two-finger pinch on phones: scale the sheet live with CSS, re-render sharp on release.
+function pvWirePinch() {
+  const stage = document.getElementById('pvStage'); const wrap = document.getElementById('pvWrap');
+  if (!stage || !wrap || stage._pinchWired) return;
+  stage._pinchWired = true;
+  let start = null;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  stage.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) return;
+    PV.drawing = false; PV.cur = null;
+    const wr = wrap.getBoundingClientRect();
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2, my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    start = { d: dist(e.touches), mx, my, ox: mx - wr.left, oy: my - wr.top, k: 1 };
+    wrap.style.transformOrigin = start.ox + 'px ' + start.oy + 'px';
+  }, { passive: true });
+  stage.addEventListener('touchmove', e => {
+    if (!start || e.touches.length !== 2) return;
+    e.preventDefault();
+    start.k = pvClampScale(PV.scale * dist(e.touches) / start.d) / PV.scale;
+    wrap.style.transform = 'scale(' + start.k + ')';
+  }, { passive: false });
+  stage.addEventListener('touchend', e => {
+    if (!start || e.touches.length >= 2) return;
+    const s = start; start = null;
+    wrap.style.transform = ''; wrap.style.transformOrigin = '';
+    if (Math.abs(s.k - 1) > 0.02) pvZoomTo(PV.scale * s.k, s.mx, s.my);
+  });
+}
 window.pvZoom = pvZoom;
 async function pvPage(dir){ const n = PV.page + dir; if (n<1 || n>PV.numPages) return; PV.page = n; await pvRenderPage(); }
 window.pvPage = pvPage;
